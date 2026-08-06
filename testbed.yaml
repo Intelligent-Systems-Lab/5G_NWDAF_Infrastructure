@@ -9,16 +9,21 @@ guest:
   os: ubuntu
   release: "24.04"
 
+hostSafety:
+  reserveMemoryMiB: 6144
+  minimumFreeSwapMiB: 1024
+  minimumFreeStorageGiB: 120
+
 machines:
   core:
-    resources: {memoryMiB: 6144, cpus: 6, diskGiB: 35}
+    resources: {memoryMiB: 5120, cpus: 4, diskGiB: 20}
     interfaces:
       management: 192.168.56.10
       sbi: 192.168.57.2
       n2: 192.168.58.2
       n4: 192.168.61.2
   path-a:
-    resources: {memoryMiB: 5120, cpus: 4, diskGiB: 25}
+    resources: {memoryMiB: 3584, cpus: 3, diskGiB: 25}
     interfaces:
       management: 192.168.56.11
       sbi: 192.168.57.3
@@ -27,7 +32,7 @@ machines:
       n4: 192.168.61.3
       n6-a: 192.168.62.2
   path-b:
-    resources: {memoryMiB: 5120, cpus: 4, diskGiB: 25}
+    resources: {memoryMiB: 3584, cpus: 3, diskGiB: 25}
     interfaces:
       management: 192.168.56.12
       sbi: 192.168.57.4
@@ -184,4 +189,3 @@ consumer:
 
 security: {tls: false, oauth: false}
 operations: {clockSkewToleranceMs: 1000, journalMaxUseMiB: 512}
-

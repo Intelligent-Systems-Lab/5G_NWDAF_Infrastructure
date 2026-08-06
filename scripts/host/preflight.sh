@@ -28,21 +28,27 @@ if command -v vagrant >/dev/null; then
   esac
 fi
 
-read -r required_mib disk_gib < <(PYTHONPATH="$HOST_ROOT/scripts/host" python3 - "$testbed" <<'PY'
+read -r required_mib disk_gib host_reserve_mib minimum_swap_mib minimum_free_storage_gib < <(PYTHONPATH="$HOST_ROOT/scripts/host" python3 - "$testbed" <<'PY'
 import sys
 from configlib import load_yaml, resolve_path
 d = load_yaml(resolve_path(sys.argv[1]))
-print(sum(m["resources"]["memoryMiB"] for m in d["machines"].values()), sum(m["resources"]["diskGiB"] for m in d["machines"].values()))
+safety = d["hostSafety"]
+print(
+    sum(m["resources"]["memoryMiB"] for m in d["machines"].values()),
+    sum(m["resources"]["diskGiB"] for m in d["machines"].values()),
+    safety["reserveMemoryMiB"],
+    safety["minimumFreeSwapMiB"],
+    safety["minimumFreeStorageGiB"],
+)
 PY
 )
 available_mib=$(awk '/MemAvailable:/ {print int($2/1024)}' /proc/meminfo)
 swap_free_mib=$(awk '/SwapFree:/ {print int($2/1024)}' /proc/meminfo)
 free_gib=$(df -Pk "$HOST_ROOT" | awk 'NR==2 {print int($4/1024/1024)}')
-host_reserve_mib=4096
 required_with_reserve=$((required_mib + host_reserve_mib))
 [ "$available_mib" -ge "$required_with_reserve" ] && ok "available RAM ${available_mib}MiB >= VM allocation ${required_mib}MiB + host reserve ${host_reserve_mib}MiB" || fail "available RAM ${available_mib}MiB < VM allocation ${required_mib}MiB + host reserve ${host_reserve_mib}MiB"
-[ "$swap_free_mib" -ge 512 ] && ok "free swap ${swap_free_mib}MiB" || warn "free swap ${swap_free_mib}MiB is below 512MiB; host is already under memory pressure"
-[ "$free_gib" -ge 120 ] && ok "workspace filesystem free ${free_gib}GiB (disk budgets total ${disk_gib}GiB)" || fail "workspace filesystem free ${free_gib}GiB < 120GiB safety threshold"
+[ "$swap_free_mib" -ge "$minimum_swap_mib" ] && ok "free swap ${swap_free_mib}MiB >= ${minimum_swap_mib}MiB" || fail "free swap ${swap_free_mib}MiB < ${minimum_swap_mib}MiB; host is already under memory pressure"
+[ "$free_gib" -ge "$minimum_free_storage_gib" ] && ok "workspace filesystem free ${free_gib}GiB (disk budgets total ${disk_gib}GiB)" || fail "workspace filesystem free ${free_gib}GiB < ${minimum_free_storage_gib}GiB safety threshold"
 
 if git -C "$HOST_ROOT" submodule status --recursive | grep -Eq '^[-+U]'; then
   fail "submodules are missing, conflicted, or not at parent gitlinks"

@@ -6,6 +6,10 @@ model:
   artifact_download:
     allowed_origins: [http://192.168.57.53:9092, http://192.168.57.19:9888]
     timeout_seconds: 300
+    max_compressed_bytes: 33554432
+    max_extracted_bytes: 134217728
+    max_single_file_bytes: 67108864
+    max_entries: 32
   input_size: 10
   output_size: 2
   num_channels: [32, 64, 64, 64]
@@ -23,4 +27,3 @@ collection:
 adrf: {mode: nrf, discovery_timeout_seconds: 30, request_timeout_seconds: 120}
 mongodb: {enabled: true, url: mongodb://192.168.57.18:27017, database: free5gc, collection: nwdaf_raw_notifications_b}
 accuracy_monitor: {enabled: true, ground_truth_check_interval_seconds: 30, report_period_seconds: 90, min_matched_predictions: 2}
-

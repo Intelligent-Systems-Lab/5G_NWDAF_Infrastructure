@@ -53,6 +53,9 @@ def main():
     check.equal("schemaVersion", testbed.get("schemaVersion"), 1)
     check.equal("machine set", sorted(testbed.get("machines", {})), ["core", "path-a", "path-b"])
     check.true("TLS/certificate support must remain disabled", not testbed.get("security", {}).get("tls"))
+    host_safety = testbed.get("hostSafety", {})
+    for key in ("reserveMemoryMiB", "minimumFreeSwapMiB", "minimumFreeStorageGiB"):
+        check.true("hostSafety.{} must be a positive integer".format(key), isinstance(host_safety.get(key), int) and host_safety[key] > 0)
 
     missing = sorted(name for name in REQUIRED if not (config_dir / name).is_file())
     check.true("missing config files: {}".format(", ".join(missing)), not missing)

@@ -41,7 +41,7 @@ case "$action" in
     for name in pyanlf pymtlf; do
       source_name=PyAnLF; [ "$name" = pymtlf ] && source_name=PyMTLF
       stage "ML/$source_name" "$name"
-      runuser -u 5g-nwdaf -- env UV_CACHE_DIR=/var/lib/5g-nwdaf-infrastructure/.cache/uv uv sync --project "$work_root/$name" --frozen
+      runuser -u 5g-nwdaf -- uv sync --project "$work_root/$name" --frozen --no-cache
     done
     ;;
   *) echo "usage: path.sh A|B setup|build" >&2; exit 2;;

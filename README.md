@@ -63,8 +63,11 @@ for config selection, status, log filtering, and guest build details.
 The repository has passed source-lock, YAML, config-render/check, consumer
 discovery, Python native-settings, shell syntax, and provider-independent
 Vagrant validation. The three new VMs and privileged full scenario have not yet
-been created or executed. The current host preflight also requires enough free
-memory for 16 GiB of guest allocation plus a 4 GiB host reserve.
+been created or executed. The compact baseline allocates 12 GiB across the
+guests; preflight additionally requires a 6 GiB host reserve, 1 GiB free swap,
+and 120 GiB free workspace storage. Current PyTorch locks still include CUDA
+runtime packages despite CPU-only training, so the two Path disks remain 25 GiB
+until their upstream dependency locks are made CPU-only.
 
 The initial implementation intentionally does not support TLS/certificates,
 automatic experiment history, or 5g-viz.
@@ -73,4 +76,3 @@ automatic experiment history, or 5g-viz.
 
 The parent repository has not yet been assigned an open-source license. See
 `LICENSE`. Every submodule remains governed by its own license.
-

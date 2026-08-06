@@ -43,8 +43,7 @@ case "$action" in
       build_go "${mapping##*:}"
     done
     stage ML/PyMTLF pymtlf
-    runuser -u 5g-nwdaf -- env UV_CACHE_DIR=/var/lib/5g-nwdaf-infrastructure/.cache/uv \
-      uv sync --project "$work_root/pymtlf" --frozen
+    runuser -u 5g-nwdaf -- uv sync --project "$work_root/pymtlf" --frozen --no-cache
     ;;
   *) echo "usage: core.sh setup|build" >&2; exit 2;;
 esac

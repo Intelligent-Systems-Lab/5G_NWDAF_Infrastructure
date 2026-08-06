@@ -30,7 +30,9 @@ UE, NWDAF, or experiment semantics.
 `make preflight` is read-only. It checks:
 
 - Vagrant/provider commands;
-- 16 GiB guest RAM plus a 4 GiB physical-host reserve and current swap pressure;
+- 12 GiB guest RAM plus a 6 GiB physical-host reserve;
+- at least 1 GiB free host swap, so a machine already under memory pressure is
+  never used to start the testbed;
 - at least 120 GiB free on the workspace filesystem;
 - initialized, clean submodules at all 16 parent gitlinks;
 - `components.lock.yaml` equality and native config consistency.
@@ -75,15 +77,29 @@ budgets:
 
 | VM | RAM | vCPU | Disk | Guest-local build responsibility |
 | --- | ---: | ---: | ---: | --- |
-| Core | 6144 MiB | 6 | 35 GiB | core NFs, ADRF, NWDAF-C, PyMTLF-C |
-| Path A | 5120 MiB | 4 | 25 GiB | gtp5g, UPF, UERANSIM, NWDAF-A, PyAnLF-A, PyMTLF-A |
-| Path B | 5120 MiB | 4 | 25 GiB | gtp5g, UPF, UERANSIM, NWDAF-B, PyAnLF-B, PyMTLF-B |
+| Core | 5120 MiB | 4 | 20 GiB | core NFs, ADRF, NWDAF-C, PyMTLF-C |
+| Path A | 3584 MiB | 3 | 25 GiB | gtp5g, UPF, UERANSIM, NWDAF-A, PyAnLF-A, PyMTLF-A |
+| Path B | 3584 MiB | 3 | 25 GiB | gtp5g, UPF, UERANSIM, NWDAF-B, PyAnLF-B, PyMTLF-B |
 
 Guests receive the parent-pinned source snapshot and never clone a branch.
 Go components use Go 1.26.2; Python components use their own `uv.lock`; gtp5g
 is compiled against the running Path kernel; UERANSIM is compiled independently
 inside both Path VMs. Provisioning records no experiment run and starts no
 experiment unit at boot.
+
+This is a compact functional baseline, not a capacity claim. The current
+PyAnLF and PyMTLF locks resolve Linux CUDA runtime packages even though this
+scenario configures CPU-only training. Their compressed package footprints are
+about 3.8 GiB and 2.8 GiB respectively, so each Path retains a 25 GiB disk
+ceiling. Provisioning deliberately uses `uv sync --no-cache`: environments
+remain available for services, but the disposable download cache is not kept
+inside a guest. Reducing Path disks further requires a separately reviewed,
+CPU-only dependency lock in the two source repositories.
+
+The baseline also bounds low-volume runtime growth: MongoDB receives a 256 MiB
+WiredTiger cache, Python services use one BLAS/OpenMP thread, each FL Client
+accepts one concurrent training job, and model artifacts are limited to 32 MiB
+compressed or 128 MiB extracted. The committed seed model is about 0.4 MiB.
 
 ## Services and pseudo driver
 
@@ -148,4 +164,3 @@ run IDs, collect logs automatically, or bind VM lifetime to experiment history.
 - automatic run archive/replay ownership;
 - HA, capacity claims, or public cloud portability;
 - automatic destructive VM cleanup.
-
