@@ -1,0 +1,14 @@
+info: {version: 1.0.2, description: dual-TAI NRF}
+configuration:
+  MongoDBName: free5gc
+  MongoDBUrl: mongodb://192.168.57.18:27017
+  sbi:
+    scheme: http
+    registerIPv4: 192.168.57.10
+    bindingIPv4: 192.168.57.10
+    port: 8000
+    oauth: false
+  DefaultPlmnId: {mcc: "466", mnc: "92"}
+  serviceNameList: [nnrf-nfm, nnrf-disc]
+logger: {enable: true, level: info, reportCaller: false}
+

@@ -1,0 +1,22 @@
+info: {version: 1.0.0, description: NWDAF-A analytics provider and FL client}
+configuration:
+  nwdafName: NWDAF-A
+  nfInstanceId: 11111111-1111-4111-8111-111111111111
+  sbi: {scheme: http, registerIPv4: 192.168.57.41, bindingIPv4: 192.168.57.41, port: 8080}
+  nrfRegistrationEnabled: true
+  nrfUri: http://192.168.57.10:8000
+  serviceNameList: [nnwdaf-eventssubscription, nnwdaf-mlmodelmonitor, nnwdaf-mlmodeltraining]
+  nwdafInfo:
+    nwdafEvents: [UE_COMMUNICATION]
+    mlAnalyticsList:
+      - mlAnalyticsIds: [UE_COMMUNICATION]
+        trackingAreaList: [{plmnId: {mcc: "466", mnc: "92"}, tac: "000001"}]
+        mlModelInterInfo: {vendorList: ["001122"]}
+        flCapabilityType: FL_CLIENT
+        nfTypeList: [UPF]
+  anlf: {server: {bindingIPv4: 192.168.57.41, registerIPv4: 192.168.57.41, port: 8090}}
+  mtlf: {server: {bindingIPv4: 192.168.57.41, registerIPv4: 192.168.57.41, port: 8091}}
+  anlfBackend: {enabled: true, endpoint: http://192.168.57.42:9093, requestTimeout: 35}
+  mtlfBackend: {enabled: true, endpoint: http://192.168.57.43:9092, requestTimeout: 35}
+logger: {enable: true, level: info, reportCaller: false}
+

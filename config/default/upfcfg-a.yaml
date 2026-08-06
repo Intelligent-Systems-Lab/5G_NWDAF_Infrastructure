@@ -1,0 +1,13 @@
+version: 1.0.3
+description: Path A UPF with hybrid pseudo driver
+pfcp: {addr: 192.168.61.20, nodeID: 192.168.61.20, retransTimeout: 1s, maxRetrans: 3}
+gtpu: {forwarder: gtp5g, ifList: [{addr: 192.168.59.10, type: N3}]}
+dnnList: [{dnn: internet, cidr: 10.60.0.0/16}]
+logger: {enable: true, level: info, reportCaller: false}
+ees:
+  enabled: true
+  listenAddr: 192.168.57.40:8088
+  periodSec: 30
+  logLevel: info
+  parquetDir: /opt/5g-nwdaf-infrastructure/source/NFs/upf/pre_data/group1
+

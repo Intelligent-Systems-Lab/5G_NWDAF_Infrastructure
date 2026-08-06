@@ -1,0 +1,15 @@
+info: {version: 1.0.0, description: shared ADRF}
+configuration:
+  adrfName: ADRF
+  nrfUri: http://192.168.57.10:8000
+  sbi: {scheme: http, registerIPv4: 192.168.57.19, bindingIPv4: 192.168.57.19, port: 9888, oauth: false}
+  serviceNameList: [nadrf-mlmodelmanagement, nadrf-datamanagement]
+  plmnSupportList:
+    - plmnId: {mcc: "466", mnc: "92"}
+      snssaiList: [{sst: 1, sd: "010203"}]
+  locality: dual-tai
+  heartbeatInterval: 10
+  mongodb: {name: adrf, url: mongodb://192.168.57.18:27017}
+  retrieval: {corrIdBatchSize: 100, oneIdPerFetch: true, snapshot: {enabled: true}}
+logger: {enable: true, level: info, reportCaller: false}
+

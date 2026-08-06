@@ -1,0 +1,12 @@
+mcc: "466"
+mnc: "92"
+nci: "0x000000010"
+idLength: 32
+tac: 1
+linkIp: 192.168.58.20
+ngapIp: 192.168.58.20
+gtpIp: 192.168.59.20
+amfConfigs: [{address: 192.168.58.10, port: 38412}]
+slices: [{sst: 1, sd: "0x010203"}]
+ignoreStreamIds: true
+

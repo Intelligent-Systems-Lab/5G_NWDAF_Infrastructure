@@ -1,0 +1,17 @@
+nrfUri: http://192.168.57.10:8000
+requesterNfType: AF
+discovery:
+  targetNfType: NWDAF
+  serviceName: nnwdaf-eventssubscription
+  event: UE_COMMUNICATION
+target:
+  internalGroupId: 00000001-466-92-01
+  paths:
+    - {name: a, tac: "000001"}
+    - {name: b, tac: "000002"}
+callback:
+  bindAddress: 192.168.57.32
+  advertisedUri: http://192.168.57.32:9090/callbacks/nwdaf
+reporting: {method: PERIODIC, periodSeconds: 30}
+stateFile: /var/lib/5g-nwdaf-infrastructure/consumer/subscriptions.json
+

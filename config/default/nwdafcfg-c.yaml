@@ -1,0 +1,19 @@
+info: {version: 1.0.0, description: NWDAF-C model owner and FL server}
+configuration:
+  nwdafName: NWDAF-C
+  nfInstanceId: 33333333-3333-4333-8333-333333333333
+  sbi: {scheme: http, registerIPv4: 192.168.57.30, bindingIPv4: 192.168.57.30, port: 8080}
+  nrfRegistrationEnabled: true
+  nrfUri: http://192.168.57.10:8000
+  serviceNameList: [nnwdaf-mlmodelprovision, nnwdaf-mlmodelmonitor]
+  nwdafInfo:
+    mlAnalyticsList:
+      - mlAnalyticsIds: [UE_COMMUNICATION]
+        mlModelInterInfo: {vendorList: ["001122"]}
+        flCapabilityType: FL_SERVER
+  anlf: {server: {bindingIPv4: 192.168.57.30, registerIPv4: 192.168.57.30, port: 8090}}
+  mtlf: {server: {bindingIPv4: 192.168.57.30, registerIPv4: 192.168.57.30, port: 8091}}
+  anlfBackend: {enabled: false}
+  mtlfBackend: {enabled: true, endpoint: http://192.168.57.31:9292, requestTimeout: 35}
+logger: {enable: true, level: info, reportCaller: false}
+

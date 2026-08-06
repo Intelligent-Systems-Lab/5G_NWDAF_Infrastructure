@@ -1,0 +1,8 @@
+info: {version: 1.0.3, description: optional WebConsole}
+configuration:
+  mongodb: {name: free5gc, url: mongodb://192.168.57.18:27017}
+  nrfUri: http://192.168.57.10:8000
+  webServer: {scheme: http, ipv4Address: 192.168.56.10, port: 5000}
+  billingServer: {enable: false}
+logger: {enable: true, level: info, reportCaller: false}
+

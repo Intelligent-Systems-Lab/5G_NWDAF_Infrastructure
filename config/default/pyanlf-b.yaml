@@ -1,0 +1,26 @@
+server: {binding_host: 192.168.57.52, port: 9093}
+log: {level: INFO}
+model:
+  default_model_reference: ""
+  default_model_unique_id: 1
+  artifact_download:
+    allowed_origins: [http://192.168.57.53:9092, http://192.168.57.19:9888]
+    timeout_seconds: 300
+  input_size: 10
+  output_size: 2
+  num_channels: [32, 64, 64, 64]
+model_provision:
+  model_interoperability: "001122"
+  callback_uri: http://192.168.57.52:9093/internal/v1/ml-model-provision/notifications
+model_provider: {mode: nrf, discovery_timeout_seconds: 30, analytics_id: UE_COMMUNICATION, model_interoperability_vendor_ids: ["001122"]}
+analytics:
+  ue_communication: {sampling_interval_seconds: 30, input_window: 30, output_window: 1, ring_buffer_size: 50}
+collection:
+  resolution_mode: standard
+  mode: nrf
+  callback_base_uri: http://192.168.57.52:9093
+  configured_smf_endpoints: []
+adrf: {mode: nrf, discovery_timeout_seconds: 30, request_timeout_seconds: 120}
+mongodb: {enabled: true, url: mongodb://192.168.57.18:27017, database: free5gc, collection: nwdaf_raw_notifications_b}
+accuracy_monitor: {enabled: true, ground_truth_check_interval_seconds: 30, report_period_seconds: 90, min_matched_predictions: 2}
+

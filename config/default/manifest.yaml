@@ -1,0 +1,14 @@
+schemaVersion: 1
+name: dual-tai-default
+topology: testbed.yaml
+sources:
+  free5gcConfig:
+    remote: https://github.com/free5gc/free5gc.git
+    commit: e784ce6e02e62dad834b42e669e9de731ac9583f
+    license: Apache-2.0
+  componentNativeConfigs: components.lock.yaml
+constraints:
+  certificatesSupported: false
+  pseudoDriverRequired: true
+  pseudoDriverProfiles: {a: group1, b: group2}
+  gtp5g: ">=0.9.5,<0.10.0"
