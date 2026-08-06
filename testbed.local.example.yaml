@@ -1,0 +1,14 @@
+schemaVersion: 1
+
+# Copy this file to testbed.local.yaml. These settings describe the physical
+# host and provider only; topology semantics belong in an explicit testbed file.
+provider:
+  name: virtualbox
+  expectedVmStorage: /path/to/provider/vm-storage
+  bridgeInterface: null
+
+# Select one complete config set for every machine. Relative paths are resolved
+# from the repository root.
+config:
+  directory: config/default
+
