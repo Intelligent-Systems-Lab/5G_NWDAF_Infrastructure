@@ -1,0 +1,23 @@
+.vagrant/
+.cache/
+.venv/
+__pycache__/
+*.py[cod]
+
+# Host-specific topology/provider settings.
+testbed.local.yaml
+
+# Complete config sets generated or maintained locally.
+config/generated/*
+!config/generated/.gitkeep
+config/local/*
+!config/local/.gitkeep
+
+# Build and runtime state stay inside guests.
+build/
+dist/
+runtime/
+runs/
+*.log
+*.pid
+
