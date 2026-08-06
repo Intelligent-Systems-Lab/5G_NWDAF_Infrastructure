@@ -43,6 +43,7 @@ Vagrant.configure("2") do |config|
       end
 
       resources = machine.fetch("resources")
+      node.vm.disk :disk, size: "#{resources.fetch("diskGiB")}GB", primary: true
       node.vm.provider "virtualbox" do |vb|
         vb.name = "5g-nwdaf-#{machine_name}"
         vb.memory = resources.fetch("memoryMiB")

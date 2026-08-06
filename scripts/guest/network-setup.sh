@@ -5,7 +5,7 @@ machine=$(cat /etc/5g-nwdaf-infrastructure/machine)
 add_alias() {
   local address=$1 anchor=$2 device
   ip -4 address show | grep -qw "$address" && return 0
-  device=$(ip -o route get "$anchor" | awk '{for (i=1;i<=NF;i++) if ($i=="dev") {print $(i+1); exit}}')
+  device=$(ip -o -4 address show | awk -v prefix="$anchor/" 'index($4, prefix) == 1 {print $2; exit}')
   test -n "$device" || { echo "cannot resolve interface for $address via $anchor" >&2; return 1; }
   ip address add "$address/24" dev "$device"
 }
@@ -32,4 +32,3 @@ case "$machine" in
     ;;
   *) echo "invalid machine identity: $machine" >&2; exit 2;;
 esac
-
