@@ -1,0 +1,18 @@
+[Unit]
+Description=5G NWDAF infrastructure service %i
+After=network-online.target
+Wants=network-online.target
+PartOf=5g-nwdaf-stack.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/libexec/5g-nwdaf-infrastructure/service-run %i
+Restart=on-failure
+RestartSec=2s
+TimeoutStopSec=30s
+KillSignal=SIGTERM
+LimitNOFILE=65536
+
+[Install]
+WantedBy=5g-nwdaf-stack.target
+

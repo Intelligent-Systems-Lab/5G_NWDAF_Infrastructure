@@ -1,0 +1,4 @@
+[Unit]
+Description=5G NWDAF experiment stack
+StopWhenUnneeded=no
+

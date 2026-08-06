@@ -53,6 +53,16 @@ Vagrant.configure("2") do |config|
         lv.cpus = resources.fetch("cpus")
       end
 
+      node.vm.provision "shell", path: "scripts/guest/common.sh",
+        args: [machine_name], run: "once"
+      if machine_name == "core"
+        node.vm.provision "shell", path: "scripts/guest/core.sh", args: ["setup"], run: "once"
+      else
+        path_name = machine_name.end_with?("a") ? "A" : "B"
+        node.vm.provision "shell", path: "scripts/guest/path.sh",
+          args: [path_name, "setup"], run: "once"
+      end
+
     end
   end
 

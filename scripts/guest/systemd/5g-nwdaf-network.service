@@ -1,0 +1,14 @@
+[Unit]
+Description=5G NWDAF topology address aliases
+After=network-online.target
+Wants=network-online.target
+Before=5g-nwdaf-stack.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/libexec/5g-nwdaf-infrastructure/network-setup
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target
+
