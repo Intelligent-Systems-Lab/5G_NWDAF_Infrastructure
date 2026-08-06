@@ -126,6 +126,7 @@ def main():
 
     consumer = load_yaml(config_dir / "consumer.yaml")
     check.equal("consumer NRF", consumer["nrfUri"], nrf_uri)
+    check.equal("consumer PLMN", consumer["target"]["plmn"], testbed["mobileNetwork"]["plmn"])
     check.equal("consumer group", consumer["target"]["internalGroupId"], testbed["mobileNetwork"]["internalGroupId"])
     check.equal("consumer paths", [p["tac"] for p in consumer["target"]["paths"]], expected_tacs)
     advertised = urlparse(consumer["callback"]["advertisedUri"])
@@ -149,4 +150,3 @@ def finish(check, testbed_path, config_dir):
 
 if __name__ == "__main__":
     sys.exit(main())
-

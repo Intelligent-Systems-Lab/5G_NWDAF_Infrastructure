@@ -142,6 +142,7 @@ def render(testbed, baseline, output):
 
     consumer = read(output, "consumer.yaml")
     consumer["nrfUri"] = nrf_uri
+    consumer["target"]["plmn"] = dict(plmn)
     consumer["target"]["internalGroupId"] = testbed["mobileNetwork"]["internalGroupId"]
     consumer["target"]["paths"] = [{"name": name, "tac": paths[name]["tai"]["tac"]} for name in ("a", "b")]
     callback = testbed["consumer"]["callback"]
@@ -186,4 +187,3 @@ def main():
 
 if __name__ == "__main__":
     sys.exit(main())
-

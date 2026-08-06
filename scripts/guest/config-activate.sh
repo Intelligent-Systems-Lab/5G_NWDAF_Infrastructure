@@ -14,6 +14,10 @@ if systemctl list-units --state=active --no-legend '5g-nwdaf@*.service' | grep -
   echo "stop stack services before changing the active config" >&2
   exit 1
 fi
+if systemctl is-active --quiet 5g-nwdaf-consumer.service; then
+  echo "stop NWDAF subscriptions before changing the active config" >&2
+  exit 1
+fi
 
 actual_hash=$(find "$staged" -type f -name '*.yaml' -print0 | sort -z | xargs -0 sha256sum | sha256sum | awk '{print $1}')
 test "$actual_hash" = "$expected_hash" || { echo "config hash mismatch: $actual_hash" >&2; exit 1; }
@@ -21,4 +25,3 @@ temporary="$root/.active.$$"
 ln -s "$staged" "$temporary"
 mv -Tf "$temporary" "$root/active"
 printf '%s\n' "$expected_hash" >"$root/active.sha256"
-

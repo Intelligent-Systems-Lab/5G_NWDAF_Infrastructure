@@ -1,0 +1,17 @@
+[Unit]
+Description=5G NWDAF dual-subscription consumer
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=5g-nwdaf
+Group=5g-nwdaf
+ExecStart=/usr/local/libexec/5g-nwdaf-infrastructure/nwdaf-consumer --config /etc/5g-nwdaf-infrastructure/active/consumer.yaml run
+Restart=on-failure
+RestartSec=3s
+TimeoutStopSec=15s
+
+[Install]
+WantedBy=multi-user.target
+

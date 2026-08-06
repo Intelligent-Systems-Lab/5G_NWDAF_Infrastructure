@@ -5,6 +5,7 @@ discovery:
   serviceName: nnwdaf-eventssubscription
   event: UE_COMMUNICATION
 target:
+  plmn: {mcc: "466", mnc: "92"}
   internalGroupId: 00000001-466-92-01
   paths:
     - {name: a, tac: "000001"}
@@ -14,4 +15,3 @@ callback:
   advertisedUri: http://192.168.57.32:9090/callbacks/nwdaf
 reporting: {method: PERIODIC, periodSeconds: 30}
 stateFile: /var/lib/5g-nwdaf-infrastructure/consumer/subscriptions.json
-
