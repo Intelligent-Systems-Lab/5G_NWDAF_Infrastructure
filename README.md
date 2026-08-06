@@ -32,9 +32,42 @@ is fixed by parent gitlinks and is never cloned by guest provisioning.
 
 ## Command surface
 
-Run `make help` for the lifecycle commands. No VM or service is created merely
-by cloning this repository. The initial implementation intentionally does not
-support TLS/certificates, automatic experiment history, or 5g-viz.
+No VM or service is created merely by cloning this repository. The normal
+sequence is:
+
+```sh
+git submodule update --init --recursive
+cp testbed.local.example.yaml testbed.local.yaml
+# Select and verify a working provider in testbed.local.yaml.
+make preflight
+make vm-up
+make services-start
+make subscriptions-start
+make observe
+```
+
+Teardown is deliberately split:
+
+```sh
+make subscriptions-stop  # delete the two exact NWDAF resources
+make services-stop       # leave all three VMs running
+make vm-halt             # power off the VMs
+```
+
+There is no `vm-destroy` target. Destruction must be an explicit Vagrant action
+after its exact targets have been reviewed. See [OPERATIONS.md](OPERATIONS.md)
+for config selection, status, log filtering, and guest build details.
+
+## Current validation boundary
+
+The repository has passed source-lock, YAML, config-render/check, consumer
+discovery, Python native-settings, shell syntax, and provider-independent
+Vagrant validation. The three new VMs and privileged full scenario have not yet
+been created or executed. The current host preflight also requires enough free
+memory for 16 GiB of guest allocation plus a 4 GiB host reserve.
+
+The initial implementation intentionally does not support TLS/certificates,
+automatic experiment history, or 5g-viz.
 
 ## License status
 
