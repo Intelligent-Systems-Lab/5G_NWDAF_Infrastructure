@@ -126,8 +126,44 @@ baseline advertises `192.168.57.1` with these fixed mappings:
 The physical bind address may be overridden in `testbed.local.yaml`, but all
 three VMs must still route to the advertised address. Container-native configs
 listen on `0.0.0.0`; public URLs and callbacks use the advertised Host endpoint.
-The Compose files and `ml-start`/`ml-status`/`ml-stop` commands are not yet
-implemented, so the current validation boundary stops before container launch.
+`compose.yaml` defines the five production services. PyMTLF-A/B request one
+NVIDIA GPU and keep `cuda:0` in their native config; the other services are CPU
+placed. Every service has a non-root user, read-only root filesystem, bounded
+log rotation, health check, memory/CPU limit, read-only config bind, and its own
+writable named volume. The three PyMTLF volumes contain artifact storage, model
+state, publication journal, and FL workspaces under one service-specific root.
+
+Validate the resolved production and CPU-only definitions without starting a
+container:
+
+```sh
+make ml-compose-check
+```
+
+Run the bounded CPU-only image/config/health smoke:
+
+```sh
+make ml-cpu-smoke
+```
+
+The smoke binds only loopback, generates an ignored config set with A/B training
+set to CPU, builds each image target once, starts all five services, reports
+effective device and container memory, then removes only its own containers,
+network, volumes, and generated config. It retains the two images. It does not
+exercise CUDA, modify the NVIDIA driver/toolkit, create a VM, or prove VM-to-Host
+reachability.
+
+The first successful empty-service smoke observed about 230 MiB RSS per PyAnLF
+and 283 MiB per PyMTLF, about 1.28 GiB total. These figures exclude model
+training, datasets, tensor growth, GPU memory, and full-stack traffic, so they
+are startup measurements rather than capacity requirements. Each image has a
+5.42 GB virtual size because it includes the shared CUDA-enabled PyTorch
+runtime; the common runtime layers are shared by both image targets. Do not run
+global Docker prune on this shared Host.
+
+The long-lived `ml-start`/`ml-status`/`ml-stop` commands are not yet implemented.
+Production GPU access and Host-to-VM reachability therefore remain outside the
+current validation boundary.
 
 Pseudo driver support is required on both paths. It is embedded in each UPF
 process and configured by `upfcfg-a.yaml` / `upfcfg-b.yaml`:

@@ -42,10 +42,28 @@ def uri(host, port):
     return "http://{}:{}".format(host, port)
 
 
+def check_pymtlf_data_paths(check, name, config):
+    root = Path("/var/lib/5g-nwdaf-infrastructure") / name
+    paths = {
+        "artifact root": config["storage"]["artifact_root"],
+        "model state": config["model_state"]["directory"],
+        "publication journal": config["publication"]["directory"],
+        "FL workspace": config["federated_learning"]["workspace_root"],
+    }
+    for label, value in paths.items():
+        path = Path(value)
+        check.true("{} {} must be absolute".format(name, label), path.is_absolute())
+        check.true(
+            "{} {} must be inside {}".format(name, label, root),
+            path != root and root in path.parents,
+        )
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--testbed", default="testbed.yaml")
     parser.add_argument("--config-dir")
+    parser.add_argument("--ml-device-override", choices=("cpu",))
     args = parser.parse_args()
 
     testbed_path = resolve_path(args.testbed)
@@ -224,13 +242,16 @@ def main():
         check.equal(mtlf_name + " bind", mtlf["server"]["binding_host"], "0.0.0.0")
         check.equal(mtlf_name + " container port", mtlf["server"]["port"], services[mtlf_name]["containerPort"])
         check.equal(mtlf_name + " public URL", mtlf["artifact"]["public_base_url"], uri(mtlf_endpoint["address"], mtlf_endpoint["port"]))
-        check.equal(mtlf_name + " device", mtlf["federated_learning"]["client"]["training"]["device"], services[mtlf_name]["device"])
+        expected_device = args.ml_device_override or services[mtlf_name]["device"]
+        check.equal(mtlf_name + " device", mtlf["federated_learning"]["client"]["training"]["device"], expected_device)
+        check_pymtlf_data_paths(check, mtlf_name, mtlf)
 
     mtlf_c = load_yaml(config_dir / "pymtlf-c.yaml")
     mtlf_c_endpoint = backends["pymtlf-c"]
     check.equal("pymtlf-c bind", mtlf_c["server"]["binding_host"], "0.0.0.0")
     check.equal("pymtlf-c container port", mtlf_c["server"]["port"], services["pymtlf-c"]["containerPort"])
     check.equal("pymtlf-c public URL", mtlf_c["artifact"]["public_base_url"], uri(mtlf_c_endpoint["address"], mtlf_c_endpoint["port"]))
+    check_pymtlf_data_paths(check, "pymtlf-c", mtlf_c)
     check.equal(
         "pymtlf-c client origins", mtlf_c["federated_learning"]["artifact_download"]["allowed_origins"],
         [uri(backends[name]["address"], backends[name]["port"]) for name in ("pymtlf-a", "pymtlf-b")],

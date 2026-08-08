@@ -2,6 +2,7 @@ server: {binding_host: 0.0.0.0, port: 9292}
 runtime: {mode: fl_server}
 storage: {artifact_root: /var/lib/5g-nwdaf-infrastructure/pymtlf-c/artifacts}
 model_state: {directory: /var/lib/5g-nwdaf-infrastructure/pymtlf-c/model-state}
+publication: {directory: /var/lib/5g-nwdaf-infrastructure/pymtlf-c/publications}
 artifact:
   public_base_url: http://192.168.57.1:9292
   max_compressed_bytes: 33554432

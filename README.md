@@ -36,8 +36,8 @@ is fixed by parent gitlinks and is never cloned by guest provisioning.
 
 ## Command surface
 
-No VM or service is created merely by cloning this repository. Once the Host
-ML lifecycle increment is implemented, the intended complete sequence is:
+No VM or service is created merely by cloning this repository. The long-lived
+Host ML lifecycle commands are still pending; the intended complete sequence is:
 
 ```sh
 git submodule update --init --recursive
@@ -78,10 +78,14 @@ storage remain hard gates.
 The committed config publishes all five ML endpoints on the isolated Host SBI
 candidate `192.168.57.1`, using ports `9091`-`9094` and `9292`. Container
 listeners bind their own `0.0.0.0` interfaces; callbacks and Go NWDAF clients
-use only the advertised Host endpoints. Compose/image orchestration, Host-to-VM
-reachability smoke, and the three new VMs remain unexecuted. Historical guest
-ML provisioning is retained temporarily as rollback material but is no longer
-part of the declared placement or guest service start sequence.
+use only the advertised Host endpoints. A pinned Python 3.12 image definition,
+PyAnLF/PyMTLF targets, five-service Compose topology, production GPU requests,
+and a CPU-only validation override are implemented. A bounded CPU smoke started
+all five services, reached application health, and removed its containers and
+volumes afterward. Host-to-VM reachability, NVIDIA container GPU access, the
+long-lived ML lifecycle, and the three new VMs remain unexecuted. Historical
+guest ML provisioning is retained temporarily as rollback material but is no
+longer part of the declared placement or guest service start sequence.
 
 The initial implementation intentionally does not support TLS/certificates,
 automatic experiment history, or 5g-viz.
