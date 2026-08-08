@@ -1,7 +1,7 @@
 # Validation-only override. The generated smoke config changes both FL clients
-# to CPU; this file removes their production GPU device requests.
+# to CPU; this file removes their production CDI device requests.
 services:
   pymtlf-a:
-    gpus: !reset []
+    devices: !reset []
   pymtlf-b:
-    gpus: !reset []
+    devices: !reset []

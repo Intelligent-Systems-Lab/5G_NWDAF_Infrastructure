@@ -28,6 +28,20 @@ if ! host_has_address "$bind_address"; then
 fi
 ml_host_resource_gate "$testbed"
 
+if [ "$mode" = baseline ]; then
+  cdi_device=nvidia.com/gpu=all
+  if ! command -v nvidia-ctk >/dev/null 2>&1; then
+    echo "NVIDIA CDI prerequisite is missing: nvidia-ctk was not found" >&2
+    exit 1
+  fi
+  cdi_inventory=$(nvidia-ctk cdi list)
+  if ! grep -Fxq "$cdi_device" <<<"$cdi_inventory"; then
+    echo "NVIDIA CDI device is unavailable: $cdi_device" >&2
+    printf '%s\n' "$cdi_inventory" >&2
+    exit 1
+  fi
+fi
+
 export CONFIG_DIR="$config_dir"
 export CONFIG_SET_NAME="$config_name"
 export CONFIG_HASH="$hash"
@@ -37,8 +51,8 @@ echo "ML CONFIG project=$project mode=$mode set=$config_name hash=$hash bind=$bi
 ml_compose build pyanlf-a pymtlf-a
 
 if [ "$mode" = baseline ]; then
-  echo "GPU PROBE image=5g-nwdaf-infrastructure/pymtlf:local"
-  docker run --rm --gpus all \
+  echo "GPU PROBE device=$cdi_device image=5g-nwdaf-infrastructure/pymtlf:local"
+  docker run --rm --device "$cdi_device" \
     --label "io.5g-nwdaf.project=$project" \
     --entrypoint python \
     5g-nwdaf-infrastructure/pymtlf:local \

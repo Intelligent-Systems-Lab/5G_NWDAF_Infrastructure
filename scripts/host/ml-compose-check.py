@@ -109,7 +109,19 @@ def main():
         )
 
         expected_gpu = expected["device"].startswith("cuda") and args.mode == "baseline"
-        check.equal(name + " GPU request", bool(service.get("gpus")), expected_gpu)
+        expected_devices = (
+            [
+                {
+                    "source": "nvidia.com/gpu=all",
+                    "target": "nvidia.com/gpu=all",
+                    "permissions": "rwm",
+                }
+            ]
+            if expected_gpu
+            else []
+        )
+        check.equal(name + " CDI device request", service.get("devices", []), expected_devices)
+        check.true(name + " must not use legacy GPU request", not service.get("gpus"))
 
     if check.errors:
         for error in check.errors:

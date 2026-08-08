@@ -99,8 +99,8 @@ services:
       SERVICE_PORT: "9092"
     cpus: 2.0
     mem_limit: 1536m
-    gpus:
-      - {driver: nvidia, count: 1, capabilities: [gpu]}
+    devices:
+      - "nvidia.com/gpu=all"
     ports:
       - {target: 9092, published: "${PYMTLF_A_PORT:-9092}", host_ip: "${ML_BIND_ADDRESS:-192.168.57.1}", protocol: tcp}
     volumes:
@@ -126,8 +126,8 @@ services:
       SERVICE_PORT: "9092"
     cpus: 2.0
     mem_limit: 1536m
-    gpus:
-      - {driver: nvidia, count: 1, capabilities: [gpu]}
+    devices:
+      - "nvidia.com/gpu=all"
     ports:
       - {target: 9092, published: "${PYMTLF_B_PORT:-9091}", host_ip: "${ML_BIND_ADDRESS:-192.168.57.1}", protocol: tcp}
     volumes:
