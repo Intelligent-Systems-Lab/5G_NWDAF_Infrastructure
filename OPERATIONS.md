@@ -7,7 +7,7 @@ The repository treats five states independently:
 1. Source and config are selected on the physical host.
 2. `vagrant up` creates or powers on `core`, `path-a`, and `path-b`.
 3. `services-start` stages one config set and starts guest processes.
-4. `ml-start` will start five Host ML containers from that same config identity.
+4. `ml-start` starts five Host ML containers from that same config identity.
 5. `subscriptions-start` runs one Core consumer and creates two NWDAF resources.
 
 VM provisioning installs toolchains and builds binaries but leaves the
@@ -140,18 +140,44 @@ container:
 make ml-compose-check
 ```
 
+Operate the long-lived production project independently from VM services:
+
+```sh
+make ml-start
+make ml-status
+make ml-stop
+```
+
+`ml-start` validates and hashes the selected complete config set, builds each
+image target once, verifies the Host bind address, requires the configured Host
+RAM reserve and Docker free-space threshold, and performs an actual CUDA
+visibility probe before starting the production GPU services. Low swap follows
+the configured warn/require policy. Missing NVIDIA runtime support therefore
+fails before Compose service creation instead of silently falling back to CPU.
+A failed Compose startup stops only this ML project and retains images and named
+volumes.
+
+`ml-status` reports state, application health, effective configured device,
+actual CUDA visibility, live memory, image ID, component revision, config-set
+name, and config hash. `ml-stop` stops only running containers labeled as the
+`5g-nwdaf-infrastructure` project; stopped containers, named volumes, images,
+VMs, guest processes, and subscriptions remain intact.
+
 Run the bounded CPU-only image/config/health smoke:
 
 ```sh
 make ml-cpu-smoke
+make ml-lifecycle-smoke
 ```
 
-The smoke binds only loopback, generates an ignored config set with A/B training
+Each smoke binds only loopback, generates an ignored config set with A/B training
 set to CPU, builds each image target once, starts all five services, reports
 effective device and container memory, then removes only its own containers,
-network, volumes, and generated config. It retains the two images. It does not
-exercise CUDA, modify the NVIDIA driver/toolkit, create a VM, or prove VM-to-Host
-reachability.
+network, volumes, and generated config. The lifecycle smoke additionally proves
+start/status/log/stop, including retention of five stopped containers and five
+volumes before its final disposable cleanup. Both retain the two images. They do
+not exercise CUDA, modify the NVIDIA driver/toolkit, create a VM, or prove
+VM-to-Host reachability.
 
 The first successful empty-service smoke observed about 230 MiB RSS per PyAnLF
 and 283 MiB per PyMTLF, about 1.28 GiB total. These figures exclude model
@@ -161,9 +187,9 @@ are startup measurements rather than capacity requirements. Each image has a
 runtime; the common runtime layers are shared by both image targets. Do not run
 global Docker prune on this shared Host.
 
-The long-lived `ml-start`/`ml-status`/`ml-stop` commands are not yet implemented.
-Production GPU access and Host-to-VM reachability therefore remain outside the
-current validation boundary.
+The production lifecycle has not yet passed its GPU activation gate. Production
+GPU access and Host-to-VM reachability therefore remain outside the current
+validation boundary.
 
 Pseudo driver support is required on both paths. It is embedded in each UPF
 process and configured by `upfcfg-a.yaml` / `upfcfg-b.yaml`:
@@ -200,6 +226,7 @@ Use compact state without changing processes:
 ```sh
 make vm-status
 make services-status
+make ml-status
 make subscriptions-status
 make observe
 ```
@@ -207,12 +234,17 @@ make observe
 Follow journald directly when detail is needed:
 
 ```sh
-scripts/host/logs.sh --vm all --service '*' --since '10 minutes ago'
-scripts/host/logs.sh --vm path-a --service upf-a --since today
+scripts/host/logs.sh --source all --service '*' --since '10 minutes ago'
+scripts/host/logs.sh --source vm --vm path-a --service upf-a --since today
+scripts/host/logs.sh --source ml --service pymtlf-a --since '5 minutes ago'
+scripts/host/logs.sh --source ml --service pyanlf-a --tail 20 --no-follow
 ```
 
-Stopping the log follower does not stop any guest. This version does not assign
-run IDs, collect logs automatically, or bind VM lifetime to experiment history.
+`make observe` includes VM, guest service, ML container, and subscription state.
+Log selection is label-scoped for ML containers and supports VM, ML, or combined
+sources. Stopping the log follower does not stop any process. This version does
+not assign run IDs, collect logs automatically, or bind VM lifetime to experiment
+history.
 
 ## Initial non-goals
 

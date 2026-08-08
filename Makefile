@@ -3,7 +3,8 @@ TESTBED ?= testbed.yaml
 CONFIG_DIR ?=
 NAME ?= local
 
-.PHONY: help preflight config-check config-render ml-compose-check ml-cpu-smoke vm-up vm-status vm-halt \
+.PHONY: help preflight config-check config-render ml-compose-check ml-cpu-smoke ml-lifecycle-smoke \
+	ml-start ml-status ml-stop vm-up vm-status vm-halt \
 	services-start services-status services-stop subscriptions-start \
 	subscriptions-status subscriptions-stop observe logs
 
@@ -12,7 +13,8 @@ help:
 	@echo "  make preflight"
 	@echo "  make config-check [TESTBED=...] [CONFIG_DIR=...]"
 	@echo "  make config-render NAME=... [TESTBED=...]"
-	@echo "  make ml-compose-check | ml-cpu-smoke"
+	@echo "  make ml-compose-check | ml-cpu-smoke | ml-lifecycle-smoke"
+	@echo "  make ml-start | ml-status | ml-stop"
 	@echo "  make vm-up | vm-status | vm-halt"
 	@echo "  make services-start | services-status | services-stop"
 	@echo "  make subscriptions-start | subscriptions-status | subscriptions-stop"
@@ -33,6 +35,18 @@ ml-compose-check:
 
 ml-cpu-smoke:
 	@scripts/host/ml-cpu-smoke.sh
+
+ml-lifecycle-smoke:
+	@scripts/host/ml-lifecycle-smoke.sh
+
+ml-start:
+	@scripts/host/ml-start.sh "$(TESTBED)" "$(CONFIG_DIR)"
+
+ml-status:
+	@scripts/host/ml-status.sh
+
+ml-stop:
+	@scripts/host/ml-stop.sh
 
 vm-up:
 	@TESTBED="$(TESTBED)" vagrant up

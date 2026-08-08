@@ -34,6 +34,7 @@ def compose_config(mode, config_dir, bind_address):
         {
             "CONFIG_DIR": str(config_dir),
             "CONFIG_SET_NAME": mode,
+            "CONFIG_HASH": "static-check",
             "ML_BIND_ADDRESS": bind_address,
         }
     )
@@ -83,6 +84,10 @@ def main():
         check.true(name + " healthcheck missing", bool(service.get("healthcheck", {}).get("test")))
         check.equal(name + " log driver", service.get("logging", {}).get("driver"), "local")
         check.true(name + " memory limit missing", int(service.get("mem_limit", 0)) > 0)
+        labels = service.get("labels", {})
+        check.equal(name + " service label", labels.get("io.5g-nwdaf.service"), name)
+        check.equal(name + " config-set label", labels.get("io.5g-nwdaf.config-set"), args.mode)
+        check.equal(name + " config-hash label", labels.get("io.5g-nwdaf.config-hash"), "static-check")
 
         ports = service.get("ports", [])
         check.equal(name + " published port count", len(ports), 1)

@@ -6,6 +6,7 @@ MACHINES=(core path-a path-b)
 CORE_UNITS=(mongodb nrf nssf udr udm ausf pcf amf smf adrf nwdaf-c)
 PATH_A_UNITS=(upf-a nwdaf-a gnb-a ue1 ue2 ue3)
 PATH_B_UNITS=(upf-b nwdaf-b gnb-b ue4 ue5 ue6)
+ML_SERVICES=(pyanlf-a pyanlf-b pymtlf-a pymtlf-b pymtlf-c)
 
 vssh() {
   local machine=$1 command=$2
@@ -55,6 +56,99 @@ from configlib import load_yaml, resolve_config_dir, resolve_path
 definition = load_yaml(resolve_path(sys.argv[1]))
 print(resolve_config_dir(definition, sys.argv[2] or None))
 PY
+}
+
+effective_ml_bind_address() {
+  local testbed=$1
+  PYTHONPATH="$HOST_ROOT/scripts/host" python3 - "$testbed" <<'PY'
+import sys
+from configlib import load_yaml, resolve_ml_bind_address, resolve_path
+definition = load_yaml(resolve_path(sys.argv[1]))
+print(resolve_ml_bind_address(definition))
+PY
+}
+
+ml_project_name() {
+  local project=${ML_PROJECT_NAME:-5g-nwdaf-infrastructure}
+  [[ "$project" =~ ^[a-z0-9][a-z0-9_-]*$ ]] || {
+    echo "invalid ML project name: $project" >&2
+    return 2
+  }
+  printf '%s\n' "$project"
+}
+
+ml_runtime_mode() {
+  local mode=${ML_RUNTIME_MODE:-baseline}
+  case "$mode" in
+    baseline|cpu-smoke) printf '%s\n' "$mode" ;;
+    *) echo "invalid ML runtime mode: $mode" >&2; return 2 ;;
+  esac
+}
+
+ml_compose() {
+  local project mode
+  local -a command
+  project=$(ml_project_name)
+  mode=$(ml_runtime_mode)
+  command=(docker compose -p "$project" -f "$HOST_ROOT/compose.yaml")
+  if [ "$mode" = cpu-smoke ]; then
+    command+=(-f "$HOST_ROOT/compose.cpu-smoke.yaml")
+  fi
+  "${command[@]}" "$@"
+}
+
+host_has_address() {
+  local address=$1
+  ip -j address show | python3 -c '
+import json, sys
+target = sys.argv[1]
+addresses = {
+    item.get("local")
+    for interface in json.load(sys.stdin)
+    for item in interface.get("addr_info", [])
+}
+raise SystemExit(0 if target in addresses else 1)
+' "$address"
+}
+
+ml_host_resource_gate() {
+  local testbed=$1
+  local reserve_mib swap_policy minimum_swap_mib minimum_storage_gib
+  local available_mib swap_free_mib docker_root docker_free_gib
+  read -r reserve_mib swap_policy minimum_swap_mib minimum_storage_gib < <(
+    PYTHONPATH="$HOST_ROOT/scripts/host" python3 - "$testbed" <<'PY'
+import sys
+from configlib import load_yaml, resolve_path
+safety = load_yaml(resolve_path(sys.argv[1]))["hostSafety"]
+print(
+    safety["reserveMemoryMiB"],
+    safety["swapPolicy"],
+    safety["minimumFreeSwapMiB"],
+    safety["minimumFreeStorageGiB"],
+)
+PY
+  )
+  available_mib=$(awk '/MemAvailable:/ {print int($2/1024)}' /proc/meminfo)
+  swap_free_mib=$(awk '/SwapFree:/ {print int($2/1024)}' /proc/meminfo)
+  docker_root=$(docker info --format '{{.DockerRootDir}}')
+  docker_free_gib=$(df -Pk "$docker_root" | awk 'NR==2 {print int($4/1024/1024)}')
+
+  if [ "$available_mib" -lt "$reserve_mib" ]; then
+    echo "available RAM ${available_mib}MiB is below ML/Host reserve ${reserve_mib}MiB" >&2
+    return 1
+  fi
+  if [ "$docker_free_gib" -lt "$minimum_storage_gib" ]; then
+    echo "Docker data-root free ${docker_free_gib}GiB is below ${minimum_storage_gib}GiB" >&2
+    return 1
+  fi
+  if [ "$swap_free_mib" -lt "$minimum_swap_mib" ]; then
+    if [ "$swap_policy" = require ]; then
+      echo "free swap ${swap_free_mib}MiB is below required ${minimum_swap_mib}MiB" >&2
+      return 1
+    fi
+    echo "WARN free swap ${swap_free_mib}MiB is below ${minimum_swap_mib}MiB" >&2
+  fi
+  echo "ML HOST available_ram=${available_mib}MiB reserve=${reserve_mib}MiB docker_free=${docker_free_gib}GiB"
 }
 
 stage_config_all() {
