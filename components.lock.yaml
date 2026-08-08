@@ -11,9 +11,8 @@ components:
   - {path: NFs/upf, remote: "git@github.com:Intelligent-Systems-Lab/go-upf.git", branch: test-EES-with-pseudodriver, commit: 9a4d95ca02ddcee29cd07989d7cf6153d01061c7, license: Apache-2.0}
   - {path: NFs/nwdaf, remote: "git@github.com:Intelligent-Systems-Lab/NWDAF.git", branch: feat/r18-federated-learning, commit: ea43cce859661f091964e6acc01c605e239382d7, license: UNDECLARED}
   - {path: NFs/adrf, remote: "git@github.com:Intelligent-Systems-Lab/adrf.git", branch: feat/r18-federated-learning, commit: 905f0599f68fe389bba14ed56db0ef9abeab5ccd, license: UNDECLARED}
-  - {path: ML/PyAnLF, remote: "git@github.com:Intelligent-Systems-Lab/PyAnLF.git", branch: feat/r18-federated-learning, commit: a35f68910f74ec60a65af2a5d9197abd07181319, license: UNDECLARED}
-  - {path: ML/PyMTLF, remote: "git@github.com:Intelligent-Systems-Lab/PyMTLF.git", branch: feat/r18-federated-learning, commit: 893cbf2f81a9cbb15a3cca33daafcba2239a0845, license: UNDECLARED}
+  - {path: ML/PyAnLF, remote: "git@github.com:Intelligent-Systems-Lab/PyAnLF.git", branch: feat/r18-federated-learning, commit: 9e64417fe053e03c2a616abea6f284df8acd1b38, license: UNDECLARED}
+  - {path: ML/PyMTLF, remote: "git@github.com:Intelligent-Systems-Lab/PyMTLF.git", branch: feat/r18-federated-learning, commit: e9c5b08725dc06835485b29ff6c264340f9805f9, license: UNDECLARED}
   - {path: RAN/UERANSIM, remote: "https://github.com/aligungr/UERANSIM.git", branch: master, commit: 2a3ef81f189ca95d5c1996a28ed7af9734f5cfb4, license: AGPL-3.0-only}
   - {path: kernel/gtp5g, remote: "https://github.com/free5gc/gtp5g.git", tag: v0.9.16, commit: 8d723c29fc0de3eeeff3e9a91132838579e8ee1b, license: GPL-2.0-only}
   - {path: webconsole, remote: "https://github.com/free5gc/webconsole.git", branch: main, commit: 70d282f80e285d1fbae38f48c5c4ffefebde9944, license: Apache-2.0, optional: true}
-
