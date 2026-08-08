@@ -7,7 +7,10 @@ import sys
 from pathlib import Path
 from urllib.parse import urlparse
 
-from configlib import get_path, load_yaml, resolve_config_dir, resolve_path, sha256_tree
+from configlib import (
+    ROOT, get_path, load_yaml, resolve_config_dir, resolve_ml_bind_address,
+    resolve_path, sha256_file, sha256_tree,
+)
 
 
 REQUIRED = {
@@ -56,6 +59,52 @@ def main():
     host_safety = testbed.get("hostSafety", {})
     for key in ("reserveMemoryMiB", "minimumFreeSwapMiB", "minimumFreeStorageGiB"):
         check.true("hostSafety.{} must be a positive integer".format(key), isinstance(host_safety.get(key), int) and host_safety[key] > 0)
+    check.true(
+        "hostSafety.swapPolicy must be 'warn' or 'require'",
+        host_safety.get("swapPolicy") in ("warn", "require"),
+    )
+
+    expected_placement = {
+        "core": ["nrf", "nssf", "udr", "udm", "ausf", "pcf", "amf", "smf", "mongodb", "adrf", "nwdaf-c", "nwdaf-consumer"],
+        "path-a": ["upf-a", "gnb-a", "ue1", "ue2", "ue3", "nwdaf-a"],
+        "path-b": ["upf-b", "gnb-b", "ue4", "ue5", "ue6", "nwdaf-b"],
+        "host-containers": ["pyanlf-a", "pymtlf-a", "pyanlf-b", "pymtlf-b", "pymtlf-c"],
+    }
+    check.equal("placement groups", sorted(testbed.get("placement", {})), sorted(expected_placement))
+    for group, expected in expected_placement.items():
+        check.equal("placement.{}".format(group), testbed.get("placement", {}).get(group), expected)
+
+    ml_runtime = testbed.get("mlRuntime", {})
+    check.equal("ML runtime engine", ml_runtime.get("engine"), "docker-compose-v2")
+    check.equal("ML runtime network", ml_runtime.get("networkMode"), "bridge")
+    expected_ml_names = sorted(expected_placement["host-containers"])
+    check.equal("ML runtime services", sorted(ml_runtime.get("services", {})), expected_ml_names)
+    advertised_address = ml_runtime.get("advertisedAddress")
+    bind_address = resolve_ml_bind_address(testbed)
+    sbi_network = ipaddress.ip_network(testbed["networks"]["sbi"]["cidr"])
+    try:
+        advertised_inside = ipaddress.ip_address(advertised_address) in sbi_network
+    except (TypeError, ValueError):
+        advertised_inside = False
+    check.true(
+        "ML advertised address {} outside SBI network".format(advertised_address),
+        advertised_inside,
+    )
+    try:
+        bind_ip = ipaddress.ip_address(bind_address)
+        valid_bind = not bind_ip.is_unspecified and not bind_ip.is_multicast
+    except (TypeError, ValueError):
+        valid_bind = False
+    check.true("ML bind address {} is invalid".format(bind_address), valid_bind)
+
+    published_endpoints = []
+    for name, service in ml_runtime.get("services", {}).items():
+        check.true("{} image must be pyanlf or pymtlf".format(name), service.get("image") in ("pyanlf", "pymtlf"))
+        for field in ("publishedPort", "containerPort"):
+            check.true("{}.{} must be a valid port".format(name, field), isinstance(service.get(field), int) and 0 < service[field] < 65536)
+        check.true("{}.device must be cpu or cuda:0".format(name), service.get("device") in ("cpu", "cuda:0"))
+        published_endpoints.append((advertised_address, service.get("publishedPort")))
+    check.true("duplicate ML published endpoint", len(published_endpoints) == len(set(published_endpoints)))
 
     missing = sorted(name for name in REQUIRED if not (config_dir / name).is_file())
     check.true("missing config files: {}".format(", ".join(missing)), not missing)
@@ -109,6 +158,19 @@ def main():
         check.true("UPF {} pseudo driver disabled".format(name), upf["ees"]["enabled"])
         check.true("UPF {} pseudo profile mismatch".format(name), upf["ees"]["parquetDir"].endswith("/" + path["upf"]["pseudoDriver"]["datasetProfile"]))
 
+        pseudo = path["upf"]["pseudoDriver"]
+        dataset = pseudo.get("dataset", {})
+        dataset_path = ROOT / "NFs" / "upf" / "pre_data" / pseudo["datasetProfile"] / str(dataset.get("file", ""))
+        check.true("UPF {} dataset file missing: {}".format(name, dataset_path), dataset_path.is_file())
+        if dataset_path.is_file():
+            check.equal("UPF {} dataset bytes".format(name), dataset_path.stat().st_size, dataset.get("bytes"))
+            check.equal("UPF {} dataset sha256".format(name), sha256_file(dataset_path), dataset.get("sha256"))
+        check.true("UPF {} dataset rows must be positive".format(name), isinstance(dataset.get("rows"), int) and dataset["rows"] > 0)
+        check.true(
+            "UPF {} replay headroom must be at least 512 MiB".format(name),
+            isinstance(dataset.get("minimumReplayHeadroomMiB"), int) and dataset["minimumReplayHeadroomMiB"] >= 512,
+        )
+
         gnb = load_yaml(config_dir / "ueransim" / ("gnb-{}.yaml".format(name)))
         check.equal("gNB {} TAC".format(name), str(gnb["tac"]).zfill(6), path["tai"]["tac"])
         check.equal("gNB {} N2".format(name), gnb["ngapIp"], path["gnb"]["n2"]["address"])
@@ -126,6 +188,71 @@ def main():
         check.equal("NWDAF {} ID".format(name), native["nfInstanceId"], expected["nfInstanceId"])
         check.equal("NWDAF {} bind".format(name), native["sbi"]["bindingIPv4"], expected["sbi"]["address"])
         check.equal("NWDAF {} NRF".format(name), native["nrfUri"], nrf_uri)
+        if name in ("a", "b"):
+            check.equal(
+                "NWDAF {} AnLF backend".format(name), native["anlfBackend"]["endpoint"],
+                uri(testbed["analytics"]["backends"]["pyanlf-" + name]["address"], testbed["analytics"]["backends"]["pyanlf-" + name]["port"]),
+            )
+        check.equal(
+            "NWDAF {} MTLF backend".format(name), native["mtlfBackend"]["endpoint"],
+            uri(testbed["analytics"]["backends"]["pymtlf-" + name]["address"], testbed["analytics"]["backends"]["pymtlf-" + name]["port"]),
+        )
+
+    backends = testbed["analytics"]["backends"]
+    services = ml_runtime["services"]
+    for backend_name in expected_ml_names:
+        backend = backends.get(backend_name, {})
+        check.equal("{} runtime".format(backend_name), backend.get("runtime"), "host-container")
+        check.equal("{} advertised address".format(backend_name), backend.get("address"), advertised_address)
+        check.equal("{} published port".format(backend_name), backend.get("port"), services[backend_name]["publishedPort"])
+
+    for name in ("a", "b"):
+        anlf_name = "pyanlf-" + name
+        mtlf_name = "pymtlf-" + name
+        anlf = load_yaml(config_dir / (anlf_name + ".yaml"))
+        anlf_endpoint = backends[anlf_name]
+        mtlf_endpoint = backends[mtlf_name]
+        check.equal(anlf_name + " bind", anlf["server"]["binding_host"], "0.0.0.0")
+        check.equal(anlf_name + " container port", anlf["server"]["port"], services[anlf_name]["containerPort"])
+        check.equal(anlf_name + " callback", anlf["collection"]["callback_base_uri"], uri(anlf_endpoint["address"], anlf_endpoint["port"]))
+        check.equal(
+            anlf_name + " artifact origins", anlf["model"]["artifact_download"]["allowed_origins"],
+            [uri(mtlf_endpoint["address"], mtlf_endpoint["port"]), uri(testbed["coreServices"]["adrf"]["sbi"]["address"], testbed["coreServices"]["adrf"]["sbi"]["port"])],
+        )
+
+        mtlf = load_yaml(config_dir / (mtlf_name + ".yaml"))
+        check.equal(mtlf_name + " bind", mtlf["server"]["binding_host"], "0.0.0.0")
+        check.equal(mtlf_name + " container port", mtlf["server"]["port"], services[mtlf_name]["containerPort"])
+        check.equal(mtlf_name + " public URL", mtlf["artifact"]["public_base_url"], uri(mtlf_endpoint["address"], mtlf_endpoint["port"]))
+        check.equal(mtlf_name + " device", mtlf["federated_learning"]["client"]["training"]["device"], services[mtlf_name]["device"])
+
+    mtlf_c = load_yaml(config_dir / "pymtlf-c.yaml")
+    mtlf_c_endpoint = backends["pymtlf-c"]
+    check.equal("pymtlf-c bind", mtlf_c["server"]["binding_host"], "0.0.0.0")
+    check.equal("pymtlf-c container port", mtlf_c["server"]["port"], services["pymtlf-c"]["containerPort"])
+    check.equal("pymtlf-c public URL", mtlf_c["artifact"]["public_base_url"], uri(mtlf_c_endpoint["address"], mtlf_c_endpoint["port"]))
+    check.equal(
+        "pymtlf-c client origins", mtlf_c["federated_learning"]["artifact_download"]["allowed_origins"],
+        [uri(backends[name]["address"], backends[name]["port"]) for name in ("pymtlf-a", "pymtlf-b")],
+    )
+
+    manifest = load_yaml(config_dir / "manifest.yaml")
+    check.equal("manifest guest machines", manifest.get("runtime", {}).get("guestMachines"), sorted(testbed["machines"]))
+    check.equal("manifest Host containers", manifest.get("runtime", {}).get("hostContainers"), testbed["placement"]["host-containers"])
+    for path_name in ("a", "b"):
+        pseudo = testbed["paths"][path_name]["upf"]["pseudoDriver"]
+        dataset = pseudo["dataset"]
+        expected_manifest_dataset = {
+            "file": "NFs/upf/pre_data/{}/{}".format(pseudo["datasetProfile"], dataset["file"]),
+            "sha256": dataset["sha256"],
+            "bytes": dataset["bytes"],
+            "rows": dataset["rows"],
+        }
+        check.equal(
+            "manifest path-{} dataset".format(path_name),
+            manifest.get("datasets", {}).get("path-" + path_name),
+            expected_manifest_dataset,
+        )
 
     consumer = load_yaml(config_dir / "consumer.yaml")
     check.equal("consumer NRF", consumer["nrfUri"], nrf_uri)

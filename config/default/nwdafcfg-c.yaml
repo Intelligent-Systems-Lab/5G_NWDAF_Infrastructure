@@ -14,6 +14,5 @@ configuration:
   anlf: {server: {bindingIPv4: 192.168.57.30, registerIPv4: 192.168.57.30, port: 8090}}
   mtlf: {server: {bindingIPv4: 192.168.57.30, registerIPv4: 192.168.57.30, port: 8091}}
   anlfBackend: {enabled: false}
-  mtlfBackend: {enabled: true, endpoint: http://192.168.57.31:9292, requestTimeout: 35}
+  mtlfBackend: {enabled: true, endpoint: http://192.168.57.1:9292, requestTimeout: 35}
 logger: {enable: true, level: info, reportCaller: false}
-

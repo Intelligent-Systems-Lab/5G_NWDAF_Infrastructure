@@ -11,7 +11,7 @@ ok() { echo "OK   $*"; }
 fail() { echo "FAIL $*" >&2; failures=$((failures + 1)); }
 warn() { echo "WARN $*" >&2; warnings=$((warnings + 1)); }
 
-for command in git python3 sha256sum tar vagrant; do
+for command in git python3 sha256sum tar vagrant docker ip ss; do
   command -v "$command" >/dev/null && ok "$command=$(command -v "$command")" || fail "missing command: $command"
 done
 
@@ -21,24 +21,44 @@ if command -v vagrant >/dev/null; then
     provider=$(python3 -c 'import sys,yaml; print((yaml.safe_load(open(sys.argv[1])) or {}).get("provider",{}).get("name", ""))' "$HOST_ROOT/testbed.local.yaml")
   fi
   case "$provider" in
-    virtualbox) command -v VBoxManage >/dev/null && ok "VirtualBox CLI available" || fail "VirtualBox selected but VBoxManage is missing" ;;
+    virtualbox)
+      if command -v VBoxManage >/dev/null && VBoxManage list vms >/dev/null 2>&1; then
+        ok "VirtualBox CLI and host driver available"
+      else
+        fail "VirtualBox selected but VBoxManage cannot initialize the host driver"
+      fi
+      ;;
     libvirt) command -v virsh >/dev/null && ok "libvirt CLI available" || fail "libvirt selected but virsh is missing" ;;
     "") warn "provider not selected; set testbed.local.yaml or VAGRANT_DEFAULT_PROVIDER" ;;
     *) warn "provider '$provider' has no dedicated feasibility check" ;;
   esac
 fi
 
-read -r required_mib disk_gib host_reserve_mib minimum_swap_mib minimum_free_storage_gib < <(PYTHONPATH="$HOST_ROOT/scripts/host" python3 - "$testbed" <<'PY'
+if docker_info=$(docker info --format '{{.DockerRootDir}} {{.Driver}}' 2>/dev/null); then
+  read -r docker_root docker_driver <<<"$docker_info"
+  ok "Docker daemon available (root=$docker_root driver=$docker_driver)"
+  docker_free_gib=$(df -Pk "$docker_root" | awk 'NR==2 {print int($4/1024/1024)}')
+else
+  fail "Docker daemon is unavailable to the current user"
+  docker_root=""
+  docker_free_gib=0
+fi
+
+read -r required_mib disk_gib host_reserve_mib swap_policy minimum_swap_mib minimum_free_storage_gib ml_bind_address expected_docker_root < <(PYTHONPATH="$HOST_ROOT/scripts/host" python3 - "$testbed" <<'PY'
 import sys
-from configlib import load_yaml, resolve_path
+from configlib import load_local_settings, load_yaml, resolve_ml_bind_address, resolve_path
 d = load_yaml(resolve_path(sys.argv[1]))
 safety = d["hostSafety"]
+local = load_local_settings()
 print(
     sum(m["resources"]["memoryMiB"] for m in d["machines"].values()),
     sum(m["resources"]["diskGiB"] for m in d["machines"].values()),
     safety["reserveMemoryMiB"],
+    safety["swapPolicy"],
     safety["minimumFreeSwapMiB"],
     safety["minimumFreeStorageGiB"],
+    resolve_ml_bind_address(d),
+    local.get("host", {}).get("dockerDataRoot", "-"),
 )
 PY
 )
@@ -47,8 +67,43 @@ swap_free_mib=$(awk '/SwapFree:/ {print int($2/1024)}' /proc/meminfo)
 free_gib=$(df -Pk "$HOST_ROOT" | awk 'NR==2 {print int($4/1024/1024)}')
 required_with_reserve=$((required_mib + host_reserve_mib))
 [ "$available_mib" -ge "$required_with_reserve" ] && ok "available RAM ${available_mib}MiB >= VM allocation ${required_mib}MiB + host reserve ${host_reserve_mib}MiB" || fail "available RAM ${available_mib}MiB < VM allocation ${required_mib}MiB + host reserve ${host_reserve_mib}MiB"
-[ "$swap_free_mib" -ge "$minimum_swap_mib" ] && ok "free swap ${swap_free_mib}MiB >= ${minimum_swap_mib}MiB" || fail "free swap ${swap_free_mib}MiB < ${minimum_swap_mib}MiB; host is already under memory pressure"
-[ "$free_gib" -ge "$minimum_free_storage_gib" ] && ok "workspace filesystem free ${free_gib}GiB (disk budgets total ${disk_gib}GiB)" || fail "workspace filesystem free ${free_gib}GiB < ${minimum_free_storage_gib}GiB safety threshold"
+if [ "$swap_free_mib" -ge "$minimum_swap_mib" ]; then
+  ok "free swap ${swap_free_mib}MiB >= ${minimum_swap_mib}MiB"
+elif [ "$swap_policy" = "warn" ]; then
+  warn "free swap ${swap_free_mib}MiB < ${minimum_swap_mib}MiB; continue only while MemAvailable remains above the hard RAM gate"
+else
+  fail "free swap ${swap_free_mib}MiB < ${minimum_swap_mib}MiB"
+fi
+[ "$free_gib" -ge "$minimum_free_storage_gib" ] && ok "workspace filesystem free ${free_gib}GiB (VM logical disk ceilings total ${disk_gib}GiB)" || fail "workspace filesystem free ${free_gib}GiB < ${minimum_free_storage_gib}GiB safety threshold"
+if [ -n "$docker_root" ]; then
+  if [ "$expected_docker_root" != "-" ] && [ "$docker_root" != "$expected_docker_root" ]; then
+    fail "Docker data-root $docker_root does not match local expectation $expected_docker_root"
+  fi
+  [ "$docker_free_gib" -ge "$minimum_free_storage_gib" ] && ok "Docker data-root filesystem free ${docker_free_gib}GiB" || fail "Docker data-root filesystem free ${docker_free_gib}GiB < ${minimum_free_storage_gib}GiB safety threshold"
+fi
+
+if ip -o address show | awk '{print $4}' | cut -d/ -f1 | grep -Fxq "$ml_bind_address"; then
+  ok "Host ML bind address present: $ml_bind_address"
+else
+  warn "Host ML bind address $ml_bind_address is not present yet; the provider must create/expose it before ml-start"
+fi
+
+mapfile -t ml_ports < <(PYTHONPATH="$HOST_ROOT/scripts/host" python3 - "$testbed" <<'PY'
+import sys
+from configlib import load_yaml, resolve_path
+d = load_yaml(resolve_path(sys.argv[1]))
+for port in sorted({service["publishedPort"] for service in d["mlRuntime"]["services"].values()}):
+    print(port)
+PY
+)
+ml_bind_regex=${ml_bind_address//./\\.}
+for port in "${ml_ports[@]}"; do
+  if ss -H -ltn | awk '{print $4}' | grep -Eq "^(0\\.0\\.0\\.0|\\*|\\[::\\]|${ml_bind_regex}):${port}$"; then
+    fail "Host ML endpoint ${ml_bind_address}:${port} conflicts with an existing listener"
+  else
+    ok "Host ML endpoint port available: ${ml_bind_address}:${port}"
+  fi
+done
 
 if git -C "$HOST_ROOT" submodule status --recursive | grep -Eq '^[-+U]'; then
   fail "submodules are missing, conflicted, or not at parent gitlinks"

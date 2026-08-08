@@ -11,19 +11,20 @@ guest:
 
 hostSafety:
   reserveMemoryMiB: 6144
+  swapPolicy: warn
   minimumFreeSwapMiB: 1024
   minimumFreeStorageGiB: 120
 
 machines:
   core:
-    resources: {memoryMiB: 5120, cpus: 4, diskGiB: 20}
+    resources: {memoryMiB: 4096, cpus: 4, diskGiB: 40}
     interfaces:
       management: 192.168.56.10
       sbi: 192.168.57.2
       n2: 192.168.58.2
       n4: 192.168.61.2
   path-a:
-    resources: {memoryMiB: 3584, cpus: 3, diskGiB: 25}
+    resources: {memoryMiB: 3072, cpus: 3, diskGiB: 40}
     interfaces:
       management: 192.168.56.11
       sbi: 192.168.57.3
@@ -32,7 +33,7 @@ machines:
       n4: 192.168.61.3
       n6-a: 192.168.62.2
   path-b:
-    resources: {memoryMiB: 3584, cpus: 3, diskGiB: 25}
+    resources: {memoryMiB: 3072, cpus: 3, diskGiB: 40}
     interfaces:
       management: 192.168.56.12
       sbi: 192.168.57.4
@@ -70,10 +71,22 @@ placement:
     - mongodb
     - adrf
     - nwdaf-c
-    - pymtlf-c
     - nwdaf-consumer
-  path-a: [upf-a, gnb-a, ue1, ue2, ue3, nwdaf-a, pyanlf-a, pymtlf-a]
-  path-b: [upf-b, gnb-b, ue4, ue5, ue6, nwdaf-b, pyanlf-b, pymtlf-b]
+  path-a: [upf-a, gnb-a, ue1, ue2, ue3, nwdaf-a]
+  path-b: [upf-b, gnb-b, ue4, ue5, ue6, nwdaf-b]
+  host-containers: [pyanlf-a, pymtlf-a, pyanlf-b, pymtlf-b, pymtlf-c]
+
+mlRuntime:
+  engine: docker-compose-v2
+  networkMode: bridge
+  bindAddress: 192.168.57.1
+  advertisedAddress: 192.168.57.1
+  services:
+    pyanlf-a: {image: pyanlf, publishedPort: 9093, containerPort: 9093, device: cpu}
+    pyanlf-b: {image: pyanlf, publishedPort: 9094, containerPort: 9093, device: cpu}
+    pymtlf-a: {image: pymtlf, publishedPort: 9092, containerPort: 9092, device: "cuda:0"}
+    pymtlf-b: {image: pymtlf, publishedPort: 9091, containerPort: 9092, device: "cuda:0"}
+    pymtlf-c: {image: pymtlf, publishedPort: 9292, containerPort: 9292, device: cpu}
 
 coreServices:
   nrf:
@@ -118,6 +131,12 @@ paths:
         enabled: true
         mode: hybrid
         datasetProfile: group1
+        dataset:
+          file: training_packets_run001.parquet
+          sha256: d9e2772de8529870e272f44a3bc02863e8831d9c90d51eb0b33961eb28a29030
+          bytes: 21830425
+          rows: 2720063
+          minimumReplayHeadroomMiB: 512
     ues:
       - imsi-466920000000001
       - imsi-466920000000002
@@ -139,6 +158,12 @@ paths:
         enabled: true
         mode: hybrid
         datasetProfile: group2
+        dataset:
+          file: training_packets_run001.parquet
+          sha256: b8482a21f3370de491a67fa1f9908e1b8b3aec7671787bbbdb0d9287680b662e
+          bytes: 44050349
+          rows: 5759921
+          minimumReplayHeadroomMiB: 512
     ues:
       - imsi-466920000000004
       - imsi-466920000000005
@@ -163,11 +188,11 @@ analytics:
     sbi: {network: sbi, address: 192.168.57.30, port: 8080}
     role: fl-server
   backends:
-    pyanlf-a: {machine: path-a, address: 192.168.57.42, port: 9093}
-    pyanlf-b: {machine: path-b, address: 192.168.57.52, port: 9093}
-    pymtlf-a: {machine: path-a, address: 192.168.57.43, port: 9092}
-    pymtlf-b: {machine: path-b, address: 192.168.57.53, port: 9092}
-    pymtlf-c: {machine: core, address: 192.168.57.31, port: 9292}
+    pyanlf-a: {runtime: host-container, address: 192.168.57.1, port: 9093}
+    pyanlf-b: {runtime: host-container, address: 192.168.57.1, port: 9094}
+    pymtlf-a: {runtime: host-container, address: 192.168.57.1, port: 9092}
+    pymtlf-b: {runtime: host-container, address: 192.168.57.1, port: 9091}
+    pymtlf-c: {runtime: host-container, address: 192.168.57.1, port: 9292}
 
 consumer:
   machine: core

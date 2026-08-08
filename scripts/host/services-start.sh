@@ -22,13 +22,12 @@ for unit in nssf udr udm ausf pcf amf; do start_unit core "$unit"; done
 start_unit path-a upf-a
 start_unit path-b upf-b
 start_unit core smf
-for unit in adrf pymtlf-c nwdaf-c; do start_unit core "$unit"; done
-for unit in pyanlf-a pymtlf-a nwdaf-a; do start_unit path-a "$unit"; done
-for unit in pyanlf-b pymtlf-b nwdaf-b; do start_unit path-b "$unit"; done
+for unit in adrf nwdaf-c; do start_unit core "$unit"; done
+start_unit path-a nwdaf-a
+start_unit path-b nwdaf-b
 start_unit path-a gnb-a
 start_unit path-b gnb-b
 for unit in ue1 ue2 ue3; do start_unit path-a "$unit"; done
 for unit in ue4 ue5 ue6; do start_unit path-b "$unit"; done
 trap - ERR
-echo "All experiment services are active; subscriptions have not been created."
-
+echo "Guest experiment services are active; Host ML containers and subscriptions have not been started."

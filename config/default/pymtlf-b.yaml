@@ -1,20 +1,20 @@
-server: {binding_host: 192.168.57.53, port: 9092}
+server: {binding_host: 0.0.0.0, port: 9092}
 runtime: {mode: fl_client}
 storage: {artifact_root: /var/lib/5g-nwdaf-infrastructure/pymtlf-b/artifacts}
 model_state: {directory: /var/lib/5g-nwdaf-infrastructure/pymtlf-b/model-state}
 artifact:
-  public_base_url: http://192.168.57.53:9092
+  public_base_url: http://192.168.57.1:9091
   max_compressed_bytes: 33554432
   max_extracted_bytes: 134217728
   max_single_file_bytes: 67108864
   max_entries: 32
 federated_learning:
   workspace_root: /var/lib/5g-nwdaf-infrastructure/pymtlf-b/fl-workspaces
-  public_base_url: http://192.168.57.53:9092
+  public_base_url: http://192.168.57.1:9091
   client:
     model_interoperability_ids: ["001122"]
     max_concurrent_jobs: 1
-    training: {device: cpu, batch_size: 32, learning_rate: 0.001, epochs: 18, validation_ratio: 0.1, random_seed: 42}
+    training: {device: "cuda:0", batch_size: 32, learning_rate: 0.001, epochs: 18, validation_ratio: 0.1, random_seed: 42}
 adrf: {mode: nrf, discovery_timeout_seconds: 30, request_timeout_seconds: 120}
 dataset:
   retrieval_window_seconds: 1800

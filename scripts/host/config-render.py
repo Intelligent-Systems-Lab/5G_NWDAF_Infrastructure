@@ -138,7 +138,53 @@ def render(testbed, baseline, output):
         native["nrfUri"] = nrf_uri
         if name in ("a", "b"):
             native["nwdafInfo"]["mlAnalyticsList"][0]["trackingAreaList"] = [{"plmnId": dict(plmn), "tac": definition["tai"]}]
+            native["anlfBackend"]["endpoint"] = endpoint_uri(
+                testbed["analytics"]["backends"]["pyanlf-" + name]
+            )
+        native["mtlfBackend"]["endpoint"] = endpoint_uri(
+            testbed["analytics"]["backends"]["pymtlf-" + name]
+        )
         write(output, "nwdafcfg-{}.yaml".format(name), cfg)
+
+    backends = testbed["analytics"]["backends"]
+    runtime_services = testbed["mlRuntime"]["services"]
+    for name in ("a", "b"):
+        anlf_name = "pyanlf-" + name
+        mtlf_name = "pymtlf-" + name
+        anlf_endpoint = backends[anlf_name]
+        mtlf_endpoint = backends[mtlf_name]
+        anlf = read(output, anlf_name + ".yaml")
+        anlf["server"]["binding_host"] = "0.0.0.0"
+        anlf["server"]["port"] = runtime_services[anlf_name]["containerPort"]
+        anlf["model"]["artifact_download"]["allowed_origins"] = [
+            endpoint_uri(mtlf_endpoint), endpoint_uri(core["adrf"]["sbi"])
+        ]
+        anlf["model_provision"]["callback_uri"] = endpoint_uri(anlf_endpoint) + "/internal/v1/ml-model-provision/notifications"
+        anlf["collection"]["callback_base_uri"] = endpoint_uri(anlf_endpoint)
+        anlf["mongodb"]["url"] = mongo_uri
+        write(output, anlf_name + ".yaml", anlf)
+
+        mtlf = read(output, mtlf_name + ".yaml")
+        mtlf["server"]["binding_host"] = "0.0.0.0"
+        mtlf["server"]["port"] = runtime_services[mtlf_name]["containerPort"]
+        mtlf["artifact"]["public_base_url"] = endpoint_uri(mtlf_endpoint)
+        mtlf["federated_learning"]["public_base_url"] = endpoint_uri(mtlf_endpoint)
+        mtlf["federated_learning"]["client"]["training"]["device"] = runtime_services[mtlf_name]["device"]
+        mtlf["dataset"]["mongodb"]["url"] = mongo_uri
+        write(output, mtlf_name + ".yaml", mtlf)
+
+    mtlf_c_endpoint = backends["pymtlf-c"]
+    mtlf_c = read(output, "pymtlf-c.yaml")
+    mtlf_c["server"]["binding_host"] = "0.0.0.0"
+    mtlf_c["server"]["port"] = runtime_services["pymtlf-c"]["containerPort"]
+    mtlf_c["artifact"]["public_base_url"] = endpoint_uri(mtlf_c_endpoint)
+    mtlf_c["federated_learning"]["public_base_url"] = endpoint_uri(mtlf_c_endpoint)
+    mtlf_c["federated_learning"]["artifact_download"]["allowed_origins"] = [
+        endpoint_uri(backends["pymtlf-a"]), endpoint_uri(backends["pymtlf-b"])
+    ]
+    mtlf_c["federated_learning"]["server"]["callback_uri"] = endpoint_uri(mtlf_c_endpoint) + "/internal/v1/ml-model-training/notifications"
+    mtlf_c["model_monitor"]["callback_uri"] = endpoint_uri(mtlf_c_endpoint) + "/internal/v1/ml-model-monitor/notifications"
+    write(output, "pymtlf-c.yaml", mtlf_c)
 
     consumer = read(output, "consumer.yaml")
     consumer["nrfUri"] = nrf_uri
@@ -174,6 +220,26 @@ def main():
         revision = "unknown"
     manifest = load_yaml(output / "manifest.yaml")
     manifest["name"] = args.name
+    try:
+        manifest["topology"] = testbed_path.relative_to(ROOT).as_posix()
+    except ValueError:
+        manifest["topology"] = str(testbed_path)
+    manifest["runtime"] = {
+        "guestMachines": sorted(testbed["machines"]),
+        "hostContainers": list(testbed["placement"]["host-containers"]),
+    }
+    manifest["datasets"] = {}
+    for path_name in ("a", "b"):
+        pseudo = testbed["paths"][path_name]["upf"]["pseudoDriver"]
+        dataset = pseudo["dataset"]
+        manifest["datasets"]["path-" + path_name] = {
+            "file": "NFs/upf/pre_data/{}/{}".format(
+                pseudo["datasetProfile"], dataset["file"]
+            ),
+            "sha256": dataset["sha256"],
+            "bytes": dataset["bytes"],
+            "rows": dataset["rows"],
+        }
     manifest["generated"] = {
         "baselineHash": sha256_tree(baseline),
         "definitionHash": canonical_sha256(testbed),

@@ -40,6 +40,18 @@ def resolve_config_dir(testbed, explicit=None):
     return resolve_path(testbed.get("config", {}).get("directory", "config/default"))
 
 
+def load_local_settings():
+    local_path = ROOT / "testbed.local.yaml"
+    return load_yaml(local_path) if local_path.exists() else {}
+
+
+def resolve_ml_bind_address(testbed):
+    local = load_local_settings()
+    return local.get("host", {}).get(
+        "mlBindAddress", testbed.get("mlRuntime", {}).get("bindAddress")
+    )
+
+
 def sha256_file(path):
     digest = hashlib.sha256()
     with Path(path).open("rb") as stream:
@@ -76,4 +88,3 @@ def set_path(value, keys, replacement):
     for key in keys[:-1]:
         current = current[key]
     current[keys[-1]] = replacement
-

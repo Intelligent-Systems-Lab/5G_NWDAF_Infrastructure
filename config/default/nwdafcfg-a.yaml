@@ -16,7 +16,6 @@ configuration:
         nfTypeList: [UPF]
   anlf: {server: {bindingIPv4: 192.168.57.41, registerIPv4: 192.168.57.41, port: 8090}}
   mtlf: {server: {bindingIPv4: 192.168.57.41, registerIPv4: 192.168.57.41, port: 8091}}
-  anlfBackend: {enabled: true, endpoint: http://192.168.57.42:9093, requestTimeout: 35}
-  mtlfBackend: {enabled: true, endpoint: http://192.168.57.43:9092, requestTimeout: 35}
+  anlfBackend: {enabled: true, endpoint: http://192.168.57.1:9093, requestTimeout: 35}
+  mtlfBackend: {enabled: true, endpoint: http://192.168.57.1:9092, requestTimeout: 35}
 logger: {enable: true, level: info, reportCaller: false}
-

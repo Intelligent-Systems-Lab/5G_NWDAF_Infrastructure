@@ -3,9 +3,9 @@ set -euo pipefail
 
 HOST_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
 MACHINES=(core path-a path-b)
-CORE_UNITS=(mongodb nrf nssf udr udm ausf pcf amf smf adrf pymtlf-c nwdaf-c)
-PATH_A_UNITS=(upf-a pyanlf-a pymtlf-a nwdaf-a gnb-a ue1 ue2 ue3)
-PATH_B_UNITS=(upf-b pyanlf-b pymtlf-b nwdaf-b gnb-b ue4 ue5 ue6)
+CORE_UNITS=(mongodb nrf nssf udr udm ausf pcf amf smf adrf nwdaf-c)
+PATH_A_UNITS=(upf-a nwdaf-a gnb-a ue1 ue2 ue3)
+PATH_B_UNITS=(upf-b nwdaf-b gnb-b ue4 ue5 ue6)
 
 vssh() {
   local machine=$1 command=$2
@@ -79,4 +79,3 @@ print_unit_status() {
   state=$(vssh "$machine" "systemctl is-active 5g-nwdaf@$unit.service 2>/dev/null || true" 2>/dev/null | tr -d '\r' | tail -n 1)
   printf '%-8s %-14s %s\n' "$machine" "$unit" "${state:-unknown}"
 }
-
