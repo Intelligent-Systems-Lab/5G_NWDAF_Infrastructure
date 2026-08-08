@@ -8,7 +8,8 @@ network functions on the host.
 `5g-nwdaf-infrastructure`. Stop retains containers, named volumes, and images.
 `ml-lifecycle-smoke.sh` uses a separate disposable project and CPU-only config.
 Production `ml-start.sh` requires the Host CDI inventory to contain
-`nvidia.com/gpu=all` and probes that device before starting the project. It does
-not configure a Docker runtime or restart the shared daemon. `ml-status.sh`
-reports the configured application device, actual CDI request, and in-container
-CUDA visibility separately.
+`nvidia.com/gpu=all` and Docker to expose the `nvidia` runtime, then probes that
+CDI-qualified device through NVIDIA runtime CDI mode before starting the
+project. It does not configure or restart the shared daemon. `ml-status.sh`
+reports the configured application device, OCI runtime, CDI selector, and
+in-container CUDA visibility separately.

@@ -79,15 +79,16 @@ The committed config publishes all five ML endpoints on the isolated Host SBI
 candidate `192.168.57.1`, using ports `9091`-`9094` and `9292`. Container
 listeners bind their own `0.0.0.0` interfaces; callbacks and Go NWDAF clients
 use only the advertised Host endpoints. A pinned Python 3.12 image definition,
-PyAnLF/PyMTLF targets, five-service Compose topology, production NVIDIA CDI
-device requests, and a CPU-only validation override are implemented. Bounded CPU image and
+PyAnLF/PyMTLF targets, five-service Compose topology, production NVIDIA runtime
+CDI selection, and a CPU-only validation override are implemented. Bounded CPU image and
 lifecycle smokes started all five services, verified status/log/stop behavior,
 and removed their disposable containers and volumes afterward. The production
-`ml-start`/`ml-status`/`ml-stop` lifecycle is implemented, but Host-to-VM
-reachability, Host `nvidia-container-toolkit-base` installation, CDI container
-GPU access, and the three new VMs remain unexecuted. Production GPU activation
-does not register a legacy Docker runtime or require a normal shared-daemon
-restart. Historical guest ML provisioning is retained temporarily as
+`ml-start`/`ml-status`/`ml-stop` lifecycle is implemented. Host toolkit-base,
+CDI inventory, NVIDIA runtime registration by daemon reload, and a disposable
+container GPU probe have passed without interrupting the eight shared
+containers; Host-to-VM reachability and the three new VMs remain unexecuted.
+Production GPU activation does not change the default runtime or require a
+shared-daemon restart. Historical guest ML provisioning is retained temporarily as
 rollback material but is no longer part of the declared placement or guest
 service start sequence.
 

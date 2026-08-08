@@ -109,18 +109,19 @@ def main():
         )
 
         expected_gpu = expected["device"].startswith("cuda") and args.mode == "baseline"
-        expected_devices = (
-            [
-                {
-                    "source": "nvidia.com/gpu=all",
-                    "target": "nvidia.com/gpu=all",
-                    "permissions": "rwm",
-                }
-            ]
-            if expected_gpu
-            else []
+        cpu_override = args.mode == "cpu-smoke" and expected["device"].startswith("cuda")
+        expected_runtime = "nvidia" if expected_gpu else ("runc" if cpu_override else None)
+        check.equal(name + " OCI runtime", service.get("runtime"), expected_runtime)
+        environment = service.get("environment", {})
+        expected_visible_devices = (
+            "nvidia.com/gpu=all" if expected_gpu else ("void" if cpu_override else None)
         )
-        check.equal(name + " CDI device request", service.get("devices", []), expected_devices)
+        expected_driver_capabilities = (
+            "compute,utility" if expected_gpu else ("void" if cpu_override else None)
+        )
+        check.equal(name + " CDI selector", environment.get("NVIDIA_VISIBLE_DEVICES"), expected_visible_devices)
+        check.equal(name + " NVIDIA driver capabilities", environment.get("NVIDIA_DRIVER_CAPABILITIES"), expected_driver_capabilities)
+        check.equal(name + " host device mapping", service.get("devices", []), [])
         check.true(name + " must not use legacy GPU request", not service.get("gpus"))
 
     if check.errors:

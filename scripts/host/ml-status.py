@@ -63,13 +63,16 @@ def cuda_visible(container_id):
         return "error"
 
 
-def cdi_devices(container):
-    devices = []
-    for mapping in container.get("HostConfig", {}).get("Devices") or []:
-        source = mapping.get("PathOnHost", "")
-        if source.startswith("nvidia.com/"):
-            devices.append(source)
-    return ",".join(sorted(set(devices))) or "none"
+def environment(container):
+    return dict(
+        entry.split("=", 1)
+        for entry in container.get("Config", {}).get("Env") or []
+        if "=" in entry
+    )
+
+
+def cdi_selector(container):
+    return environment(container).get("NVIDIA_VISIBLE_DEVICES", "none")
 
 
 def image_metadata(image_ids):
@@ -139,11 +142,12 @@ def main():
     memory = memory_usage(list(by_service.values()))
     print("ML project={}".format(args.project))
     print(
-        "{:<10} {:<9} {:<9} {:<7} {:<20} {:<6} {:<21} {:<12} {:<12} {}".format(
+        "{:<10} {:<9} {:<9} {:<7} {:<8} {:<20} {:<6} {:<21} {:<12} {:<12} {}".format(
             "SERVICE",
             "STATE",
             "HEALTH",
             "DEVICE",
+            "RUNTIME",
             "CDI",
             "CUDA",
             "MEMORY",
@@ -169,12 +173,13 @@ def main():
             labels.get("io.5g-nwdaf.config-hash", "unknown")[:12],
         )
         print(
-            "{:<10} {:<9} {:<9} {:<7} {:<20} {:<6} {:<21} {:<12} {:<12} {}".format(
+            "{:<10} {:<9} {:<9} {:<7} {:<8} {:<20} {:<6} {:<21} {:<12} {:<12} {}".format(
                 service,
                 state["Status"],
                 health,
                 configured_device(container),
-                cdi_devices(container),
+                container.get("HostConfig", {}).get("Runtime", "default"),
+                cdi_selector(container),
                 cuda,
                 memory.get(container["Name"].lstrip("/"), "n/a"),
                 image["id"],

@@ -1,7 +1,13 @@
 # Validation-only override. The generated smoke config changes both FL clients
-# to CPU; this file removes their production CDI device requests.
+# to CPU; this file returns them to runc and disables NVIDIA device injection.
 services:
   pymtlf-a:
-    devices: !reset []
+    runtime: runc
+    environment:
+      NVIDIA_VISIBLE_DEVICES: void
+      NVIDIA_DRIVER_CAPABILITIES: void
   pymtlf-b:
-    devices: !reset []
+    runtime: runc
+    environment:
+      NVIDIA_VISIBLE_DEVICES: void
+      NVIDIA_DRIVER_CAPABILITIES: void

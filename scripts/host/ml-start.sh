@@ -40,6 +40,11 @@ if [ "$mode" = baseline ]; then
     printf '%s\n' "$cdi_inventory" >&2
     exit 1
   fi
+  if ! docker info --format '{{json .Runtimes}}' | python3 -c \
+    'import json, sys; raise SystemExit(0 if "nvidia" in json.load(sys.stdin) else 1)'; then
+    echo "NVIDIA Docker runtime is unavailable; register it and reload Docker" >&2
+    exit 1
+  fi
 fi
 
 export CONFIG_DIR="$config_dir"
@@ -52,7 +57,9 @@ ml_compose build pyanlf-a pymtlf-a
 
 if [ "$mode" = baseline ]; then
   echo "GPU PROBE device=$cdi_device image=5g-nwdaf-infrastructure/pymtlf:local"
-  docker run --rm --device "$cdi_device" \
+  docker run --rm --runtime nvidia \
+    --env "NVIDIA_VISIBLE_DEVICES=$cdi_device" \
+    --env NVIDIA_DRIVER_CAPABILITIES=compute,utility \
     --label "io.5g-nwdaf.project=$project" \
     --entrypoint python \
     5g-nwdaf-infrastructure/pymtlf:local \
