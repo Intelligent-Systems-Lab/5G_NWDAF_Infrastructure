@@ -69,10 +69,14 @@ RUN uv export --quiet --frozen --no-dev --no-emit-project --format requirements-
     && rm /tmp/pymtlf-requirements.txt
 COPY ML/PyMTLF/run.py ./run.py
 COPY ML/PyMTLF/src ./src
+COPY ML/PyMTLF/tools/import_seed_model.py ./tools/import_seed_model.py
+COPY ML/PyMTLF/seed_models ./seed_models
+COPY --chmod=0755 containers/ml/pymtlf-entrypoint.sh ./pymtlf-entrypoint.sh
 
 LABEL org.opencontainers.image.title="5G NWDAF PyMTLF backend" \
       org.opencontainers.image.source="https://github.com/Intelligent-Systems-Lab/PyMTLF" \
       org.opencontainers.image.revision="${COMPONENT_REVISION}"
 
 USER 10001:10001
+ENTRYPOINT ["/opt/app/pymtlf-entrypoint.sh"]
 CMD ["python", "run.py", "--config", "/etc/5g-nwdaf/config.yaml"]

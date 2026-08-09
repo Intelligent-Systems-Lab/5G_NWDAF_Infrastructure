@@ -124,6 +124,15 @@ def main():
         check.equal(name + " host device mapping", service.get("devices", []), [])
         check.true(name + " must not use legacy GPU request", not service.get("gpus"))
 
+        expected_seed_environment = {
+            "PYMTLF_SEED_SOURCE": "/opt/app/seed_models/initial",
+            "PYMTLF_SEED_MODEL_ID": "1",
+            "PYMTLF_SEED_INTEROPERABILITY": "001122",
+            "PYMTLF_SEED_ARTIFACT_KEY": "a2c796a001e2da2461418f80b01d7d1e33f0e3349c2817d92286f09e67aa6bef",
+        } if name == "pymtlf-c" else {}
+        for key, value in expected_seed_environment.items():
+            check.equal(name + " " + key, environment.get(key), value)
+
     if check.errors:
         for error in check.errors:
             print("ERROR: " + error, file=sys.stderr)

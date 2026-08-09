@@ -156,6 +156,12 @@ The baseline also bounds low-volume runtime growth: MongoDB receives a 256 MiB
 WiredTiger cache, Python services use one BLAS/OpenMP thread, each FL Client
 accepts one concurrent training job, and model artifacts are limited to 32 MiB
 compressed or 128 MiB extracted. The committed seed model is about 0.4 MiB.
+PyMTLF-C packages that pinned seed source into its named artifact volume before
+starting the server, verifies the deterministic artifact SHA-256, and then
+opens the configured seed catalog. The import is content-addressed and
+idempotent, so an ordinary stop/start does not create duplicate artifacts.
+Changing the seed catalog is a state migration: an existing coordinator model
+state with a different family set must not be silently reused.
 
 ## Services and pseudo driver
 

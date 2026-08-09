@@ -405,6 +405,20 @@ def main():
     check.equal("pymtlf-c container port", mtlf_c["server"]["port"], services["pymtlf-c"]["containerPort"])
     check.equal("pymtlf-c public URL", mtlf_c["artifact"]["public_base_url"], uri(mtlf_c_endpoint["address"], mtlf_c_endpoint["port"]))
     check_pymtlf_data_paths(check, "pymtlf-c", mtlf_c)
+    check.equal(
+        "pymtlf-c seed models",
+        mtlf_c.get("model_provision", {}).get("seed_models"),
+        [{
+            "family_id": "ue-communication-default",
+            "model_id": 1,
+            "artifact_key": "a2c796a001e2da2461418f80b01d7d1e33f0e3349c2817d92286f09e67aa6bef",
+            "event": "UE_COMMUNICATION",
+            "event_filter": {},
+            "target_ue": None,
+            "model_interoperability": "001122",
+            "use_case_context": "",
+        }],
+    )
     server = mtlf_c["federated_learning"]["server"]
     check.equal("pymtlf-c fitting rounds", server["round_count"], training["fittingRounds"])
     check.equal("pymtlf-c preparation window", server["preparation_data_window_seconds"], training["preparationDataWindowSeconds"])

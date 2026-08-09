@@ -9,6 +9,16 @@ artifact:
   max_extracted_bytes: 134217728
   max_single_file_bytes: 67108864
   max_entries: 32
+model_provision:
+  seed_models:
+    - family_id: ue-communication-default
+      model_id: 1
+      artifact_key: a2c796a001e2da2461418f80b01d7d1e33f0e3349c2817d92286f09e67aa6bef
+      event: UE_COMMUNICATION
+      event_filter: {}
+      target_ue: null
+      model_interoperability: '001122'
+      use_case_context: ''
 federated_learning:
   workspace_root: /var/lib/5g-nwdaf-infrastructure/pymtlf-c/fl-workspaces
   public_base_url: http://192.168.57.1:9292

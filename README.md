@@ -142,6 +142,10 @@ publication, reprovision, and generation cutover remain the next runtime gate.
 The initial implementation intentionally does not support TLS/certificates,
 automatic experiment history, or 5g-viz.
 
+PyMTLF-C imports the pinned initial model into its persistent artifact volume
+before application startup and rejects a bundle whose deterministic digest
+differs from the configured seed catalog.
+
 ## License status
 
 The parent repository has not yet been assigned an open-source license. See
