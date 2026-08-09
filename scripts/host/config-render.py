@@ -142,6 +142,7 @@ def render(testbed, baseline, output, scenario):
         ue["default-nssai"] = [dict(ueransim_snssai)]
         write(output, "ueransim/ue{}.yaml".format(index), ue)
 
+    nwdaf_internal_roots = {}
     for name in ("a", "b", "c"):
         cfg = read(output, "nwdafcfg-{}.yaml".format(name))
         native = cfg["configuration"]
@@ -159,6 +160,13 @@ def render(testbed, baseline, output, scenario):
         native["mtlfBackend"]["endpoint"] = endpoint_uri(
             testbed["analytics"]["backends"]["pymtlf-" + name]
         )
+        nwdaf_internal_roots[name] = {
+            service: "http://{}:{}".format(
+                native[service]["server"]["registerIPv4"],
+                native[service]["server"]["port"],
+            )
+            for service in ("anlf", "mtlf")
+        }
         write(output, "nwdafcfg-{}.yaml".format(name), cfg)
 
     backends = testbed["analytics"]["backends"]
@@ -171,6 +179,7 @@ def render(testbed, baseline, output, scenario):
         anlf = read(output, anlf_name + ".yaml")
         anlf["server"]["binding_host"] = "0.0.0.0"
         anlf["server"]["port"] = runtime_services[anlf_name]["containerPort"]
+        anlf["containing_nwdaf"]["internal_api_root"] = nwdaf_internal_roots[name]["anlf"]
         anlf["model"]["artifact_download"]["allowed_origins"] = [
             endpoint_uri(mtlf_endpoint), endpoint_uri(backends["pymtlf-c"]),
             endpoint_uri(core["adrf"]["sbi"])
@@ -186,6 +195,7 @@ def render(testbed, baseline, output, scenario):
         mtlf = read(output, mtlf_name + ".yaml")
         mtlf["server"]["binding_host"] = "0.0.0.0"
         mtlf["server"]["port"] = runtime_services[mtlf_name]["containerPort"]
+        mtlf["containing_nwdaf"]["internal_api_root"] = nwdaf_internal_roots[name]["mtlf"]
         mtlf["artifact"]["public_base_url"] = endpoint_uri(mtlf_endpoint)
         mtlf["federated_learning"]["public_base_url"] = endpoint_uri(mtlf_endpoint)
         mtlf["federated_learning"]["client"]["training"]["device"] = runtime_services[mtlf_name]["device"]
@@ -198,6 +208,7 @@ def render(testbed, baseline, output, scenario):
     mtlf_c = read(output, "pymtlf-c.yaml")
     mtlf_c["server"]["binding_host"] = "0.0.0.0"
     mtlf_c["server"]["port"] = runtime_services["pymtlf-c"]["containerPort"]
+    mtlf_c["containing_nwdaf"]["internal_api_root"] = nwdaf_internal_roots["c"]["mtlf"]
     mtlf_c["artifact"]["public_base_url"] = endpoint_uri(mtlf_c_endpoint)
     mtlf_c["federated_learning"]["public_base_url"] = endpoint_uri(mtlf_c_endpoint)
     mtlf_c["federated_learning"]["artifact_download"]["allowed_origins"] = [

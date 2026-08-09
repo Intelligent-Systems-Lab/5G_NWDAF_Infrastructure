@@ -118,9 +118,15 @@ responsibilities.
 
 In the bounded production integration smoke, PyMTLF-A/B reported CUDA available
 on the RTX 3080, all five application readiness endpoints returned HTTP 200 from
-their owning VMs, and periodic NWDAF/backend synchronization succeeded in both
-directions. Empty-stack container RSS was about 1.38 GiB total. This proves
-activation and transport, not concurrent training capacity.
+their owning VMs. That historical smoke used the then-pinned full-state backend
+synchronization contract. The current component pins instead use ready-only
+backend generation tracking and stateless, on-demand containing-NWDAF context
+lookup; `/health/live` and `/internal/v1/sync` are no longer part of the
+integration contract. Each ML config points at its owning NWDAF AnLF or MTLF
+internal server, and config rendering derives those endpoints from the native
+NWDAF configs. Empty-stack container RSS was about 1.38 GiB total. The earlier
+result proves activation and transport for its recorded revisions, not the
+current lifecycle contract or concurrent training capacity.
 
 The dataset lifecycle derives expected UE addresses from each topology
 `uePool`, resolves the scenario selected by the complete config set, generates

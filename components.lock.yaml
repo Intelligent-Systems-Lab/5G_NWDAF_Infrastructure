@@ -9,10 +9,10 @@ components:
   - {path: NFs/udm, remote: "git@github.com:Intelligent-Systems-Lab/udm.git", branch: feat/r18-federated-learning, commit: b8db49ee8c2fdae8f686562ae6a941a232e80ad3, license: Apache-2.0}
   - {path: NFs/udr, remote: "git@github.com:Intelligent-Systems-Lab/udr.git", branch: feat/r18-federated-learning, commit: bf447744345fe238092588f105a57d2484f5f1b7, license: Apache-2.0}
   - {path: NFs/upf, remote: "git@github.com:Intelligent-Systems-Lab/go-upf.git", branch: fix/r18-nupf-event-exposure-contract, commit: 234bae063ffb6a7c99b361bfcdb2bda9452af1f1, license: Apache-2.0}
-  - {path: NFs/nwdaf, remote: "git@github.com:Intelligent-Systems-Lab/NWDAF.git", branch: feat/r18-federated-learning, commit: ea43cce859661f091964e6acc01c605e239382d7, license: UNDECLARED}
+  - {path: NFs/nwdaf, remote: "git@github.com:Intelligent-Systems-Lab/NWDAF.git", branch: feat/r18-federated-learning, commit: 318ac19d8b027373f4468660394da1ec3338268e, license: UNDECLARED}
   - {path: NFs/adrf, remote: "git@github.com:Intelligent-Systems-Lab/adrf.git", branch: feat/r18-federated-learning, commit: 905f0599f68fe389bba14ed56db0ef9abeab5ccd, license: UNDECLARED}
-  - {path: ML/PyAnLF, remote: "git@github.com:Intelligent-Systems-Lab/PyAnLF.git", branch: feat/r18-federated-learning, commit: 9e64417fe053e03c2a616abea6f284df8acd1b38, license: UNDECLARED}
-  - {path: ML/PyMTLF, remote: "git@github.com:Intelligent-Systems-Lab/PyMTLF.git", branch: feat/r18-federated-learning, commit: e9c5b08725dc06835485b29ff6c264340f9805f9, license: UNDECLARED}
+  - {path: ML/PyAnLF, remote: "git@github.com:Intelligent-Systems-Lab/PyAnLF.git", branch: feat/r18-federated-learning, commit: 5c305c7b69a50e9356bcfca8229f1a3cffd11a9a, license: UNDECLARED}
+  - {path: ML/PyMTLF, remote: "git@github.com:Intelligent-Systems-Lab/PyMTLF.git", branch: feat/r18-federated-learning, commit: 49b1ef474472559a487b4cf36d312265c45b0c9a, license: UNDECLARED}
   - {path: RAN/UERANSIM, remote: "https://github.com/aligungr/UERANSIM.git", branch: master, commit: 2a3ef81f189ca95d5c1996a28ed7af9734f5cfb4, license: AGPL-3.0-only}
   - {path: kernel/gtp5g, remote: "https://github.com/free5gc/gtp5g.git", tag: v0.9.16, commit: 8d723c29fc0de3eeeff3e9a91132838579e8ee1b, license: GPL-2.0-only}
   - {path: webconsole, remote: "https://github.com/free5gc/webconsole.git", branch: main, commit: 70d282f80e285d1fbae38f48c5c4ffefebde9944, license: Apache-2.0, optional: true}

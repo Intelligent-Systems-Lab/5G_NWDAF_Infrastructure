@@ -1,5 +1,6 @@
 server: {binding_host: 0.0.0.0, port: 9093}
 log: {level: INFO}
+containing_nwdaf: {internal_api_root: http://192.168.57.41:8090, request_timeout_seconds: 30}
 model:
   default_model_reference: ""
   default_model_unique_id: 1

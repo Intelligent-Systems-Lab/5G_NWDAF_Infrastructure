@@ -348,8 +348,10 @@ def main():
             },
         )
 
+    nwdaf_native = {}
     for name in ("a", "b", "c"):
         native = load_yaml(config_dir / ("nwdafcfg-{}.yaml".format(name)))["configuration"]
+        nwdaf_native[name] = native
         expected = testbed["analytics"]["nwdaf-{}".format(name)]
         check.equal("NWDAF {} ID".format(name), native["nfInstanceId"], expected["nfInstanceId"])
         check.equal("NWDAF {} bind".format(name), native["sbi"]["bindingIPv4"], expected["sbi"]["address"])
@@ -380,6 +382,16 @@ def main():
         mtlf_endpoint = backends[mtlf_name]
         check.equal(anlf_name + " bind", anlf["server"]["binding_host"], "0.0.0.0")
         check.equal(anlf_name + " container port", anlf["server"]["port"], services[anlf_name]["containerPort"])
+        expected_anlf_server = nwdaf_native[name]["anlf"]["server"]
+        check.equal(
+            anlf_name + " containing NWDAF",
+            anlf.get("containing_nwdaf", {}).get("internal_api_root"),
+            uri(expected_anlf_server["registerIPv4"], expected_anlf_server["port"]),
+        )
+        check.equal(
+            anlf_name + " containing NWDAF timeout",
+            anlf.get("containing_nwdaf", {}).get("request_timeout_seconds"), 30,
+        )
         check.equal(anlf_name + " callback", anlf["collection"]["callback_base_uri"], uri(anlf_endpoint["address"], anlf_endpoint["port"]))
         check.equal(anlf_name + " sampling", anlf["analytics"]["ue_communication"]["sampling_interval_seconds"], sampling)
         check.equal(anlf_name + " ground-truth interval", anlf["accuracy_monitor"]["ground_truth_check_interval_seconds"], sampling)
@@ -396,6 +408,16 @@ def main():
         mtlf = load_yaml(config_dir / (mtlf_name + ".yaml"))
         check.equal(mtlf_name + " bind", mtlf["server"]["binding_host"], "0.0.0.0")
         check.equal(mtlf_name + " container port", mtlf["server"]["port"], services[mtlf_name]["containerPort"])
+        expected_mtlf_server = nwdaf_native[name]["mtlf"]["server"]
+        check.equal(
+            mtlf_name + " containing NWDAF",
+            mtlf.get("containing_nwdaf", {}).get("internal_api_root"),
+            uri(expected_mtlf_server["registerIPv4"], expected_mtlf_server["port"]),
+        )
+        check.equal(
+            mtlf_name + " containing NWDAF timeout",
+            mtlf.get("containing_nwdaf", {}).get("request_timeout_seconds"), 30,
+        )
         check.equal(mtlf_name + " public URL", mtlf["artifact"]["public_base_url"], uri(mtlf_endpoint["address"], mtlf_endpoint["port"]))
         expected_device = args.ml_device_override or services[mtlf_name]["device"]
         check.equal(mtlf_name + " device", mtlf["federated_learning"]["client"]["training"]["device"], expected_device)
@@ -407,6 +429,16 @@ def main():
     mtlf_c_endpoint = backends["pymtlf-c"]
     check.equal("pymtlf-c bind", mtlf_c["server"]["binding_host"], "0.0.0.0")
     check.equal("pymtlf-c container port", mtlf_c["server"]["port"], services["pymtlf-c"]["containerPort"])
+    expected_mtlf_c_server = nwdaf_native["c"]["mtlf"]["server"]
+    check.equal(
+        "pymtlf-c containing NWDAF",
+        mtlf_c.get("containing_nwdaf", {}).get("internal_api_root"),
+        uri(expected_mtlf_c_server["registerIPv4"], expected_mtlf_c_server["port"]),
+    )
+    check.equal(
+        "pymtlf-c containing NWDAF timeout",
+        mtlf_c.get("containing_nwdaf", {}).get("request_timeout_seconds"), 30,
+    )
     check.equal("pymtlf-c public URL", mtlf_c["artifact"]["public_base_url"], uri(mtlf_c_endpoint["address"], mtlf_c_endpoint["port"]))
     check_pymtlf_data_paths(check, "pymtlf-c", mtlf_c)
     check.equal(

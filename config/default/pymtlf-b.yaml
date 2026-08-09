@@ -1,5 +1,6 @@
 server: {binding_host: 0.0.0.0, port: 9092}
 runtime: {mode: fl_client}
+containing_nwdaf: {internal_api_root: http://192.168.57.51:8091, request_timeout_seconds: 30}
 storage: {artifact_root: /var/lib/5g-nwdaf-infrastructure/pymtlf-b/artifacts}
 model_state: {directory: /var/lib/5g-nwdaf-infrastructure/pymtlf-b/model-state}
 publication: {directory: /var/lib/5g-nwdaf-infrastructure/pymtlf-b/publications}
