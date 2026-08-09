@@ -86,7 +86,8 @@ PyAnLF/PyMTLF targets, five-service Compose topology, production NVIDIA runtime
 CDI selection, and a CPU-only validation override are implemented. Bounded CPU image and
 lifecycle smokes started all five services, verified status/log/stop behavior,
 and removed their disposable containers and volumes afterward. The production
-`ml-start`/`ml-status`/`ml-stop` lifecycle is implemented. Host toolkit-base,
+`ml-start`/`ml-status`/`ml-stop` lifecycle is implemented and has also started
+all five services concurrently with the three-VM guest stack. Host toolkit-base,
 CDI inventory, NVIDIA runtime registration by daemon reload, a disposable
 container GPU probe, and VM-to-Host SBI reachability have passed without
 interrupting the eight shared containers.
@@ -95,12 +96,18 @@ shared-daemon restart. Guest source sync, provisioning, and service dispatch no
 longer include PyAnLF or PyMTLF; ML source and environments remain Host-container
 responsibilities.
 
+In the bounded production integration smoke, PyMTLF-A/B reported CUDA available
+on the RTX 3080, all five application readiness endpoints returned HTTP 200 from
+their owning VMs, and periodic NWDAF/backend synchronization succeeded in both
+directions. Empty-stack container RSS was about 1.38 GiB total. This proves
+activation and transport, not concurrent training capacity.
+
 The guest lifecycle now applies six scoped subscriber records and one Internal
 Group idempotently before starting UERANSIM. A complete stop/start regression
 kept all 23 guest units active and established six registrations and six PDU
 Sessions: Path A received `10.60.0.1`-`10.60.0.3`, and Path B received
-`10.61.0.1`-`10.61.0.3`. Host ML containers, NWDAF subscriptions, N6 traffic,
-and PseudoDriver replay remain separate validation stages.
+`10.61.0.1`-`10.61.0.3`. NWDAF subscriptions, N6 traffic, PseudoDriver replay,
+analytics callbacks, and federated training remain separate validation stages.
 
 The initial implementation intentionally does not support TLS/certificates,
 automatic experiment history, or 5g-viz.

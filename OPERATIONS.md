@@ -233,9 +233,12 @@ are startup measurements rather than capacity requirements. Each image has a
 runtime; the common runtime layers are shared by both image targets. Do not run
 global Docker prune on this shared Host.
 
-The production lifecycle has not yet passed its GPU activation gate. Production
-GPU access and Host-to-VM reachability therefore remain outside the current
-validation boundary.
+The production lifecycle has passed bounded GPU activation and concurrent guest
+stack integration. PyMTLF-A/B reported CUDA available, all five readiness
+endpoints returned HTTP 200 from their owning VMs, and periodic backend sync
+crossed the VM/Host boundary in both directions. This does not prove training
+capacity: concurrent A/B training, peak VRAM/RAM, traffic callbacks, and
+PseudoDriver replay remain separate gates.
 
 Pseudo driver support is required on both paths. It is embedded in each UPF
 process and configured by `upfcfg-a.yaml` / `upfcfg-b.yaml`:

@@ -12,7 +12,10 @@ python3 "$HOST_ROOT/scripts/host/config-check.py" --testbed "$testbed" --config-
 subscriber_fixture="$HOST_ROOT/fixtures/full-core/ue-subscribers.json"
 group_fixture="$HOST_ROOT/fixtures/full-core/group-memberships.json"
 fixture_hash=$(
-  sha256sum "$subscriber_fixture" "$group_fixture" |
+  cd "$HOST_ROOT"
+  sha256sum \
+    fixtures/full-core/ue-subscribers.json \
+    fixtures/full-core/group-memberships.json |
     sha256sum |
     awk '{print $1}'
 )
