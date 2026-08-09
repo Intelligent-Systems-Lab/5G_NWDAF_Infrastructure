@@ -9,7 +9,7 @@ export DEBIAN_FRONTEND=noninteractive
 apt-get update
 apt-get install -y --no-install-recommends \
   build-essential ca-certificates cmake curl git gnupg iproute2 jq libssl-dev \
-  libsctp-dev linux-headers-"$(uname -r)" ninja-build python3 python3-venv \
+  libsctp-dev linux-headers-"$(uname -r)" ninja-build python3 \
   python3-yaml rsync socat util-linux
 
 go_version=1.26.2
@@ -21,10 +21,6 @@ if ! command -v go >/dev/null || [ "$(go version | awk '{print $3}')" != "go${go
   rm -f "$archive"
 fi
 ln -sfn /usr/local/go/bin/go /usr/local/bin/go
-
-if ! command -v uv >/dev/null; then
-  curl -LsSf https://astral.sh/uv/install.sh | env UV_INSTALL_DIR=/usr/local/bin sh
-fi
 
 id 5g-nwdaf >/dev/null 2>&1 || useradd --system --create-home --home-dir /var/lib/5g-nwdaf-infrastructure --shell /usr/sbin/nologin 5g-nwdaf
 install -d -o 5g-nwdaf -g 5g-nwdaf /var/lib/5g-nwdaf-infrastructure

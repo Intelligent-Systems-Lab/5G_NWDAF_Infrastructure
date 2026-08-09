@@ -29,10 +29,16 @@ machines.each do |machine_name, machine|
 end
 
 Vagrant.configure("2") do |config|
-  config.vm.box = testbed.dig("guest", "box") || "bento/ubuntu-24.04"
+  config.vm.box = testbed.dig("guest", "box") || "ubuntu/jammy64"
+  config.vm.box_version = testbed.dig("guest", "boxVersion") if testbed.dig("guest", "boxVersion")
+  config.vm.box_check_update = false
+  config.vm.synced_folder ".", "/vagrant", disabled: true
   config.vm.synced_folder ROOT, "/opt/5g-nwdaf-infrastructure/source",
     type: "rsync", rsync__auto: false,
-    rsync__exclude: [".git/", ".vagrant/", "config/generated/", "config/local/"]
+    rsync__exclude: [
+      ".git/", ".vagrant/", "ML/", "config/generated/", "config/local/",
+      "**/.venv/", "**/__pycache__/", "**/.pytest_cache/", "**/node_modules/"
+    ]
 
   machines.each do |machine_name, machine|
     config.vm.define machine_name do |node|

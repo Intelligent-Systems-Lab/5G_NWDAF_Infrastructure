@@ -27,6 +27,39 @@ if command -v vagrant >/dev/null; then
       else
         fail "VirtualBox selected but VBoxManage cannot initialize the host driver"
       fi
+      if [ -r /etc/vbox/networks.conf ]; then
+        if python3 - "$testbed" /etc/vbox/networks.conf <<'PY'
+import ipaddress
+import sys
+import yaml
+
+definition_path, allowlist_path = sys.argv[1:]
+with open(definition_path, encoding="utf-8") as stream:
+    definition = yaml.safe_load(stream)
+with open(allowlist_path, encoding="utf-8") as stream:
+    allowed = [
+        ipaddress.ip_network(line.split()[1])
+        for raw in stream
+        if (line := raw.strip()) and not line.startswith("#") and line.startswith("*")
+    ]
+addresses = {
+    ipaddress.ip_address(address)
+    for machine in definition["machines"].values()
+    for address in machine["interfaces"].values()
+}
+missing = sorted(str(address) for address in addresses if not any(address in network for network in allowed))
+if missing:
+    print("VirtualBox host-only allowlist excludes: " + ", ".join(missing), file=sys.stderr)
+    raise SystemExit(1)
+PY
+        then
+          ok "VirtualBox host-only allowlist covers all machine interfaces"
+        else
+          fail "VirtualBox host-only allowlist does not cover the testbed address plan"
+        fi
+      else
+        warn "VirtualBox host-only allowlist /etc/vbox/networks.conf is not readable"
+      fi
       ;;
     libvirt) command -v virsh >/dev/null && ok "libvirt CLI available" || fail "libvirt selected but virsh is missing" ;;
     "") warn "provider not selected; set testbed.local.yaml or VAGRANT_DEFAULT_PROVIDER" ;;

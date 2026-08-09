@@ -88,9 +88,9 @@ CDI inventory, NVIDIA runtime registration by daemon reload, and a disposable
 container GPU probe have passed without interrupting the eight shared
 containers; Host-to-VM reachability and the three new VMs remain unexecuted.
 Production GPU activation does not change the default runtime or require a
-shared-daemon restart. Historical guest ML provisioning is retained temporarily as
-rollback material but is no longer part of the declared placement or guest
-service start sequence.
+shared-daemon restart. Guest source sync, provisioning, and service dispatch no
+longer include PyAnLF or PyMTLF; ML source and environments remain Host-container
+responsibilities.
 
 The initial implementation intentionally does not support TLS/certificates,
 automatic experiment history, or 5g-viz.

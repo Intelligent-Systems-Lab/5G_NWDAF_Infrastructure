@@ -5,9 +5,10 @@ config:
   directory: config/default
 
 guest:
-  box: bento/ubuntu-24.04
+  box: ubuntu/jammy64
+  boxVersion: 20241002.0.0
   os: ubuntu
-  release: "24.04"
+  release: "22.04"
 
 hostSafety:
   reserveMemoryMiB: 6144

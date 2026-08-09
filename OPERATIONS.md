@@ -75,8 +75,22 @@ accidentally mix config sets.
 
 ## Guest builds
 
-The root Vagrant project uses Ubuntu 24.04 and applies these primary disk
-budgets:
+The root Vagrant project pins the cached Ubuntu 22.04 box
+`ubuntu/jammy64` `20241002.0.0`, disables automatic box update checks, and
+applies these primary disk budgets:
+
+On Linux, `/etc/vbox/networks.conf` must allow the complete isolated address
+plan before any VM is created:
+
+```text
+* 192.168.33.0/24
+* 192.168.56.0/21
+```
+
+The first line is an existing site range and is not owned by this repository.
+The `/21` is only a VirtualBox host-only allowlist; Vagrant still creates eight
+separate `/24` networks. `preflight.sh` fails before VM mutation if any declared
+machine interface is outside the Host allowlist.
 
 | VM | RAM | vCPU | Disk | Guest-local build responsibility |
 | --- | ---: | ---: | ---: | --- |

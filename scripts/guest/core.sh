@@ -25,7 +25,7 @@ build_go() {
 setup_mongodb() {
   if ! command -v mongod >/dev/null; then
     curl -fsSL https://www.mongodb.org/static/pgp/server-8.0.asc | gpg --dearmor -o /usr/share/keyrings/mongodb-server-8.0.gpg
-    echo "deb [arch=amd64 signed-by=/usr/share/keyrings/mongodb-server-8.0.gpg] https://repo.mongodb.org/apt/ubuntu noble/mongodb-org/8.0 multiverse" >/etc/apt/sources.list.d/mongodb-org-8.0.list
+    echo "deb [arch=amd64 signed-by=/usr/share/keyrings/mongodb-server-8.0.gpg] https://repo.mongodb.org/apt/ubuntu jammy/mongodb-org/8.0 multiverse" >/etc/apt/sources.list.d/mongodb-org-8.0.list
     apt-get update
     apt-get install -y mongodb-org
   fi
@@ -42,8 +42,6 @@ case "$action" in
       stage "${mapping%%:*}" "${mapping##*:}"
       build_go "${mapping##*:}"
     done
-    stage ML/PyMTLF pymtlf
-    runuser -u 5g-nwdaf -- uv sync --project "$work_root/pymtlf" --frozen --no-cache
     ;;
   *) echo "usage: core.sh setup|build" >&2; exit 2;;
 esac
