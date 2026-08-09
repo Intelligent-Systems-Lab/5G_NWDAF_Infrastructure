@@ -12,7 +12,7 @@ done
 
 vssh core "sudo systemctl start 5g-nwdaf-consumer.service"
 for attempt in $(seq 1 30); do
-  state=$(vssh core "/usr/local/libexec/5g-nwdaf-infrastructure/nwdaf-consumer --config /etc/5g-nwdaf-infrastructure/active/consumer.yaml status" 2>/dev/null || true)
+  state=$(consumer_cli status 2>/dev/null || true)
   if python3 -c 'import json,sys; d=json.load(sys.stdin); assert d.get("status")=="active" and len(d.get("subscriptions",[]))==2 and len({x["nfInstanceId"] for x in d["subscriptions"]})==2' <<<"$state" 2>/dev/null; then
     echo "$state"
     exit 0
@@ -21,4 +21,3 @@ for attempt in $(seq 1 30); do
 done
 vssh core "sudo journalctl -u 5g-nwdaf-consumer.service -n 60 --no-pager" >&2 || true
 exit 1
-

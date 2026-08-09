@@ -41,7 +41,7 @@
 [submodule "NFs/upf"]
 	path = NFs/upf
 	url = git@github.com:Intelligent-Systems-Lab/go-upf.git
-	branch = test-EES-with-pseudodriver
+	branch = fix/r18-nupf-event-exposure-contract
 [submodule "NFs/nwdaf"]
 	path = NFs/nwdaf
 	url = git@github.com:Intelligent-Systems-Lab/NWDAF.git

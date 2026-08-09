@@ -56,6 +56,13 @@ def render(testbed, baseline, output):
         set_path(cfg, ["configuration", "mongodb", "url"], mongo_uri)
         write(output, filename, cfg)
 
+    udm = read(output, "udmcfg.yaml")
+    group_id = testbed["mobileNetwork"]["internalGroupId"]
+    udm["configuration"]["internalGroupIdentifiersRanges"] = [
+        {"start": group_id, "end": group_id}
+    ]
+    write(output, "udmcfg.yaml", udm)
+
     plmn = testbed["mobileNetwork"]["plmn"]
     snssai = testbed["mobileNetwork"]["snssai"]
     paths = testbed["paths"]

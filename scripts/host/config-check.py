@@ -228,6 +228,14 @@ def main():
         if name != "nrf":
             check.equal(filename + " NRF", cfg["configuration"]["nrfUri"], nrf_uri)
 
+    udm = load_yaml(config_dir / "udmcfg.yaml")["configuration"]
+    group_id = testbed["mobileNetwork"]["internalGroupId"]
+    check.equal(
+        "UDM Internal Group range",
+        udm.get("internalGroupIdentifiersRanges"),
+        [{"start": group_id, "end": group_id}],
+    )
+
     amf = load_yaml(config_dir / "amfcfg.yaml")["configuration"]
     check.equal("AMF N2", amf["ngapIpList"], [testbed["coreServices"]["amf"]["n2"]["address"]])
     expected_tacs = [testbed["paths"][name]["tai"]["tac"] for name in ("a", "b")]

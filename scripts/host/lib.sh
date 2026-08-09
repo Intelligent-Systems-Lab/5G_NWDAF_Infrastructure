@@ -13,6 +13,12 @@ vssh() {
   (cd "$HOST_ROOT" && vagrant ssh "$machine" -c "$command")
 }
 
+consumer_cli() {
+  local action=$1
+  case "$action" in status|delete) ;; *) echo "invalid consumer action: $action" >&2; return 2;; esac
+  vssh core "sudo -u 5g-nwdaf /usr/local/libexec/5g-nwdaf-infrastructure/nwdaf-consumer --config /etc/5g-nwdaf-infrastructure/active/consumer.yaml '$action'"
+}
+
 unit_action() {
   local machine=$1 action=$2 unit=$3
   vssh "$machine" "sudo systemctl $action 5g-nwdaf@$unit.service"

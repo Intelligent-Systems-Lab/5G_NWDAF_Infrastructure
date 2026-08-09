@@ -1,6 +1,8 @@
 info: {version: 1.0.3, description: dual-TAI UDM}
 configuration:
   serviceNameList: [nudm-sdm, nudm-uecm, nudm-ueau, nudm-ee, nudm-pp]
+  internalGroupIdentifiersRanges:
+    - {start: 00000001-466-92-01, end: 00000001-466-92-01}
   sbi: {scheme: http, registerIPv4: 192.168.57.13, bindingIPv4: 192.168.57.13, port: 8000}
   nrfUri: http://192.168.57.10:8000
   SuciProfile:
@@ -8,4 +10,3 @@ configuration:
       PrivateKey: c53c22208b61860b06c62e5406a7b330c2b577aa5558981510d128247d38bd1d
       PublicKey: 5a8d38864820197c3394b92613b20b91633cbd897119273bf8e4a6f4eec0a650
 logger: {enable: true, level: info, reportCaller: false}
-
