@@ -40,7 +40,9 @@ experiment semantics.
 - at least 120 GiB free on the workspace filesystem;
 - Host ML bind-address presence and published-port conflicts;
 - initialized, clean submodules at all 16 parent gitlinks;
-- `components.lock.yaml` equality and native config consistency.
+- `components.lock.yaml` equality and native config consistency;
+- an already generated PseudoDriver set matching the selected topology and
+  effective config.
 
 A failed preflight is a stop condition for `make vm-up`; free resources or fix
 the provider instead of weakening the topology silently.
@@ -127,9 +129,11 @@ compressed or 128 MiB extracted. The committed seed model is about 0.4 MiB.
 
 ## Services and pseudo driver
 
-`make services-start` starts MongoDB and NRF first, then control-plane NFs,
-idempotently provisions the six full-core subscribers and their one Internal
-Group, then starts both UPFs, SMF, ADRF/NWDAF, and finally both gNB/UE groups.
+`make services-start` first stages the selected config and one generated
+role-specific dataset to each Path. It then starts MongoDB, NRF and the
+control-plane NFs, idempotently provisions the six full-core subscribers and
+their one Internal Group, then starts both UPFs, SMF, ADRF/NWDAF, and finally
+both gNB/UE groups.
 It does not start ML containers. Failure triggers reverse-order rollback.
 `make services-stop` performs the same reverse order without halting VMs; it
 also defensively stops any retained legacy guest ML units.
@@ -154,6 +158,32 @@ SUPIs and that group; it never drops a database or collection. The fixtures in
 uses Core's installed `mongosh` and does not depend on that repository or a
 Host Python environment. `config-check` rejects fixture PLMN, SUPI, group,
 K/OPc, AMF, S-NSSAI, or DNN mismatches before mutation.
+
+PseudoDriver Parquet files are generated artifacts, not committed source and
+not files inherited from the go-upf submodule. Committed profiles describe
+traffic timing and post-boundary behavior; `testbed.yaml` remains authoritative
+for UE pools. Generate and inspect the current content-addressed set with:
+
+```sh
+make dataset-generate
+make dataset-check
+make dataset-show
+make dataset-stage-plan
+```
+
+Generation resolves the profiles against effective PyAnLF/PyMTLF, UPF, seed
+model, and monitor settings. It rejects insufficient historical preparation
+data, stable reference lead-in, or degradation tail, derives `.1` through `.3`
+from each UE pool, and writes below `.generated/datasets/<dataset-set-id>/`.
+`make dataset-smoke` performs two independent generations and proves that a
+tampered Parquet artifact is rejected.
+
+`make dataset-stage` uploads only the matching Path artifact. The guest checks
+its set ID, role, SHA-256, bytes, and breaking time before atomically switching
+`/var/lib/5g-nwdaf-infrastructure/datasets/active`. `services-start` performs
+this automatically before starting any process; UPF startup rejects an absent
+or incomplete active dataset. Existing guest set directories are retained for
+reversible activation and are not experiment-run records.
 
 ## Host ML endpoints
 
@@ -241,11 +271,10 @@ capacity: concurrent A/B training, peak VRAM/RAM, traffic callbacks, and
 PseudoDriver replay remain separate gates.
 
 Pseudo driver support is required on both paths. It is embedded in each UPF
-process and configured by `upfcfg-a.yaml` / `upfcfg-b.yaml`:
-
-- Path A reads committed `pre_data/group1`;
-- Path B reads committed `pre_data/group2`;
-- both operate in the hybrid historical/live EES path.
+process and configured by `upfcfg-a.yaml` / `upfcfg-b.yaml`. Path A uses a
+generated post-boundary degradation profile, Path B remains stable, and both
+read the guest-local active dataset through the hybrid historical/live EES
+path.
 
 These datasets provide reproducible stimulus. They are not evidence of real
 application throughput or a user-plane performance benchmark. The selected

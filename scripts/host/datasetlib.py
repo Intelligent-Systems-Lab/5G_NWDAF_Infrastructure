@@ -1,0 +1,205 @@
+#!/usr/bin/env python3
+"""Resolve generated PseudoDriver datasets from topology and runtime contracts."""
+
+import hashlib
+import ipaddress
+import json
+import math
+from pathlib import Path
+
+from configlib import ROOT, load_yaml
+
+
+DATASET_SCHEMA = 1
+
+
+def canonical_bytes(value):
+    return json.dumps(value, sort_keys=True, separators=(",", ":")).encode("utf-8")
+
+
+def canonical_hash(value):
+    return hashlib.sha256(canonical_bytes(value)).hexdigest()
+
+
+def load_json(path):
+    with Path(path).open(encoding="utf-8") as stream:
+        return json.load(stream)
+
+
+def _positive_int(value, label):
+    if not isinstance(value, int) or isinstance(value, bool) or value <= 0:
+        raise ValueError("{} must be a positive integer".format(label))
+    return value
+
+
+def _expected_ue_ips(pool, count):
+    network = ipaddress.ip_network(pool)
+    if network.version != 4:
+        raise ValueError("PseudoDriver supports only an IPv4 UE pool")
+    if count >= network.num_addresses - 1:
+        raise ValueError("UE pool {} has insufficient host addresses".format(pool))
+    return [str(network.network_address + index) for index in range(1, count + 1)]
+
+
+def _minimum_observations(sequence_length, output_length, validation_ratio):
+    purge = sequence_length + output_length - 1
+    for observations in range(sequence_length + output_length + 1, 100000):
+        candidates = observations - sequence_length - output_length + 1
+        retained = candidates - purge
+        if retained >= 2:
+            validation = max(1, math.floor(retained * validation_ratio))
+            validation = min(validation, retained - 1)
+            training = retained - validation
+            return observations, training, validation
+    raise ValueError("cannot derive a finite minimum training dataset")
+
+
+def _tool_source_hash(tool_dir):
+    digest = hashlib.sha256()
+    files = sorted(
+        path for path in Path(tool_dir).iterdir()
+        if path.is_file() and (path.suffix == ".go" or path.name in ("go.mod", "go.sum"))
+    )
+    if not files:
+        raise ValueError("dataset generator sources are missing: {}".format(tool_dir))
+    for path in files:
+        digest.update(path.name.encode("utf-8") + b"\0")
+        digest.update(path.read_bytes())
+    return digest.hexdigest()
+
+
+def resolve_dataset_spec(testbed, config_dir):
+    """Return a canonical, fully resolved dataset set specification."""
+    config_dir = Path(config_dir)
+    seed = load_json(ROOT / "ML" / "PyMTLF" / "seed_models" / "initial" / "config.json")
+    sequence_length = _positive_int(seed["inference"]["seq_length"], "seed seq_length")
+    output_length = _positive_int(seed["inference"]["out_seq_len"], "seed out_seq_len")
+    coordinator = load_yaml(config_dir / "pymtlf-c.yaml")
+    monitor_period = _positive_int(
+        coordinator["model_monitor"]["report_period_seconds"],
+        "model monitor report period",
+    )
+    minimum_reference = _positive_int(
+        coordinator["accuracy_policy"]["min_reference_samples"],
+        "minimum reference samples",
+    )
+    required_hits = _positive_int(
+        coordinator["accuracy_policy"]["required_hits"], "required degradation hits"
+    )
+
+    resolved_paths = {}
+    common_sampling = None
+    common_validation = None
+    for path_name in ("a", "b"):
+        pseudo = testbed["paths"][path_name]["upf"]["pseudoDriver"]
+        if pseudo.get("enabled") is not True or pseudo.get("mode") != "hybrid":
+            raise ValueError("path {} requires the hybrid PseudoDriver".format(path_name))
+        if pseudo.get("dataset", {}).get("file") != "traffic.parquet":
+            raise ValueError("path {} dataset file must be traffic.parquet".format(path_name))
+        if pseudo["dataset"].get("guestDirectory") != "/var/lib/5g-nwdaf-infrastructure/datasets/active":
+            raise ValueError("path {} dataset guest directory is not canonical".format(path_name))
+        profile_source = pseudo.get("profile")
+        if not isinstance(profile_source, str):
+            raise ValueError("path {} pseudoDriver.profile is required".format(path_name))
+        profile_path = (ROOT / profile_source).resolve()
+        if ROOT not in profile_path.parents:
+            raise ValueError("{} must remain inside the repository".format(profile_source))
+        profile = load_json(profile_path)
+        if profile.get("schemaVersion") != DATASET_SCHEMA or profile.get("path") != path_name:
+            raise ValueError("{} has an invalid schema or path identity".format(profile_source))
+        for field in (
+            "windowSeconds", "breakingTimeSeconds", "stableWindows", "degradedWindows",
+            "stableUplinkBytes", "stableDownlinkBytes", "degradedUplinkBytes",
+            "degradedDownlinkBytes", "degradedJitterScale",
+        ):
+            _positive_int(profile.get(field), "{} {}".format(profile_source, field))
+        if profile["postBoundaryMode"] not in ("stable", "degraded"):
+            raise ValueError("{} postBoundaryMode must be stable or degraded".format(profile_source))
+        anlf = load_yaml(config_dir / "pyanlf-{}.yaml".format(path_name))
+        mtlf = load_yaml(config_dir / "pymtlf-{}.yaml".format(path_name))
+        upf = load_yaml(config_dir / "upfcfg-{}.yaml".format(path_name))
+        sampling = _positive_int(
+            anlf["analytics"]["ue_communication"]["sampling_interval_seconds"],
+            "path {} sampling interval".format(path_name),
+        )
+        validation_ratio = mtlf["federated_learning"]["client"]["training"]["validation_ratio"]
+        if not isinstance(validation_ratio, (int, float)) or not 0 < validation_ratio < 1:
+            raise ValueError("path {} validation_ratio must be between 0 and 1".format(path_name))
+        if upf["ees"]["periodSec"] != sampling:
+            raise ValueError("path {} UPF period and AnLF sampling interval differ".format(path_name))
+        if any(
+            duration % sampling
+            for duration in (
+                profile["breakingTimeSeconds"],
+                profile["stableWindows"] * profile["windowSeconds"],
+                profile["degradedWindows"] * profile["windowSeconds"],
+            )
+        ):
+            raise ValueError("path {} traffic phases must align to the sampling interval".format(path_name))
+        if common_sampling is not None and sampling != common_sampling:
+            raise ValueError("Path A and B sampling intervals differ")
+        if common_validation is not None and validation_ratio != common_validation:
+            raise ValueError("Path A and B validation ratios differ")
+        common_sampling, common_validation = sampling, validation_ratio
+
+        historical_observations = profile["breakingTimeSeconds"] // sampling
+        minimum_observations, minimum_training, minimum_validation = _minimum_observations(
+            sequence_length, output_length, validation_ratio
+        )
+        if historical_observations < minimum_observations:
+            raise ValueError(
+                "path {} has {} historical observations; at least {} are required".format(
+                    path_name, historical_observations, minimum_observations
+                )
+            )
+        candidates = historical_observations - sequence_length - output_length + 1
+        purge = sequence_length + output_length - 1
+        retained = candidates - purge
+        validation_samples = max(1, math.floor(retained * validation_ratio))
+        validation_samples = min(validation_samples, retained - 1)
+        training_samples = retained - validation_samples
+        stable_lead = (
+            profile["stableWindows"] * profile["windowSeconds"]
+            - profile["breakingTimeSeconds"]
+        )
+        degraded_tail = profile["degradedWindows"] * profile["windowSeconds"]
+        if stable_lead < minimum_reference * monitor_period:
+            raise ValueError("path {} stable live lead-in is too short for monitor reference".format(path_name))
+        if profile["postBoundaryMode"] == "degraded" and degraded_tail < required_hits * monitor_period:
+            raise ValueError("path {} degraded tail is too short for the accuracy policy".format(path_name))
+
+        resolved = dict(profile)
+        resolved.update({
+            "profileSource": profile_source,
+            "profileHash": canonical_hash(profile),
+            "ueIps": _expected_ue_ips(
+                testbed["paths"][path_name]["upf"]["uePool"],
+                len(testbed["paths"][path_name]["ues"]),
+            ),
+            "artifactFile": pseudo["dataset"]["file"],
+            "guestDirectory": pseudo["dataset"]["guestDirectory"],
+            "samplingIntervalSeconds": sampling,
+            "modelInputWindow": sequence_length,
+            "modelOutputWindow": output_length,
+            "validationRatio": validation_ratio,
+            "historicalObservations": historical_observations,
+            "minimumPreparationObservations": minimum_observations,
+            "minimumTrainingSamples": minimum_training,
+            "minimumValidationSamples": minimum_validation,
+            "trainingSamples": training_samples,
+            "validationSamples": validation_samples,
+            "monitorReportPeriodSeconds": monitor_period,
+            "minimumReferenceReports": minimum_reference,
+            "requiredDegradationHits": required_hits,
+            "stableLeadInSeconds": stable_lead,
+            "degradedTailSeconds": degraded_tail,
+        })
+        resolved_paths["path-" + path_name] = resolved
+
+    spec = {
+        "schemaVersion": DATASET_SCHEMA,
+        "generatorSourceHash": _tool_source_hash(ROOT / "tools" / "datasetgen"),
+        "paths": resolved_paths,
+    }
+    spec["datasetSetId"] = canonical_hash(spec)
+    return spec

@@ -10,6 +10,16 @@ test -L "$config" || { echo "no active config set" >&2; exit 1; }
 
 as_runtime() { exec setpriv --reuid=5g-nwdaf --regid=5g-nwdaf --init-groups "$@"; }
 go_nf() { as_runtime "$bin/$1" -c "$config/$2"; }
+upf() {
+  local name=$1
+  dataset=/var/lib/5g-nwdaf-infrastructure/datasets/active
+  test -L "$dataset" || { echo "no active PseudoDriver dataset" >&2; exit 1; }
+  test -f "$dataset/traffic.parquet" -a -f "$dataset/manifest.json" || {
+    echo "active PseudoDriver dataset is incomplete" >&2
+    exit 1
+  }
+  exec "$bin/upf" -c "$config/$name"
+}
 
 case "$service:$machine" in
   mongodb:core) as_runtime /usr/bin/mongod --dbpath /var/lib/5g-nwdaf-infrastructure/mongodb --bind_ip 192.168.57.18 --port 27017 --wiredTigerCacheSizeGB 0.25 --quiet ;;
@@ -17,8 +27,8 @@ case "$service:$machine" in
     go_nf "$service" "${service}cfg.yaml" ;;
   smf:core) as_runtime "$bin/smf" -c "$config/smfcfg.yaml" -u "$config/uerouting.yaml" ;;
   nwdaf-c:core) go_nf nwdaf nwdafcfg-c.yaml ;;
-  upf-a:path-a) exec "$bin/upf" -c "$config/upfcfg-a.yaml" ;;
-  upf-b:path-b) exec "$bin/upf" -c "$config/upfcfg-b.yaml" ;;
+  upf-a:path-a) upf upfcfg-a.yaml ;;
+  upf-b:path-b) upf upfcfg-b.yaml ;;
   nwdaf-a:path-a) go_nf nwdaf nwdafcfg-a.yaml ;;
   nwdaf-b:path-b) go_nf nwdaf nwdafcfg-b.yaml ;;
   gnb-a:path-a) exec "$work/ueransim/build/nr-gnb" -c "$config/ueransim/gnb-a.yaml" ;;

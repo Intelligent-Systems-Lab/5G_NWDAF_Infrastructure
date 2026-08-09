@@ -9,5 +9,4 @@ ees:
   listenAddr: 192.168.57.50:8088
   periodSec: 30
   logLevel: info
-  parquetDir: /opt/5g-nwdaf-infrastructure/source/NFs/upf/pre_data/group2
-
+  parquetDir: /var/lib/5g-nwdaf-infrastructure/datasets/active

@@ -11,7 +11,7 @@ ok() { echo "OK   $*"; }
 fail() { echo "FAIL $*" >&2; failures=$((failures + 1)); }
 warn() { echo "WARN $*" >&2; warnings=$((warnings + 1)); }
 
-for command in git python3 sha256sum tar vagrant docker ip ss; do
+for command in git go python3 sha256sum tar vagrant docker ip ss; do
   command -v "$command" >/dev/null && ok "$command=$(command -v "$command")" || fail "missing command: $command"
 done
 
@@ -165,6 +165,12 @@ if python3 "$HOST_ROOT/scripts/host/config-check.py" --testbed "$testbed" --conf
   ok "effective config check"
 else
   fail "effective config check"
+fi
+
+if python3 "$HOST_ROOT/scripts/host/dataset.py" --testbed "$testbed" --config-dir "$config_dir" check; then
+  ok "generated PseudoDriver dataset"
+else
+  fail "generated PseudoDriver dataset is missing or invalid; run make dataset-generate"
 fi
 
 echo "SUMMARY failures=$failures warnings=$warnings"

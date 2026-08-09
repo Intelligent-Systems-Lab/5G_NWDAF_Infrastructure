@@ -17,7 +17,7 @@ config/local/*
 build/
 dist/
 runtime/
+.generated/
 runs/
 *.log
 *.pid
-

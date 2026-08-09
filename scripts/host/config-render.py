@@ -106,7 +106,7 @@ def render(testbed, baseline, output):
         upf["dnnList"] = [{"dnn": testbed["mobileNetwork"]["dnn"], "cidr": path["upf"]["uePool"]}]
         upf["ees"]["enabled"] = bool(path["upf"]["pseudoDriver"]["enabled"])
         upf["ees"]["listenAddr"] = "{}:{}".format(path["upf"]["eventExposure"]["address"], path["upf"]["eventExposure"]["port"])
-        upf["ees"]["parquetDir"] = "/opt/5g-nwdaf-infrastructure/source/NFs/upf/pre_data/{}".format(path["upf"]["pseudoDriver"]["datasetProfile"])
+        upf["ees"]["parquetDir"] = path["upf"]["pseudoDriver"]["dataset"]["guestDirectory"]
         write(output, "upfcfg-{}.yaml".format(name), upf)
 
         gnb = read(output, "ueransim/gnb-{}.yaml".format(name))
@@ -237,12 +237,8 @@ def main():
         pseudo = testbed["paths"][path_name]["upf"]["pseudoDriver"]
         dataset = pseudo["dataset"]
         manifest["datasets"]["path-" + path_name] = {
-            "file": "NFs/upf/pre_data/{}/{}".format(
-                pseudo["datasetProfile"], dataset["file"]
-            ),
-            "sha256": dataset["sha256"],
-            "bytes": dataset["bytes"],
-            "rows": dataset["rows"],
+            "profile": pseudo["profile"],
+            "guestDirectory": dataset["guestDirectory"],
         }
     manifest["generated"] = {
         "baselineHash": sha256_tree(baseline),

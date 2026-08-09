@@ -10,8 +10,9 @@ from urllib.parse import urlparse
 
 from configlib import (
     ROOT, get_path, guest_network_configs, load_yaml, resolve_config_dir,
-    resolve_ml_bind_address, resolve_path, sha256_file, sha256_tree,
+    resolve_ml_bind_address, resolve_path, sha256_tree,
 )
+from datasetlib import resolve_dataset_spec
 
 
 REQUIRED = {
@@ -185,6 +186,11 @@ def main():
         return finish(check, testbed_path, config_dir)
 
     check_subscriber_fixtures(check, testbed, config_dir)
+    try:
+        dataset_spec = resolve_dataset_spec(testbed, config_dir)
+    except (KeyError, OSError, ValueError, json.JSONDecodeError) as exc:
+        check.true("invalid PseudoDriver dataset contract: {}".format(exc), False)
+        dataset_spec = None
 
     all_addresses = []
     networks = testbed["networks"]
@@ -240,16 +246,16 @@ def main():
         check.equal("SMF UPF {} TAI".format(name), node["tais"][0]["tac"], path["tai"]["tac"])
         check.equal("SMF UPF {} EES".format(name), node["nupfEeApiRoot"], uri(path["upf"]["eventExposure"]["address"], path["upf"]["eventExposure"]["port"]))
         check.true("UPF {} pseudo driver disabled".format(name), upf["ees"]["enabled"])
-        check.true("UPF {} pseudo profile mismatch".format(name), upf["ees"]["parquetDir"].endswith("/" + path["upf"]["pseudoDriver"]["datasetProfile"]))
+        check.equal(
+            "UPF {} PseudoDriver directory".format(name),
+            upf["ees"]["parquetDir"],
+            path["upf"]["pseudoDriver"]["dataset"]["guestDirectory"],
+        )
 
         pseudo = path["upf"]["pseudoDriver"]
         dataset = pseudo.get("dataset", {})
-        dataset_path = ROOT / "NFs" / "upf" / "pre_data" / pseudo["datasetProfile"] / str(dataset.get("file", ""))
-        check.true("UPF {} dataset file missing: {}".format(name, dataset_path), dataset_path.is_file())
-        if dataset_path.is_file():
-            check.equal("UPF {} dataset bytes".format(name), dataset_path.stat().st_size, dataset.get("bytes"))
-            check.equal("UPF {} dataset sha256".format(name), sha256_file(dataset_path), dataset.get("sha256"))
-        check.true("UPF {} dataset rows must be positive".format(name), isinstance(dataset.get("rows"), int) and dataset["rows"] > 0)
+        check.equal("UPF {} dataset artifact".format(name), dataset.get("file"), "traffic.parquet")
+        check.true("UPF {} dataset profile missing".format(name), (ROOT / str(pseudo.get("profile", ""))).is_file())
         check.true(
             "UPF {} replay headroom must be at least 512 MiB".format(name),
             isinstance(dataset.get("minimumReplayHeadroomMiB"), int) and dataset["minimumReplayHeadroomMiB"] >= 512,
@@ -337,20 +343,25 @@ def main():
     manifest = load_yaml(config_dir / "manifest.yaml")
     check.equal("manifest guest machines", manifest.get("runtime", {}).get("guestMachines"), sorted(testbed["machines"]))
     check.equal("manifest Host containers", manifest.get("runtime", {}).get("hostContainers"), testbed["placement"]["host-containers"])
+    check.equal(
+        "manifest PseudoDriver profiles",
+        manifest.get("constraints", {}).get("pseudoDriverProfiles"),
+        {name: testbed["paths"][name]["upf"]["pseudoDriver"]["profile"] for name in ("a", "b")},
+    )
     for path_name in ("a", "b"):
         pseudo = testbed["paths"][path_name]["upf"]["pseudoDriver"]
         dataset = pseudo["dataset"]
         expected_manifest_dataset = {
-            "file": "NFs/upf/pre_data/{}/{}".format(pseudo["datasetProfile"], dataset["file"]),
-            "sha256": dataset["sha256"],
-            "bytes": dataset["bytes"],
-            "rows": dataset["rows"],
+            "profile": pseudo["profile"],
+            "guestDirectory": dataset["guestDirectory"],
         }
         check.equal(
             "manifest path-{} dataset".format(path_name),
             manifest.get("datasets", {}).get("path-" + path_name),
             expected_manifest_dataset,
         )
+    if dataset_spec is not None:
+        check.equal("dataset set paths", sorted(dataset_spec["paths"]), ["path-a", "path-b"])
 
     consumer = load_yaml(config_dir / "consumer.yaml")
     check.equal("consumer NRF", consumer["nrfUri"], nrf_uri)

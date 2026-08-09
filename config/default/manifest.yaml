@@ -10,19 +10,17 @@ sources:
 constraints:
   certificatesSupported: false
   pseudoDriverRequired: true
-  pseudoDriverProfiles: {a: group1, b: group2}
+  pseudoDriverProfiles:
+    a: fixtures/full-core/traffic/profiles/path-a.json
+    b: fixtures/full-core/traffic/profiles/path-b.json
   gtp5g: ">=0.9.5,<0.10.0"
 runtime:
   guestMachines: [core, path-a, path-b]
   hostContainers: [pyanlf-a, pymtlf-a, pyanlf-b, pymtlf-b, pymtlf-c]
 datasets:
   path-a:
-    file: NFs/upf/pre_data/group1/training_packets_run001.parquet
-    sha256: d9e2772de8529870e272f44a3bc02863e8831d9c90d51eb0b33961eb28a29030
-    bytes: 21830425
-    rows: 2720063
+    profile: fixtures/full-core/traffic/profiles/path-a.json
+    guestDirectory: /var/lib/5g-nwdaf-infrastructure/datasets/active
   path-b:
-    file: NFs/upf/pre_data/group2/training_packets_run001.parquet
-    sha256: b8482a21f3370de491a67fa1f9908e1b8b3aec7671787bbbdb0d9287680b662e
-    bytes: 44050349
-    rows: 5759921
+    profile: fixtures/full-core/traffic/profiles/path-b.json
+    guestDirectory: /var/lib/5g-nwdaf-infrastructure/datasets/active

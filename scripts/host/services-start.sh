@@ -18,6 +18,7 @@ rollback() {
 }
 trap rollback EXIT
 stage_config_all "$config_dir" "$hash"
+"$HOST_ROOT/scripts/host/dataset-stage.sh" apply "$testbed" "$config_dir"
 
 start_unit core mongodb
 start_unit core nrf

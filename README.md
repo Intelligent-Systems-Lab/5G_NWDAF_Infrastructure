@@ -28,10 +28,11 @@ automatically create a subscription.
 - `kernel/`: guest kernel dependencies such as gtp5g
 - `config/`: complete native config sets plus generated per-VM network aliases;
   `default` is the committed baseline
-- `fixtures/full-core/`: scoped six-UE subscriber and Internal Group test data
+- `fixtures/full-core/`: scoped subscriber/group fixtures and traffic profiles
 - `scripts/host/`: host orchestration and read-only checks
 - `scripts/guest/`: VM provisioning, build, config activation, and systemd units
 - `tools/nwdaf-consumer/`: infrastructure-owned discovery/subscription client
+- `tools/datasetgen/`: infrastructure-owned deterministic Parquet generator/auditor
 
 `nwdaf-resources` is not a runtime dependency or submodule. Component source
 is fixed by parent gitlinks and is never cloned by guest provisioning.
@@ -45,6 +46,7 @@ complete sequence is:
 git submodule update --init --recursive
 cp testbed.local.example.yaml testbed.local.yaml
 # Select and verify a working provider in testbed.local.yaml.
+make dataset-generate
 make preflight
 make vm-up
 make services-start
@@ -101,6 +103,13 @@ on the RTX 3080, all five application readiness endpoints returned HTTP 200 from
 their owning VMs, and periodic NWDAF/backend synchronization succeeded in both
 directions. Empty-stack container RSS was about 1.38 GiB total. This proves
 activation and transport, not concurrent training capacity.
+
+The dataset lifecycle derives expected UE addresses from each topology
+`uePool`, generates ignored Path A/B Parquet artifacts, audits schema, hash,
+rows, IPs, timestamps, and training/monitor headroom, then stages one
+role-specific artifact before either UPF starts. The default artifacts are
+about 0.84 MiB and 27,000 rows per Path; they are not source assets and are
+excluded from Vagrant rsync.
 
 The guest lifecycle now applies six scoped subscriber records and one Internal
 Group idempotently before starting UERANSIM. A complete stop/start regression

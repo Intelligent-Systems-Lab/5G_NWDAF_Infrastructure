@@ -131,12 +131,10 @@ paths:
       pseudoDriver:
         enabled: true
         mode: hybrid
-        datasetProfile: group1
+        profile: fixtures/full-core/traffic/profiles/path-a.json
         dataset:
-          file: training_packets_run001.parquet
-          sha256: d9e2772de8529870e272f44a3bc02863e8831d9c90d51eb0b33961eb28a29030
-          bytes: 21830425
-          rows: 2720063
+          file: traffic.parquet
+          guestDirectory: /var/lib/5g-nwdaf-infrastructure/datasets/active
           minimumReplayHeadroomMiB: 512
     ues:
       - imsi-466920000000001
@@ -158,12 +156,10 @@ paths:
       pseudoDriver:
         enabled: true
         mode: hybrid
-        datasetProfile: group2
+        profile: fixtures/full-core/traffic/profiles/path-b.json
         dataset:
-          file: training_packets_run001.parquet
-          sha256: b8482a21f3370de491a67fa1f9908e1b8b3aec7671787bbbdb0d9287680b662e
-          bytes: 44050349
-          rows: 5759921
+          file: traffic.parquet
+          guestDirectory: /var/lib/5g-nwdaf-infrastructure/datasets/active
           minimumReplayHeadroomMiB: 512
     ues:
       - imsi-466920000000004

@@ -24,12 +24,14 @@ ln -sfn /usr/local/go/bin/go /usr/local/bin/go
 
 id 5g-nwdaf >/dev/null 2>&1 || useradd --system --create-home --home-dir /var/lib/5g-nwdaf-infrastructure --shell /usr/sbin/nologin 5g-nwdaf
 install -d -o 5g-nwdaf -g 5g-nwdaf /var/lib/5g-nwdaf-infrastructure
+install -d -o 5g-nwdaf -g 5g-nwdaf /var/lib/5g-nwdaf-infrastructure/datasets /var/lib/5g-nwdaf-infrastructure/datasets/sets
 install -d /etc/5g-nwdaf-infrastructure/config-sets /opt/5g-nwdaf-infrastructure/work /usr/local/libexec/5g-nwdaf-infrastructure/bin
 printf '%s\n' "$machine" >/etc/5g-nwdaf-infrastructure/machine
 
 install -m 0755 /opt/5g-nwdaf-infrastructure/source/scripts/guest/service-run.sh /usr/local/libexec/5g-nwdaf-infrastructure/service-run
 install -m 0755 /opt/5g-nwdaf-infrastructure/source/scripts/guest/config-activate.sh /usr/local/libexec/5g-nwdaf-infrastructure/config-activate
 install -m 0755 /opt/5g-nwdaf-infrastructure/source/scripts/guest/network-setup.sh /usr/local/libexec/5g-nwdaf-infrastructure/network-setup
+install -m 0755 /opt/5g-nwdaf-infrastructure/source/scripts/guest/dataset-activate.sh /usr/local/libexec/5g-nwdaf-infrastructure/dataset-activate
 install -m 0755 /opt/5g-nwdaf-infrastructure/source/tools/nwdaf-consumer/consumer.py /usr/local/libexec/5g-nwdaf-infrastructure/nwdaf-consumer
 install -m 0644 /opt/5g-nwdaf-infrastructure/source/scripts/guest/systemd/5g-nwdaf@.service /etc/systemd/system/5g-nwdaf@.service
 install -m 0644 /opt/5g-nwdaf-infrastructure/source/scripts/guest/systemd/5g-nwdaf-stack.target /etc/systemd/system/5g-nwdaf-stack.target

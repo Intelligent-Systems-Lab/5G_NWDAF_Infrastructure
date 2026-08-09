@@ -3,7 +3,8 @@ TESTBED ?= testbed.yaml
 CONFIG_DIR ?=
 NAME ?= local
 
-.PHONY: help preflight config-check config-render ml-compose-check ml-cpu-smoke ml-lifecycle-smoke \
+.PHONY: help preflight config-check config-render dataset-generate dataset-check dataset-show \
+	dataset-smoke dataset-stage-plan dataset-stage ml-compose-check ml-cpu-smoke ml-lifecycle-smoke \
 	ml-start ml-status ml-stop vm-up vm-status vm-halt \
 	services-start services-status services-stop subscriptions-start \
 	subscriptions-status subscriptions-stop subscriber-data-validate \
@@ -15,6 +16,8 @@ help:
 	@echo "  make preflight"
 	@echo "  make config-check [TESTBED=...] [CONFIG_DIR=...]"
 	@echo "  make config-render NAME=... [TESTBED=...]"
+	@echo "  make dataset-generate | dataset-check | dataset-show | dataset-smoke"
+	@echo "  make dataset-stage-plan | dataset-stage"
 	@echo "  make ml-compose-check | ml-cpu-smoke | ml-lifecycle-smoke"
 	@echo "  make ml-start | ml-status | ml-stop"
 	@echo "  make vm-up | vm-status | vm-halt"
@@ -31,6 +34,24 @@ config-check:
 
 config-render:
 	@python3 scripts/host/config-render.py --testbed "$(TESTBED)" --name "$(NAME)"
+
+dataset-generate:
+	@python3 scripts/host/dataset.py --testbed "$(TESTBED)" $(if $(CONFIG_DIR),--config-dir "$(CONFIG_DIR)") generate
+
+dataset-check:
+	@python3 scripts/host/dataset.py --testbed "$(TESTBED)" $(if $(CONFIG_DIR),--config-dir "$(CONFIG_DIR)") check
+
+dataset-show:
+	@python3 scripts/host/dataset.py --testbed "$(TESTBED)" $(if $(CONFIG_DIR),--config-dir "$(CONFIG_DIR)") show
+
+dataset-smoke:
+	@scripts/host/dataset-smoke.sh "$(TESTBED)" "$(CONFIG_DIR)"
+
+dataset-stage-plan:
+	@scripts/host/dataset-stage.sh plan "$(TESTBED)" "$(CONFIG_DIR)"
+
+dataset-stage:
+	@scripts/host/dataset-stage.sh apply "$(TESTBED)" "$(CONFIG_DIR)"
 
 ml-compose-check:
 	@python3 scripts/host/ml-compose-check.py --testbed "$(TESTBED)" $(if $(CONFIG_DIR),--config-dir "$(CONFIG_DIR)")

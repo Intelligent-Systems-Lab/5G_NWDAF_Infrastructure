@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "path": "b",
+  "windowSeconds": 1,
+  "breakingTimeSeconds": 3000,
+  "stableWindows": 3600,
+  "degradedWindows": 900,
+  "postBoundaryMode": "stable",
+  "stableUplinkBytes": 120,
+  "stableDownlinkBytes": 220,
+  "degradedUplinkBytes": 12,
+  "degradedDownlinkBytes": 22,
+  "degradedJitterScale": 1
+}

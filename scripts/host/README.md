@@ -18,3 +18,8 @@ in-container CUDA visibility separately.
 guest `mongosh` projection for scoped `validate`, `plan`, `apply`, `show`, or
 `clear`. `services-start.sh` uses only idempotent `apply`; stopping services
 does not delete subscriber or Internal Group data.
+
+`dataset.py` resolves committed traffic profiles against `testbed.yaml` and the
+effective native config, then builds or audits ignored, content-addressed
+Parquet sets. `dataset-stage.sh plan` is read-only; `apply` uploads only the
+matching Path artifact. `services-start.sh` calls it before any process starts.

@@ -36,7 +36,7 @@ Vagrant.configure("2") do |config|
   config.vm.synced_folder ROOT, "/opt/5g-nwdaf-infrastructure/source",
     type: "rsync", rsync__auto: false,
     rsync__exclude: [
-      ".git/", ".vagrant/", "ML/", "config/generated/", "config/local/",
+      ".git/", ".vagrant/", ".generated/", "ML/", "config/generated/", "config/local/",
       "**/.venv/", "**/__pycache__/", "**/.pytest_cache/", "**/node_modules/"
     ]
 
