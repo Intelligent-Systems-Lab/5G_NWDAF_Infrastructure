@@ -1,0 +1,19 @@
+schemaVersion: 1
+name: fl-closure-smoke
+kind: bounded-smoke
+warmStartMode: inference-and-training
+samplingIntervalSeconds: 30
+trafficProfiles:
+  a: fixtures/full-core/traffic/profiles/fl-closure-smoke/path-a.json
+  b: fixtures/full-core/traffic/profiles/fl-closure-smoke/path-b.json
+monitoring:
+  reportPeriodSeconds: 30
+  minimumReferenceReports: 2
+  decisionWindowSize: 2
+  requiredHits: 1
+training:
+  minimumSamples: 1
+  localEpochs: 2
+  fittingRounds: 2
+  preparationDataWindowSeconds: 3600
+  enforcePerformanceGate: false

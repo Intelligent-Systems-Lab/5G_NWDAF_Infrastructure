@@ -1,10 +1,10 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "path": "a",
   "windowSeconds": 1,
   "breakingTimeSeconds": 3000,
-  "stableWindows": 3600,
-  "degradedWindows": 900,
+  "stableWindows": 3180,
+  "degradedWindows": 600,
   "postBoundaryMode": "degraded",
   "stableUplinkBytes": 100,
   "stableDownlinkBytes": 200,

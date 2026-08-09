@@ -65,6 +65,36 @@ make config-render NAME=my-lab TESTBED=testbed.my-lab.yaml
 make config-check TESTBED=testbed.my-lab.yaml CONFIG_DIR=config/generated/my-lab
 ```
 
+Scenario selection is independent of VM topology. `config/default` is the
+`full-core-cat-transition` business example. Render the shorter FL closure
+scenario as another complete ignored set:
+
+```sh
+make config-render NAME=fl-closure-smoke \
+  SCENARIO=fixtures/full-core/scenarios/fl-closure-smoke.yaml
+make config-check CONFIG_DIR=config/generated/fl-closure-smoke
+make dataset-generate CONFIG_DIR=config/generated/fl-closure-smoke
+make dataset-show CONFIG_DIR=config/generated/fl-closure-smoke
+```
+
+The generated manifest pins the scenario name, kind, definition hash, and Path
+A/B profiles. The renderer changes the coordinated sampling/report periods,
+accuracy-policy windows, local epochs, fitting rounds, and preparation window.
+It does not change VM resources, networks, NF placement, subscriber identity,
+or addresses, so selecting the smoke does not require recreating the VMs.
+
+When running it, use the same complete set in both execution domains:
+
+```sh
+make services-start CONFIG_DIR=config/generated/fl-closure-smoke
+make ml-start CONFIG_DIR=config/generated/fl-closure-smoke
+make subscriptions-start
+```
+
+Do not claim the smoke as business acceptance. It keeps the real Consumer/NRF,
+Nupf Event Exposure, PyAnLF, ADRF, A/B training, FedAvg, publication, and
+reprovision paths, but intentionally shortens monitor timing and local training.
+
 `services-start` validates the effective set, hashes all native YAML, uploads
 one archive to every VM, and extracts it to:
 
@@ -171,10 +201,16 @@ make dataset-show
 make dataset-stage-plan
 ```
 
-Generation resolves the profiles against effective PyAnLF/PyMTLF, UPF, seed
-model, and monitor settings. It rejects insufficient historical preparation
-data, stable reference lead-in, or degradation tail, derives `.1` through `.3`
-from each UE pool, and writes below `.generated/datasets/<dataset-set-id>/`.
+Generation resolves the manifest-selected profiles against effective
+PyAnLF/PyMTLF, UPF, seed model, and monitor settings. The business example
+requires its 30 historical observations only to fill the PyAnLF input; its
+earliest policy trigger is separately checked to provide 69 observations and
+8 training/1 validation samples. The smoke requires its 100-observation
+warm-start itself to provide 36 training/4 validation samples; its earliest
+trigger has 107 observations and 43 training/4 validation samples. Both reject
+insufficient stable reference lead-in, degradation tail, retrieval lookback, or
+trigger-time evidence. Generation derives `.1` through `.3` from each UE pool
+and writes below `.generated/datasets/<dataset-set-id>/`.
 `make dataset-smoke` performs two independent generations and proves that a
 tampered Parquet artifact is rejected.
 

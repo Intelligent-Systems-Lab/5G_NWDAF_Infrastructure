@@ -7,10 +7,10 @@ import json
 import math
 from pathlib import Path
 
-from configlib import ROOT, load_yaml
+from configlib import ROOT, load_yaml, resolve_config_scenario
 
 
-DATASET_SCHEMA = 1
+DATASET_SCHEMA = 2
 
 
 def canonical_bytes(value):
@@ -54,6 +54,17 @@ def _minimum_observations(sequence_length, output_length, validation_ratio):
     raise ValueError("cannot derive a finite minimum training dataset")
 
 
+def _sample_counts(observations, sequence_length, output_length, validation_ratio):
+    candidates = observations - sequence_length - output_length + 1
+    purge = sequence_length + output_length - 1
+    retained = candidates - purge
+    if retained < 2:
+        return 0, 0
+    validation = max(1, math.floor(retained * validation_ratio))
+    validation = min(validation, retained - 1)
+    return retained - validation, validation
+
+
 def _tool_source_hash(tool_dir):
     digest = hashlib.sha256()
     files = sorted(
@@ -71,6 +82,31 @@ def _tool_source_hash(tool_dir):
 def resolve_dataset_spec(testbed, config_dir):
     """Return a canonical, fully resolved dataset set specification."""
     config_dir = Path(config_dir)
+    scenario_path, scenario = resolve_config_scenario(config_dir)
+    if scenario.get("schemaVersion") != 1:
+        raise ValueError("unsupported scenario schema")
+    profiles = scenario.get("trafficProfiles", {})
+    if sorted(profiles) != ["a", "b"]:
+        raise ValueError("scenario trafficProfiles must contain Path A and B")
+    sampling_contract = _positive_int(
+        scenario.get("samplingIntervalSeconds"), "scenario sampling interval"
+    )
+    monitoring = scenario.get("monitoring", {})
+    training = scenario.get("training", {})
+    minimum_samples = _positive_int(
+        training.get("minimumSamples"), "scenario minimum training samples"
+    )
+    local_epochs = _positive_int(training.get("localEpochs"), "scenario local epochs")
+    fitting_rounds = _positive_int(training.get("fittingRounds"), "scenario fitting rounds")
+    preparation_window = _positive_int(
+        training.get("preparationDataWindowSeconds"),
+        "scenario preparation data window",
+    )
+    if training.get("enforcePerformanceGate") is not False:
+        raise ValueError("scenario must retain final validation with the performance gate disabled")
+    warm_start_mode = scenario.get("warmStartMode")
+    if warm_start_mode not in ("inference-only", "inference-and-training"):
+        raise ValueError("scenario warmStartMode is invalid")
     seed = load_json(ROOT / "ML" / "PyMTLF" / "seed_models" / "initial" / "config.json")
     sequence_length = _positive_int(seed["inference"]["seq_length"], "seed seq_length")
     output_length = _positive_int(seed["inference"]["out_seq_len"], "seed out_seq_len")
@@ -86,6 +122,26 @@ def resolve_dataset_spec(testbed, config_dir):
     required_hits = _positive_int(
         coordinator["accuracy_policy"]["required_hits"], "required degradation hits"
     )
+    decision_window = _positive_int(
+        coordinator["accuracy_policy"]["decision_window_size"], "decision window"
+    )
+    if monitor_period != monitoring.get("reportPeriodSeconds"):
+        raise ValueError("coordinator report period differs from the scenario")
+    if minimum_reference != monitoring.get("minimumReferenceReports"):
+        raise ValueError("coordinator minimum reference count differs from the scenario")
+    if required_hits != monitoring.get("requiredHits"):
+        raise ValueError("coordinator required hit count differs from the scenario")
+    if decision_window != monitoring.get("decisionWindowSize"):
+        raise ValueError("coordinator decision window differs from the scenario")
+    if required_hits > decision_window:
+        raise ValueError("required degradation hits exceed the decision window")
+    server = coordinator["federated_learning"]["server"]
+    if server.get("round_count") != fitting_rounds:
+        raise ValueError("coordinator fitting rounds differ from the scenario")
+    if server.get("preparation_data_window_seconds") != preparation_window:
+        raise ValueError("coordinator preparation window differs from the scenario")
+    if server.get("final_validation", {}).get("enforce_performance_gate") is not False:
+        raise ValueError("coordinator performance gate must remain disabled")
 
     resolved_paths = {}
     common_sampling = None
@@ -98,9 +154,9 @@ def resolve_dataset_spec(testbed, config_dir):
             raise ValueError("path {} dataset file must be traffic.parquet".format(path_name))
         if pseudo["dataset"].get("guestDirectory") != "/var/lib/5g-nwdaf-infrastructure/datasets/active":
             raise ValueError("path {} dataset guest directory is not canonical".format(path_name))
-        profile_source = pseudo.get("profile")
+        profile_source = profiles.get(path_name)
         if not isinstance(profile_source, str):
-            raise ValueError("path {} pseudoDriver.profile is required".format(path_name))
+            raise ValueError("path {} scenario traffic profile is required".format(path_name))
         profile_path = (ROOT / profile_source).resolve()
         if ROOT not in profile_path.parents:
             raise ValueError("{} must remain inside the repository".format(profile_source))
@@ -122,11 +178,17 @@ def resolve_dataset_spec(testbed, config_dir):
             anlf["analytics"]["ue_communication"]["sampling_interval_seconds"],
             "path {} sampling interval".format(path_name),
         )
+        if sampling != sampling_contract:
+            raise ValueError("path {} sampling differs from the scenario".format(path_name))
         validation_ratio = mtlf["federated_learning"]["client"]["training"]["validation_ratio"]
         if not isinstance(validation_ratio, (int, float)) or not 0 < validation_ratio < 1:
             raise ValueError("path {} validation_ratio must be between 0 and 1".format(path_name))
         if upf["ees"]["periodSec"] != sampling:
             raise ValueError("path {} UPF period and AnLF sampling interval differ".format(path_name))
+        if mtlf["federated_learning"]["client"]["training"].get("epochs") != local_epochs:
+            raise ValueError("path {} local epochs differ from the scenario".format(path_name))
+        if mtlf["dataset"].get("retrieval_window_seconds") != preparation_window:
+            raise ValueError("path {} retrieval fallback differs from the scenario".format(path_name))
         if any(
             duration % sampling
             for duration in (
@@ -146,18 +208,9 @@ def resolve_dataset_spec(testbed, config_dir):
         minimum_observations, minimum_training, minimum_validation = _minimum_observations(
             sequence_length, output_length, validation_ratio
         )
-        if historical_observations < minimum_observations:
-            raise ValueError(
-                "path {} has {} historical observations; at least {} are required".format(
-                    path_name, historical_observations, minimum_observations
-                )
-            )
-        candidates = historical_observations - sequence_length - output_length + 1
-        purge = sequence_length + output_length - 1
-        retained = candidates - purge
-        validation_samples = max(1, math.floor(retained * validation_ratio))
-        validation_samples = min(validation_samples, retained - 1)
-        training_samples = retained - validation_samples
+        historical_training, historical_validation = _sample_counts(
+            historical_observations, sequence_length, output_length, validation_ratio
+        )
         stable_lead = (
             profile["stableWindows"] * profile["windowSeconds"]
             - profile["breakingTimeSeconds"]
@@ -167,6 +220,28 @@ def resolve_dataset_spec(testbed, config_dir):
             raise ValueError("path {} stable live lead-in is too short for monitor reference".format(path_name))
         if profile["postBoundaryMode"] == "degraded" and degraded_tail < required_hits * monitor_period:
             raise ValueError("path {} degraded tail is too short for the accuracy policy".format(path_name))
+        if path_name == "a" and profile["postBoundaryMode"] != "degraded":
+            raise ValueError("Path A must carry the changed traffic profile")
+        if path_name == "b" and profile["postBoundaryMode"] != "stable":
+            raise ValueError("Path B must remain the stable control")
+        earliest_decision = required_hits * monitor_period
+        earliest_trigger = stable_lead + earliest_decision
+        if profile["breakingTimeSeconds"] + earliest_trigger > preparation_window:
+            raise ValueError(
+                "path {} preparation window cannot cover warm-start through earliest trigger".format(path_name)
+            )
+        trigger_observations = historical_observations + earliest_trigger // sampling
+        trigger_training, trigger_validation = _sample_counts(
+            trigger_observations, sequence_length, output_length, validation_ratio
+        )
+        if historical_observations < sequence_length:
+            raise ValueError("path {} cannot fill the PyAnLF input window".format(path_name))
+        if warm_start_mode == "inference-and-training" and (
+            historical_training < minimum_samples or historical_validation < minimum_validation
+        ):
+            raise ValueError("path {} warm-start cannot prepare training and validation evidence".format(path_name))
+        if trigger_training < minimum_samples or trigger_validation < minimum_validation:
+            raise ValueError("path {} earliest trigger lacks training or validation evidence".format(path_name))
 
         resolved = dict(profile)
         resolved.update({
@@ -186,8 +261,13 @@ def resolve_dataset_spec(testbed, config_dir):
             "minimumPreparationObservations": minimum_observations,
             "minimumTrainingSamples": minimum_training,
             "minimumValidationSamples": minimum_validation,
-            "trainingSamples": training_samples,
-            "validationSamples": validation_samples,
+            "minimumAdmissionTrainingSamples": minimum_samples,
+            "historicalTrainingSamples": historical_training,
+            "historicalValidationSamples": historical_validation,
+            "earliestTriggerSeconds": earliest_trigger,
+            "triggerObservations": trigger_observations,
+            "triggerTrainingSamples": trigger_training,
+            "triggerValidationSamples": trigger_validation,
             "monitorReportPeriodSeconds": monitor_period,
             "minimumReferenceReports": minimum_reference,
             "requiredDegradationHits": required_hits,
@@ -198,6 +278,13 @@ def resolve_dataset_spec(testbed, config_dir):
 
     spec = {
         "schemaVersion": DATASET_SCHEMA,
+        "scenario": {
+            "name": scenario["name"],
+            "kind": scenario["kind"],
+            "definition": scenario_path.relative_to(ROOT).as_posix(),
+            "definitionHash": canonical_hash(scenario),
+            "warmStartMode": warm_start_mode,
+        },
         "generatorSourceHash": _tool_source_hash(ROOT / "tools" / "datasetgen"),
         "paths": resolved_paths,
     }

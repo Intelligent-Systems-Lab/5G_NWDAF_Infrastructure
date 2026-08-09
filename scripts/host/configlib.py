@@ -41,6 +41,30 @@ def resolve_config_dir(testbed, explicit=None):
     return resolve_path(testbed.get("config", {}).get("directory", "config/default"))
 
 
+def load_scenario_definition(value):
+    path = resolve_path(value).resolve()
+    if path != ROOT and ROOT not in path.parents:
+        raise ValueError("scenario definition must remain inside the repository")
+    scenario = load_yaml(path)
+    return path, scenario
+
+
+def resolve_config_scenario(config_dir):
+    manifest = load_yaml(Path(config_dir) / "manifest.yaml")
+    metadata = manifest.get("scenario", {})
+    definition = metadata.get("definition")
+    if not isinstance(definition, str) or not definition:
+        raise ValueError("config manifest scenario.definition is required")
+    path, scenario = load_scenario_definition(definition)
+    if metadata.get("name") != scenario.get("name"):
+        raise ValueError("config manifest scenario name does not match its definition")
+    expected_hash = metadata.get("definitionHash")
+    actual_hash = canonical_sha256(scenario)
+    if expected_hash != actual_hash:
+        raise ValueError("config manifest scenario definition hash is stale")
+    return path, scenario
+
+
 def load_local_settings():
     local_path = ROOT / "testbed.local.yaml"
     return load_yaml(local_path) if local_path.exists() else {}

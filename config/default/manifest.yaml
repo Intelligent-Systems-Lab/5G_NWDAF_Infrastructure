@@ -1,6 +1,11 @@
 schemaVersion: 1
-name: dual-tai-default
+name: full-core-cat-transition
 topology: testbed.yaml
+scenario:
+  name: full-core-cat-transition
+  kind: business-acceptance
+  definition: fixtures/full-core/scenarios/full-core-cat-transition.yaml
+  definitionHash: 6c7f6cc2e5fc3d08dd684a4f793cddbedce7364836f6d87bfbe927b5ca671c8b
 sources:
   free5gcConfig:
     remote: https://github.com/free5gc/free5gc.git
@@ -11,16 +16,16 @@ constraints:
   certificatesSupported: false
   pseudoDriverRequired: true
   pseudoDriverProfiles:
-    a: fixtures/full-core/traffic/profiles/path-a.json
-    b: fixtures/full-core/traffic/profiles/path-b.json
+    a: fixtures/full-core/traffic/profiles/full-core-cat-transition/path-a.json
+    b: fixtures/full-core/traffic/profiles/full-core-cat-transition/path-b.json
   gtp5g: ">=0.9.5,<0.10.0"
 runtime:
   guestMachines: [core, path-a, path-b]
   hostContainers: [pyanlf-a, pymtlf-a, pyanlf-b, pymtlf-b, pymtlf-c]
 datasets:
   path-a:
-    profile: fixtures/full-core/traffic/profiles/path-a.json
+    profile: fixtures/full-core/traffic/profiles/full-core-cat-transition/path-a.json
     guestDirectory: /var/lib/5g-nwdaf-infrastructure/datasets/active
   path-b:
-    profile: fixtures/full-core/traffic/profiles/path-b.json
+    profile: fixtures/full-core/traffic/profiles/full-core-cat-transition/path-b.json
     guestDirectory: /var/lib/5g-nwdaf-infrastructure/datasets/active

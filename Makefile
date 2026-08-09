@@ -2,6 +2,7 @@ SHELL := /usr/bin/env bash
 TESTBED ?= testbed.yaml
 CONFIG_DIR ?=
 NAME ?= local
+SCENARIO ?= fixtures/full-core/scenarios/full-core-cat-transition.yaml
 
 .PHONY: help preflight config-check config-render dataset-generate dataset-check dataset-show \
 	dataset-smoke dataset-stage-plan dataset-stage ml-compose-check ml-cpu-smoke ml-lifecycle-smoke \
@@ -15,7 +16,7 @@ help:
 	@echo "5G NWDAF Infrastructure"
 	@echo "  make preflight"
 	@echo "  make config-check [TESTBED=...] [CONFIG_DIR=...]"
-	@echo "  make config-render NAME=... [TESTBED=...]"
+	@echo "  make config-render NAME=... [SCENARIO=...] [TESTBED=...]"
 	@echo "  make dataset-generate | dataset-check | dataset-show | dataset-smoke"
 	@echo "  make dataset-stage-plan | dataset-stage"
 	@echo "  make ml-compose-check | ml-cpu-smoke | ml-lifecycle-smoke"
@@ -33,7 +34,7 @@ config-check:
 	@python3 scripts/host/config-check.py --testbed "$(TESTBED)" $(if $(CONFIG_DIR),--config-dir "$(CONFIG_DIR)")
 
 config-render:
-	@python3 scripts/host/config-render.py --testbed "$(TESTBED)" --name "$(NAME)"
+	@python3 scripts/host/config-render.py --testbed "$(TESTBED)" --name "$(NAME)" --scenario "$(SCENARIO)"
 
 dataset-generate:
 	@python3 scripts/host/dataset.py --testbed "$(TESTBED)" $(if $(CONFIG_DIR),--config-dir "$(CONFIG_DIR)") generate

@@ -10,7 +10,7 @@ from urllib.parse import urlparse
 
 from configlib import (
     ROOT, get_path, guest_network_configs, load_yaml, resolve_config_dir,
-    resolve_ml_bind_address, resolve_path, sha256_tree,
+    resolve_config_scenario, resolve_ml_bind_address, resolve_path, sha256_tree,
 )
 from datasetlib import resolve_dataset_spec
 
@@ -185,6 +185,56 @@ def main():
     if missing:
         return finish(check, testbed_path, config_dir)
 
+    try:
+        _scenario_path, scenario = resolve_config_scenario(config_dir)
+    except (KeyError, OSError, ValueError) as exc:
+        check.true("invalid scenario contract: {}".format(exc), False)
+        return finish(check, testbed_path, config_dir)
+    check.equal("scenario schema", scenario.get("schemaVersion"), 1)
+    check.true(
+        "scenario kind must be business-acceptance or bounded-smoke",
+        scenario.get("kind") in ("business-acceptance", "bounded-smoke"),
+    )
+    check.true(
+        "scenario warmStartMode must identify its data responsibility",
+        scenario.get("warmStartMode") in ("inference-only", "inference-and-training"),
+    )
+    check.equal("scenario traffic paths", sorted(scenario.get("trafficProfiles", {})), ["a", "b"])
+    for path_name, profile_source in scenario.get("trafficProfiles", {}).items():
+        check.true(
+            "scenario Path {} traffic profile must be a repository-relative file".format(path_name),
+            isinstance(profile_source, str)
+            and bool(profile_source)
+            and (ROOT / profile_source).is_file(),
+        )
+    for section, fields in {
+        "monitoring": ("reportPeriodSeconds", "minimumReferenceReports", "decisionWindowSize", "requiredHits"),
+        "training": ("minimumSamples", "localEpochs", "fittingRounds", "preparationDataWindowSeconds"),
+    }.items():
+        values = scenario.get(section, {})
+        for field in fields:
+            value = values.get(field)
+            check.true(
+                "scenario {}.{} must be a positive integer".format(section, field),
+                isinstance(value, int) and not isinstance(value, bool) and value > 0,
+            )
+    check.true(
+        "scenario samplingIntervalSeconds must be a positive integer",
+        isinstance(scenario.get("samplingIntervalSeconds"), int)
+        and not isinstance(scenario.get("samplingIntervalSeconds"), bool)
+        and scenario["samplingIntervalSeconds"] > 0,
+    )
+    check.equal(
+        "scenario performance gate",
+        scenario.get("training", {}).get("enforcePerformanceGate"),
+        False,
+    )
+    if check.errors:
+        return finish(check, testbed_path, config_dir)
+    sampling = scenario["samplingIntervalSeconds"]
+    monitoring = scenario["monitoring"]
+    training = scenario["training"]
+
     check_subscriber_fixtures(check, testbed, config_dir)
     try:
         dataset_spec = resolve_dataset_spec(testbed, config_dir)
@@ -243,6 +293,9 @@ def main():
 
     smf = load_yaml(config_dir / "smfcfg.yaml")["configuration"]
     check.equal("SMF N4", smf["pfcp"]["listenAddr"], testbed["coreServices"]["smf"]["n4"]["address"])
+    ueransim_snssai = dict(testbed["mobileNetwork"]["snssai"])
+    sd = str(ueransim_snssai["sd"])
+    ueransim_snssai["sd"] = sd if sd.startswith("0x") else "0x" + sd
     for name in ("a", "b"):
         path = testbed["paths"][name]
         upf = load_yaml(config_dir / ("upfcfg-{}.yaml".format(name)))
@@ -254,6 +307,7 @@ def main():
         check.equal("SMF UPF {} TAI".format(name), node["tais"][0]["tac"], path["tai"]["tac"])
         check.equal("SMF UPF {} EES".format(name), node["nupfEeApiRoot"], uri(path["upf"]["eventExposure"]["address"], path["upf"]["eventExposure"]["port"]))
         check.true("UPF {} pseudo driver disabled".format(name), upf["ees"]["enabled"])
+        check.equal("UPF {} reporting period".format(name), upf["ees"]["periodSec"], sampling)
         check.equal(
             "UPF {} PseudoDriver directory".format(name),
             upf["ees"]["parquetDir"],
@@ -263,7 +317,6 @@ def main():
         pseudo = path["upf"]["pseudoDriver"]
         dataset = pseudo.get("dataset", {})
         check.equal("UPF {} dataset artifact".format(name), dataset.get("file"), "traffic.parquet")
-        check.true("UPF {} dataset profile missing".format(name), (ROOT / str(pseudo.get("profile", ""))).is_file())
         check.true(
             "UPF {} replay headroom must be at least 512 MiB".format(name),
             isinstance(dataset.get("minimumReplayHeadroomMiB"), int) and dataset["minimumReplayHeadroomMiB"] >= 512,
@@ -273,12 +326,16 @@ def main():
         check.equal("gNB {} TAC".format(name), str(gnb["tac"]).zfill(6), path["tai"]["tac"])
         check.equal("gNB {} N2".format(name), gnb["ngapIp"], path["gnb"]["n2"]["address"])
         check.equal("gNB {} N3".format(name), gnb["gtpIp"], path["gnb"]["n3"]["address"])
+        check.equal("gNB {} S-NSSAI".format(name), gnb["slices"], [ueransim_snssai])
 
     for index in range(1, 7):
         ue = load_yaml(config_dir / "ueransim" / ("ue{}.yaml".format(index)))
         path_name = "a" if index <= 3 else "b"
         check.equal("UE{} SUPI".format(index), ue["supi"], testbed["paths"][path_name]["ues"][index - 1 if index <= 3 else index - 4])
         check.equal("UE{} gNB".format(index), ue["gnbSearchList"], [testbed["paths"][path_name]["gnb"]["n2"]["address"]])
+        check.equal("UE{} session S-NSSAI".format(index), ue["sessions"][0]["slice"], ueransim_snssai)
+        check.equal("UE{} configured S-NSSAI".format(index), ue["configured-nssai"], [ueransim_snssai])
+        check.equal("UE{} default S-NSSAI".format(index), ue["default-nssai"], [ueransim_snssai])
         check.equal(
             "UE{} UAC access identities".format(index), ue.get("uacAic"),
             {"mps": False, "mcs": False},
@@ -324,6 +381,9 @@ def main():
         check.equal(anlf_name + " bind", anlf["server"]["binding_host"], "0.0.0.0")
         check.equal(anlf_name + " container port", anlf["server"]["port"], services[anlf_name]["containerPort"])
         check.equal(anlf_name + " callback", anlf["collection"]["callback_base_uri"], uri(anlf_endpoint["address"], anlf_endpoint["port"]))
+        check.equal(anlf_name + " sampling", anlf["analytics"]["ue_communication"]["sampling_interval_seconds"], sampling)
+        check.equal(anlf_name + " ground-truth interval", anlf["accuracy_monitor"]["ground_truth_check_interval_seconds"], sampling)
+        check.equal(anlf_name + " accuracy report period", anlf["accuracy_monitor"]["report_period_seconds"], monitoring["reportPeriodSeconds"])
         check.equal(
             anlf_name + " artifact origins", anlf["model"]["artifact_download"]["allowed_origins"],
             [uri(mtlf_endpoint["address"], mtlf_endpoint["port"]), uri(testbed["coreServices"]["adrf"]["sbi"]["address"], testbed["coreServices"]["adrf"]["sbi"]["port"])],
@@ -335,6 +395,8 @@ def main():
         check.equal(mtlf_name + " public URL", mtlf["artifact"]["public_base_url"], uri(mtlf_endpoint["address"], mtlf_endpoint["port"]))
         expected_device = args.ml_device_override or services[mtlf_name]["device"]
         check.equal(mtlf_name + " device", mtlf["federated_learning"]["client"]["training"]["device"], expected_device)
+        check.equal(mtlf_name + " local epochs", mtlf["federated_learning"]["client"]["training"]["epochs"], training["localEpochs"])
+        check.equal(mtlf_name + " retrieval window", mtlf["dataset"]["retrieval_window_seconds"], training["preparationDataWindowSeconds"])
         check_pymtlf_data_paths(check, mtlf_name, mtlf)
 
     mtlf_c = load_yaml(config_dir / "pymtlf-c.yaml")
@@ -343,24 +405,34 @@ def main():
     check.equal("pymtlf-c container port", mtlf_c["server"]["port"], services["pymtlf-c"]["containerPort"])
     check.equal("pymtlf-c public URL", mtlf_c["artifact"]["public_base_url"], uri(mtlf_c_endpoint["address"], mtlf_c_endpoint["port"]))
     check_pymtlf_data_paths(check, "pymtlf-c", mtlf_c)
+    server = mtlf_c["federated_learning"]["server"]
+    check.equal("pymtlf-c fitting rounds", server["round_count"], training["fittingRounds"])
+    check.equal("pymtlf-c preparation window", server["preparation_data_window_seconds"], training["preparationDataWindowSeconds"])
+    check.equal("pymtlf-c performance gate", server["final_validation"]["enforce_performance_gate"], training["enforcePerformanceGate"])
+    check.equal("pymtlf-c monitor period", mtlf_c["model_monitor"]["report_period_seconds"], monitoring["reportPeriodSeconds"])
+    check.equal("pymtlf-c minimum references", mtlf_c["accuracy_policy"]["min_reference_samples"], monitoring["minimumReferenceReports"])
+    check.equal("pymtlf-c decision window", mtlf_c["accuracy_policy"]["decision_window_size"], monitoring["decisionWindowSize"])
+    check.equal("pymtlf-c required hits", mtlf_c["accuracy_policy"]["required_hits"], monitoring["requiredHits"])
     check.equal(
         "pymtlf-c client origins", mtlf_c["federated_learning"]["artifact_download"]["allowed_origins"],
         [uri(backends[name]["address"], backends[name]["port"]) for name in ("pymtlf-a", "pymtlf-b")],
     )
 
     manifest = load_yaml(config_dir / "manifest.yaml")
+    check.equal("manifest scenario name", manifest.get("scenario", {}).get("name"), scenario["name"])
+    check.equal("manifest scenario kind", manifest.get("scenario", {}).get("kind"), scenario["kind"])
     check.equal("manifest guest machines", manifest.get("runtime", {}).get("guestMachines"), sorted(testbed["machines"]))
     check.equal("manifest Host containers", manifest.get("runtime", {}).get("hostContainers"), testbed["placement"]["host-containers"])
     check.equal(
         "manifest PseudoDriver profiles",
         manifest.get("constraints", {}).get("pseudoDriverProfiles"),
-        {name: testbed["paths"][name]["upf"]["pseudoDriver"]["profile"] for name in ("a", "b")},
+        scenario["trafficProfiles"],
     )
     for path_name in ("a", "b"):
         pseudo = testbed["paths"][path_name]["upf"]["pseudoDriver"]
         dataset = pseudo["dataset"]
         expected_manifest_dataset = {
-            "profile": pseudo["profile"],
+            "profile": scenario["trafficProfiles"][path_name],
             "guestDirectory": dataset["guestDirectory"],
         }
         check.equal(
@@ -376,6 +448,7 @@ def main():
     check.equal("consumer PLMN", consumer["target"]["plmn"], testbed["mobileNetwork"]["plmn"])
     check.equal("consumer group", consumer["target"]["internalGroupId"], testbed["mobileNetwork"]["internalGroupId"])
     check.equal("consumer paths", [p["tac"] for p in consumer["target"]["paths"]], expected_tacs)
+    check.equal("consumer reporting period", consumer["reporting"]["periodSeconds"], sampling)
     advertised = urlparse(consumer["callback"]["advertisedUri"])
     check.equal("consumer callback host", advertised.hostname, testbed["consumer"]["callback"]["advertisedAddress"])
 

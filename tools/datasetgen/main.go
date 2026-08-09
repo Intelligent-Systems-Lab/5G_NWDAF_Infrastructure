@@ -16,43 +16,57 @@ import (
 )
 
 type resolvedProfile struct {
-	SchemaVersion                  int      `json:"schemaVersion"`
-	Path                           string   `json:"path"`
-	WindowSeconds                  int      `json:"windowSeconds"`
-	BreakingTimeSeconds            int      `json:"breakingTimeSeconds"`
-	StableWindows                  int      `json:"stableWindows"`
-	DegradedWindows                int      `json:"degradedWindows"`
-	PostBoundaryMode               string   `json:"postBoundaryMode"`
-	StableUplinkBytes              int64    `json:"stableUplinkBytes"`
-	StableDownlinkBytes            int64    `json:"stableDownlinkBytes"`
-	DegradedUplinkBytes            int64    `json:"degradedUplinkBytes"`
-	DegradedDownlinkBytes          int64    `json:"degradedDownlinkBytes"`
-	DegradedJitterScale            int64    `json:"degradedJitterScale"`
-	UEIPs                          []string `json:"ueIps"`
-	ArtifactFile                   string   `json:"artifactFile"`
-	GuestDirectory                 string   `json:"guestDirectory"`
-	ProfileSource                  string   `json:"profileSource"`
-	ProfileHash                    string   `json:"profileHash"`
-	SamplingIntervalSeconds        int      `json:"samplingIntervalSeconds"`
-	ModelInputWindow               int      `json:"modelInputWindow"`
-	ModelOutputWindow              int      `json:"modelOutputWindow"`
-	ValidationRatio                float64  `json:"validationRatio"`
-	HistoricalObservations         int      `json:"historicalObservations"`
-	MinimumPreparationObservations int      `json:"minimumPreparationObservations"`
-	MinimumTrainingSamples         int      `json:"minimumTrainingSamples"`
-	MinimumValidationSamples       int      `json:"minimumValidationSamples"`
-	TrainingSamples                int      `json:"trainingSamples"`
-	ValidationSamples              int      `json:"validationSamples"`
-	MonitorReportPeriodSeconds     int      `json:"monitorReportPeriodSeconds"`
-	MinimumReferenceReports        int      `json:"minimumReferenceReports"`
-	RequiredDegradationHits        int      `json:"requiredDegradationHits"`
-	StableLeadInSeconds            int      `json:"stableLeadInSeconds"`
-	DegradedTailSeconds            int      `json:"degradedTailSeconds"`
+	SchemaVersion                   int      `json:"schemaVersion"`
+	Path                            string   `json:"path"`
+	WindowSeconds                   int      `json:"windowSeconds"`
+	BreakingTimeSeconds             int      `json:"breakingTimeSeconds"`
+	StableWindows                   int      `json:"stableWindows"`
+	DegradedWindows                 int      `json:"degradedWindows"`
+	PostBoundaryMode                string   `json:"postBoundaryMode"`
+	StableUplinkBytes               int64    `json:"stableUplinkBytes"`
+	StableDownlinkBytes             int64    `json:"stableDownlinkBytes"`
+	DegradedUplinkBytes             int64    `json:"degradedUplinkBytes"`
+	DegradedDownlinkBytes           int64    `json:"degradedDownlinkBytes"`
+	DegradedJitterScale             int64    `json:"degradedJitterScale"`
+	UEIPs                           []string `json:"ueIps"`
+	ArtifactFile                    string   `json:"artifactFile"`
+	GuestDirectory                  string   `json:"guestDirectory"`
+	ProfileSource                   string   `json:"profileSource"`
+	ProfileHash                     string   `json:"profileHash"`
+	SamplingIntervalSeconds         int      `json:"samplingIntervalSeconds"`
+	ModelInputWindow                int      `json:"modelInputWindow"`
+	ModelOutputWindow               int      `json:"modelOutputWindow"`
+	ValidationRatio                 float64  `json:"validationRatio"`
+	HistoricalObservations          int      `json:"historicalObservations"`
+	MinimumPreparationObservations  int      `json:"minimumPreparationObservations"`
+	MinimumTrainingSamples          int      `json:"minimumTrainingSamples"`
+	MinimumValidationSamples        int      `json:"minimumValidationSamples"`
+	MinimumAdmissionTrainingSamples int      `json:"minimumAdmissionTrainingSamples"`
+	HistoricalTrainingSamples       int      `json:"historicalTrainingSamples"`
+	HistoricalValidationSamples     int      `json:"historicalValidationSamples"`
+	EarliestTriggerSeconds          int      `json:"earliestTriggerSeconds"`
+	TriggerObservations             int      `json:"triggerObservations"`
+	TriggerTrainingSamples          int      `json:"triggerTrainingSamples"`
+	TriggerValidationSamples        int      `json:"triggerValidationSamples"`
+	MonitorReportPeriodSeconds      int      `json:"monitorReportPeriodSeconds"`
+	MinimumReferenceReports         int      `json:"minimumReferenceReports"`
+	RequiredDegradationHits         int      `json:"requiredDegradationHits"`
+	StableLeadInSeconds             int      `json:"stableLeadInSeconds"`
+	DegradedTailSeconds             int      `json:"degradedTailSeconds"`
+}
+
+type scenarioIdentity struct {
+	Name           string `json:"name"`
+	Kind           string `json:"kind"`
+	Definition     string `json:"definition"`
+	DefinitionHash string `json:"definitionHash"`
+	WarmStartMode  string `json:"warmStartMode"`
 }
 
 type setSpec struct {
 	SchemaVersion       int                        `json:"schemaVersion"`
 	DatasetSetID        string                     `json:"datasetSetId"`
+	Scenario            scenarioIdentity           `json:"scenario"`
 	GeneratorSourceHash string                     `json:"generatorSourceHash"`
 	Paths               map[string]resolvedProfile `json:"paths"`
 }
@@ -82,6 +96,7 @@ type pathManifest struct {
 type setManifest struct {
 	SchemaVersion       int                     `json:"schemaVersion"`
 	DatasetSetID        string                  `json:"datasetSetId"`
+	Scenario            scenarioIdentity        `json:"scenario"`
 	GeneratorSourceHash string                  `json:"generatorSourceHash"`
 	Paths               map[string]pathManifest `json:"paths"`
 }
@@ -112,7 +127,7 @@ func readSpec(name string) setSpec {
 	if err := json.Unmarshal(data, &spec); err != nil {
 		fatalf("decode spec: %v", err)
 	}
-	if spec.SchemaVersion != 1 || spec.DatasetSetID == "" || len(spec.Paths) != 2 {
+	if spec.SchemaVersion != 2 || spec.DatasetSetID == "" || spec.Scenario.Name == "" || len(spec.Paths) != 2 {
 		fatalf("invalid dataset set specification")
 	}
 	return spec
@@ -125,7 +140,13 @@ func generate(spec setSpec, root string) error {
 		}
 		return errors.New("output root must be empty")
 	}
-	manifest := setManifest{1, spec.DatasetSetID, spec.GeneratorSourceHash, map[string]pathManifest{}}
+	manifest := setManifest{
+		SchemaVersion:       2,
+		DatasetSetID:        spec.DatasetSetID,
+		Scenario:            spec.Scenario,
+		GeneratorSourceHash: spec.GeneratorSourceHash,
+		Paths:               map[string]pathManifest{},
+	}
 	keys := sortedKeys(spec.Paths)
 	for _, key := range keys {
 		profile := spec.Paths[key]
@@ -148,7 +169,7 @@ func generate(spec setSpec, root string) error {
 		if err != nil {
 			return err
 		}
-		audit.SchemaVersion = 1
+		audit.SchemaVersion = 2
 		audit.DatasetSetID = spec.DatasetSetID
 		audit.Path = key
 		audit.ArtifactFile = profile.ArtifactFile
@@ -284,7 +305,9 @@ func check(spec setSpec, root string) error {
 	if err := readJSON(filepath.Join(root, "manifest.json"), &manifest); err != nil {
 		return err
 	}
-	if manifest.SchemaVersion != 1 || manifest.DatasetSetID != spec.DatasetSetID || manifest.GeneratorSourceHash != spec.GeneratorSourceHash {
+	if manifest.SchemaVersion != 2 || manifest.DatasetSetID != spec.DatasetSetID ||
+		!reflect.DeepEqual(manifest.Scenario, spec.Scenario) ||
+		manifest.GeneratorSourceHash != spec.GeneratorSourceHash {
 		return errors.New("dataset set manifest identity does not match resolved specification")
 	}
 	if len(manifest.Paths) != len(spec.Paths) {

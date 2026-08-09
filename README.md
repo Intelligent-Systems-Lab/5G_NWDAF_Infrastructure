@@ -28,7 +28,8 @@ automatically create a subscription.
 - `kernel/`: guest kernel dependencies such as gtp5g
 - `config/`: complete native config sets plus generated per-VM network aliases;
   `default` is the committed baseline
-- `fixtures/full-core/`: scoped subscriber/group fixtures and traffic profiles
+- `fixtures/full-core/`: scoped subscriber/group fixtures, named scenario contracts,
+  and traffic profiles
 - `scripts/host/`: host orchestration and read-only checks
 - `scripts/guest/`: VM provisioning, build, config activation, and systemd units
 - `tools/nwdaf-consumer/`: infrastructure-owned discovery/subscription client
@@ -54,6 +55,23 @@ make ml-start
 make subscriptions-start
 make observe
 ```
+
+The default config is the `full-core-cat-transition` business example. To
+prepare the bounded `fl-closure-smoke` without changing VM topology or
+rebuilding a VM:
+
+```sh
+make config-render NAME=fl-closure-smoke \
+  SCENARIO=fixtures/full-core/scenarios/fl-closure-smoke.yaml
+make config-check CONFIG_DIR=config/generated/fl-closure-smoke
+make dataset-generate CONFIG_DIR=config/generated/fl-closure-smoke
+make dataset-show CONFIG_DIR=config/generated/fl-closure-smoke
+```
+
+Use the same explicit `CONFIG_DIR` for `services-start` and `ml-start`. The
+activated config manifest fixes the scenario definition and traffic-profile
+paths; the generated dataset manifest fixes their content hashes.
+`subscriptions-start` then uses that already active guest config.
 
 Teardown is deliberately split:
 
@@ -105,18 +123,21 @@ directions. Empty-stack container RSS was about 1.38 GiB total. This proves
 activation and transport, not concurrent training capacity.
 
 The dataset lifecycle derives expected UE addresses from each topology
-`uePool`, generates ignored Path A/B Parquet artifacts, audits schema, hash,
-rows, IPs, timestamps, and training/monitor headroom, then stages one
-role-specific artifact before either UPF starts. The default artifacts are
-about 0.84 MiB and 27,000 rows per Path; they are not source assets and are
-excluded from Vagrant rsync.
+`uePool`, resolves the scenario selected by the complete config set, generates
+ignored Path A/B Parquet artifacts, and audits schema, hash, rows, IPs,
+timestamps, historical warm-start responsibility, and trigger-time
+training/validation evidence. The default artifacts are about 1 MiB and 32,580
+rows per Path; the smoke artifacts are about 0.7 MiB and 22,680 rows per Path.
+They are not source assets and are excluded from Vagrant rsync.
 
 The guest lifecycle now applies six scoped subscriber records and one Internal
 Group idempotently before starting UERANSIM. A complete stop/start regression
 kept all 23 guest units active and established six registrations and six PDU
 Sessions: Path A received `10.60.0.1`-`10.60.0.3`, and Path B received
-`10.61.0.1`-`10.61.0.3`. NWDAF subscriptions, N6 traffic, PseudoDriver replay,
-analytics callbacks, and federated training remain separate validation stages.
+`10.61.0.1`-`10.61.0.3`. A bounded follow-up also proved two NRF-discovered
+subscriptions, both Nupf Event Exposure resources, PseudoDriver replay into
+PyAnLF, and two consumer analytics callbacks. Automatic federated training,
+publication, reprovision, and generation cutover remain the next runtime gate.
 
 The initial implementation intentionally does not support TLS/certificates,
 automatic experiment history, or 5g-viz.

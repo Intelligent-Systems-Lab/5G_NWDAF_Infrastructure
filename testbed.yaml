@@ -131,7 +131,6 @@ paths:
       pseudoDriver:
         enabled: true
         mode: hybrid
-        profile: fixtures/full-core/traffic/profiles/path-a.json
         dataset:
           file: traffic.parquet
           guestDirectory: /var/lib/5g-nwdaf-infrastructure/datasets/active
@@ -156,7 +155,6 @@ paths:
       pseudoDriver:
         enabled: true
         mode: hybrid
-        profile: fixtures/full-core/traffic/profiles/path-b.json
         dataset:
           file: traffic.parquet
           guestDirectory: /var/lib/5g-nwdaf-infrastructure/datasets/active

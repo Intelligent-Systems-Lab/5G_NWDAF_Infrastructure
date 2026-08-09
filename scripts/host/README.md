@@ -19,7 +19,14 @@ guest `mongosh` projection for scoped `validate`, `plan`, `apply`, `show`, or
 `clear`. `services-start.sh` uses only idempotent `apply`; stopping services
 does not delete subscriber or Internal Group data.
 
-`dataset.py` resolves committed traffic profiles against `testbed.yaml` and the
-effective native config, then builds or audits ignored, content-addressed
-Parquet sets. `dataset-stage.sh plan` is read-only; `apply` uploads only the
-matching Path artifact. `services-start.sh` calls it before any process starts.
+`config-render.py` resolves one committed scenario contract into a complete
+ignored config set. The config manifest records the scenario definition and
+canonical hash, so later commands reject a stale or mixed scenario/config set.
+
+`dataset.py` resolves the manifest-selected traffic profiles against
+`testbed.yaml`, the effective native config, and the seed model, then builds or
+audits ignored, content-addressed Parquet sets. The audit distinguishes
+historical inference warm-start samples from the observations available at the
+earliest policy trigger. `dataset-stage.sh plan` is read-only; `apply` uploads
+only the matching Path artifact. `services-start.sh` calls it before any process
+starts.
