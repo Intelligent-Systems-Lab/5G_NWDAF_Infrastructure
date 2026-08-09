@@ -1,0 +1,45 @@
+schemaVersion: 1
+machine: path-a
+aliases:
+- owner: gnb-a
+  endpoint: n2
+  network: n2
+  address: 192.168.58.20
+  prefixLength: 24
+  anchor: 192.168.58.3
+- owner: gnb-a
+  endpoint: n3
+  network: n3-a
+  address: 192.168.59.20
+  prefixLength: 24
+  anchor: 192.168.59.2
+- owner: upf-a
+  endpoint: n3
+  network: n3-a
+  address: 192.168.59.10
+  prefixLength: 24
+  anchor: 192.168.59.2
+- owner: upf-a
+  endpoint: n4
+  network: n4
+  address: 192.168.61.20
+  prefixLength: 24
+  anchor: 192.168.61.3
+- owner: upf-a
+  endpoint: n6
+  network: n6-a
+  address: 192.168.62.10
+  prefixLength: 24
+  anchor: 192.168.62.2
+- owner: upf-a
+  endpoint: eventExposure
+  network: sbi
+  address: 192.168.57.40
+  prefixLength: 24
+  anchor: 192.168.57.3
+- owner: nwdaf-a
+  endpoint: sbi
+  network: sbi
+  address: 192.168.57.41
+  prefixLength: 24
+  anchor: 192.168.57.3

@@ -26,7 +26,8 @@ automatically create a subscription.
 - `ML/`: PyAnLF and PyMTLF backends
 - `RAN/`: UERANSIM
 - `kernel/`: guest kernel dependencies such as gtp5g
-- `config/`: complete native config sets; `default` is the committed baseline
+- `config/`: complete native config sets plus generated per-VM network aliases;
+  `default` is the committed baseline
 - `scripts/host/`: host orchestration and read-only checks
 - `scripts/guest/`: VM provisioning, build, config activation, and systemd units
 - `tools/nwdaf-consumer/`: infrastructure-owned discovery/subscription client

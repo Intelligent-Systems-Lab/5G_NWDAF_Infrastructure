@@ -8,7 +8,8 @@ import sys
 from pathlib import Path
 
 from configlib import (
-    ROOT, canonical_sha256, dump_yaml, load_yaml, resolve_path, set_path, sha256_tree,
+    ROOT, canonical_sha256, dump_yaml, guest_network_configs, load_yaml,
+    resolve_path, set_path, sha256_tree,
 )
 
 
@@ -195,6 +196,9 @@ def render(testbed, baseline, output):
     consumer["callback"]["bindAddress"] = callback["bindAddress"]
     consumer["callback"]["advertisedUri"] = "http://{}:{}{}".format(callback["advertisedAddress"], callback["port"], callback["path"])
     write(output, "consumer.yaml", consumer)
+
+    for machine, network_config in guest_network_configs(testbed).items():
+        write(output, "network/{}.yaml".format(machine), network_config)
 
 
 def main():

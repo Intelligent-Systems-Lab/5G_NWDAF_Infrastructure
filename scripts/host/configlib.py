@@ -2,6 +2,7 @@
 """Shared, host-only configuration helpers."""
 
 import hashlib
+import ipaddress
 import json
 from pathlib import Path
 
@@ -74,6 +75,64 @@ def sha256_tree(directory):
 def canonical_sha256(value):
     payload = json.dumps(value, sort_keys=True, separators=(",", ":")).encode("utf-8")
     return hashlib.sha256(payload).hexdigest()
+
+
+def guest_network_configs(testbed):
+    """Build the role-specific guest alias files from one topology definition."""
+    machines = testbed["machines"]
+    networks = testbed["networks"]
+    aliases = {name: [] for name in machines}
+
+    def add(machine, owner, endpoint_name, endpoint):
+        network_name = endpoint["network"]
+        address = endpoint["address"]
+        anchor = machines[machine]["interfaces"][network_name]
+        if address == anchor:
+            return
+        aliases[machine].append({
+            "owner": owner,
+            "endpoint": endpoint_name,
+            "network": network_name,
+            "address": address,
+            "prefixLength": ipaddress.ip_network(
+                networks[network_name]["cidr"]
+            ).prefixlen,
+            "anchor": anchor,
+        })
+
+    for owner, service in testbed["coreServices"].items():
+        for endpoint_name in ("sbi", "n2", "n4", "endpoint"):
+            endpoint = service.get(endpoint_name)
+            if isinstance(endpoint, dict) and {"network", "address"} <= set(endpoint):
+                add("core", owner, endpoint_name, endpoint)
+
+    for path_name, path in testbed["paths"].items():
+        machine = path["machine"]
+        for endpoint_name in ("n2", "n3"):
+            add(machine, "gnb-" + path_name, endpoint_name, path["gnb"][endpoint_name])
+        for endpoint_name in ("n3", "n4", "n6", "eventExposure"):
+            add(machine, "upf-" + path_name, endpoint_name, path["upf"][endpoint_name])
+
+    for owner, service in testbed["analytics"].items():
+        if owner.startswith("nwdaf-"):
+            add(service["machine"], owner, "sbi", service["sbi"])
+
+    callback = testbed["consumer"]["callback"]
+    add(
+        testbed["consumer"]["machine"],
+        "nwdaf-consumer",
+        "callback",
+        {"network": callback["network"], "address": callback["bindAddress"]},
+    )
+
+    return {
+        machine: {
+            "schemaVersion": 1,
+            "machine": machine,
+            "aliases": machine_aliases,
+        }
+        for machine, machine_aliases in aliases.items()
+    }
 
 
 def get_path(value, keys):

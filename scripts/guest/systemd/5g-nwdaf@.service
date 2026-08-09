@@ -1,7 +1,8 @@
 [Unit]
 Description=5G NWDAF infrastructure service %i
-After=network-online.target
+After=network-online.target 5g-nwdaf-network.service
 Wants=network-online.target
+Requires=5g-nwdaf-network.service
 PartOf=5g-nwdaf-stack.target
 
 [Service]
@@ -15,4 +16,3 @@ LimitNOFILE=65536
 
 [Install]
 WantedBy=5g-nwdaf-stack.target
-

@@ -11,8 +11,10 @@ The repository treats five states independently:
 5. `subscriptions-start` runs one Core consumer and creates two NWDAF resources.
 
 VM provisioning installs toolchains and builds binaries but leaves the
-experiment stack disabled. A VM can remain on while services are restarted,
-and one service lifetime can contain multiple subscription/experiment cycles.
+experiment stack disabled. Vagrant creates only the declared base interfaces;
+process aliases are applied when a complete config set is activated. A VM can
+remain on while services are restarted, and one service lifetime can contain
+multiple subscription/experiment cycles.
 
 ## Host preparation
 
@@ -72,6 +74,14 @@ Each guest verifies the full hash and atomically switches
 `/etc/5g-nwdaf-infrastructure/active`. Activation is rejected while any stack
 service or the consumer is active. Core, Path A, and Path B can therefore not
 accidentally mix config sets.
+
+Every complete set also contains `network/core.yaml`, `network/path-a.yaml`,
+and `network/path-b.yaml`. The renderer derives these files from the process
+endpoints and VM interface anchors in the selected `testbed.yaml`; they are not
+an independent topology source. During activation, each guest applies only its
+role file before any process starts. A missing anchor, wrong guest role, alias
+collision, or network setup failure rejects activation and restores the prior
+active set. Previously managed aliases absent from the new set are removed.
 
 ## Guest builds
 

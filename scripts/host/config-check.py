@@ -8,8 +8,8 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 from configlib import (
-    ROOT, get_path, load_yaml, resolve_config_dir, resolve_ml_bind_address,
-    resolve_path, sha256_file, sha256_tree,
+    ROOT, get_path, guest_network_configs, load_yaml, resolve_config_dir,
+    resolve_ml_bind_address, resolve_path, sha256_file, sha256_tree,
 )
 
 
@@ -22,6 +22,7 @@ REQUIRED = {
     "ueransim/gnb-a.yaml", "ueransim/gnb-b.yaml", "ueransim/ue1.yaml",
     "ueransim/ue2.yaml", "ueransim/ue3.yaml", "ueransim/ue4.yaml",
     "ueransim/ue5.yaml", "ueransim/ue6.yaml",
+    "network/core.yaml", "network/path-a.yaml", "network/path-b.yaml",
 }
 
 
@@ -139,6 +140,16 @@ def main():
             )
             all_addresses.append(("machine {} {}".format(machine_name, network_name), address))
 
+    expected_network_configs = guest_network_configs(testbed)
+    for machine_name, expected in expected_network_configs.items():
+        actual = load_yaml(config_dir / "network" / (machine_name + ".yaml"))
+        check.equal("{} network aliases".format(machine_name), actual, expected)
+        for alias in expected["aliases"]:
+            all_addresses.append((
+                "{} {} {}".format(machine_name, alias["owner"], alias["endpoint"]),
+                alias["address"],
+            ))
+
     core_files = {
         "nrf": "nrfcfg.yaml", "nssf": "nssfcfg.yaml", "udr": "udrcfg.yaml",
         "udm": "udmcfg.yaml", "ausf": "ausfcfg.yaml", "pcf": "pcfcfg.yaml",
@@ -152,7 +163,6 @@ def main():
         sbi = get_path(cfg, ["configuration", "sbi"])
         check.equal(filename + " bind", sbi["bindingIPv4"], endpoint["address"])
         check.equal(filename + " port", sbi["port"], endpoint["port"])
-        all_addresses.append((name + " sbi", endpoint["address"]))
         if name != "nrf":
             check.equal(filename + " NRF", cfg["configuration"]["nrfUri"], nrf_uri)
 

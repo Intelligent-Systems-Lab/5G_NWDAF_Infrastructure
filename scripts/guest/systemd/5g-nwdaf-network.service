@@ -3,6 +3,7 @@ Description=5G NWDAF topology address aliases
 After=network-online.target
 Wants=network-online.target
 Before=5g-nwdaf-stack.target
+ConditionPathExists=/etc/5g-nwdaf-infrastructure/active/network
 
 [Service]
 Type=oneshot
@@ -11,4 +12,3 @@ RemainAfterExit=yes
 
 [Install]
 WantedBy=multi-user.target
-
