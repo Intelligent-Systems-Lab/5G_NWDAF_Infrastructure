@@ -20,8 +20,10 @@ for path_name in a b; do
   mapfile -t info <<<"$info_output"
   set_id=${info[0]}
   path_root=${info[1]}
+  schema=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["schemaVersion"])' "$path_root/manifest.json")
+  [[ "$schema" =~ ^[1-9][0-9]*$ ]] || { echo "invalid dataset schema: $schema" >&2; exit 1; }
   machine="path-$path_name"
-  echo "DATASET $machine set=$set_id source=$path_root target=/var/lib/5g-nwdaf-infrastructure/datasets/active"
+  echo "DATASET $machine schema=$schema set=$set_id source=$path_root target=/var/lib/5g-nwdaf-infrastructure/datasets/active"
   if [ "$action" = plan ]; then
     continue
   fi
@@ -34,7 +36,7 @@ for path_name in a b; do
   (cd "$HOST_ROOT" && vagrant upload "$archive" "$remote" "$machine")
   (cd "$HOST_ROOT" && vagrant upload "$HOST_ROOT/scripts/guest/dataset-activate.sh" "$remote_activate" "$machine")
   (cd "$HOST_ROOT" && vagrant upload "$HOST_ROOT/scripts/guest/service-run.sh" "$remote_runner" "$machine")
-  vssh "$machine" "sudo install -m 0755 '$remote_activate' /usr/local/libexec/5g-nwdaf-infrastructure/dataset-activate && sudo install -m 0755 '$remote_runner' /usr/local/libexec/5g-nwdaf-infrastructure/service-run && rm -f '$remote_activate' '$remote_runner' && sudo /usr/local/libexec/5g-nwdaf-infrastructure/dataset-activate '$machine' '$remote' '$set_id'"
+  vssh "$machine" "sudo install -m 0755 '$remote_activate' /usr/local/libexec/5g-nwdaf-infrastructure/dataset-activate && sudo install -m 0755 '$remote_runner' /usr/local/libexec/5g-nwdaf-infrastructure/service-run && rm -f '$remote_activate' '$remote_runner' && sudo /usr/local/libexec/5g-nwdaf-infrastructure/dataset-activate '$machine' '$remote' '$set_id' '$schema'"
   rm -rf "$stage_temporary"
   stage_temporary=
 done

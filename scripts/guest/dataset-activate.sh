@@ -4,8 +4,10 @@ set -euo pipefail
 machine=${1:?machine is required}
 archive=${2:?dataset archive is required}
 expected_set=${3:?dataset set ID is required}
+expected_schema=${4:?dataset schema is required}
 case "$machine" in path-a|path-b) ;; *) echo "datasets may only be activated on path-a or path-b" >&2; exit 2;; esac
 [[ "$expected_set" =~ ^[0-9a-f]{64}$ ]] || { echo "invalid dataset set ID" >&2; exit 2; }
+[[ "$expected_schema" =~ ^[1-9][0-9]*$ ]] || { echo "invalid dataset schema" >&2; exit 2; }
 test "$(id -u)" -eq 0 || { echo "dataset activation requires root" >&2; exit 1; }
 test -f "$archive" || { echo "dataset archive not found: $archive" >&2; exit 1; }
 
@@ -25,17 +27,17 @@ fi
 tar -C "$stage" -xzf "$archive"
 
 verify() {
-  python3 - "$1" "$machine" "$expected_set" <<'PY'
+  python3 - "$1" "$machine" "$expected_set" "$expected_schema" <<'PY'
 import hashlib
 import json
 import pathlib
 import sys
 
-root, machine, expected_set = pathlib.Path(sys.argv[1]), sys.argv[2], sys.argv[3]
+root, machine, expected_set, expected_schema = pathlib.Path(sys.argv[1]), sys.argv[2], sys.argv[3], int(sys.argv[4])
 manifest = json.loads((root / "manifest.json").read_text())
 expected_path = machine
-if manifest.get("schemaVersion") != 1:
-    raise SystemExit("unsupported path manifest schema")
+if manifest.get("schemaVersion") != expected_schema:
+    raise SystemExit("path manifest schema does not match the staged dataset")
 if manifest.get("datasetSetId") != expected_set or manifest.get("path") != expected_path:
     raise SystemExit("dataset identity does not match target machine")
 artifact_name = manifest.get("artifactFile")
