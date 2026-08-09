@@ -172,7 +172,8 @@ def render(testbed, baseline, output, scenario):
         anlf["server"]["binding_host"] = "0.0.0.0"
         anlf["server"]["port"] = runtime_services[anlf_name]["containerPort"]
         anlf["model"]["artifact_download"]["allowed_origins"] = [
-            endpoint_uri(mtlf_endpoint), endpoint_uri(core["adrf"]["sbi"])
+            endpoint_uri(mtlf_endpoint), endpoint_uri(backends["pymtlf-c"]),
+            endpoint_uri(core["adrf"]["sbi"])
         ]
         anlf["model_provision"]["callback_uri"] = endpoint_uri(anlf_endpoint) + "/internal/v1/ml-model-provision/notifications"
         anlf["collection"]["callback_base_uri"] = endpoint_uri(anlf_endpoint)

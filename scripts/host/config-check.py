@@ -386,7 +386,11 @@ def main():
         check.equal(anlf_name + " accuracy report period", anlf["accuracy_monitor"]["report_period_seconds"], monitoring["reportPeriodSeconds"])
         check.equal(
             anlf_name + " artifact origins", anlf["model"]["artifact_download"]["allowed_origins"],
-            [uri(mtlf_endpoint["address"], mtlf_endpoint["port"]), uri(testbed["coreServices"]["adrf"]["sbi"]["address"], testbed["coreServices"]["adrf"]["sbi"]["port"])],
+            [
+                uri(mtlf_endpoint["address"], mtlf_endpoint["port"]),
+                uri(backends["pymtlf-c"]["address"], backends["pymtlf-c"]["port"]),
+                uri(testbed["coreServices"]["adrf"]["sbi"]["address"], testbed["coreServices"]["adrf"]["sbi"]["port"]),
+            ],
         )
 
         mtlf = load_yaml(config_dir / (mtlf_name + ".yaml"))

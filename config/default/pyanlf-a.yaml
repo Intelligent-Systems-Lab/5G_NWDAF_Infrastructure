@@ -4,7 +4,7 @@ model:
   default_model_reference: ""
   default_model_unique_id: 1
   artifact_download:
-    allowed_origins: [http://192.168.57.1:9092, http://192.168.57.19:9888]
+    allowed_origins: [http://192.168.57.1:9092, http://192.168.57.1:9292, http://192.168.57.19:9888]
     timeout_seconds: 300
     max_compressed_bytes: 33554432
     max_extracted_bytes: 134217728
