@@ -26,5 +26,5 @@ collection:
   callback_base_uri: http://192.168.57.1:9094
   configured_smf_endpoints: []
 adrf: {mode: nrf, discovery_timeout_seconds: 30, request_timeout_seconds: 120}
-mongodb: {enabled: true, url: mongodb://192.168.57.18:27017, database: free5gc, collection: nwdaf_raw_notifications_b}
+mongodb: {enabled: false, url: mongodb://192.168.57.18:27017, database: free5gc, collection: nwdaf_raw_notifications_b}
 accuracy_monitor: {enabled: true, ground_truth_check_interval_seconds: 30, report_period_seconds: 90, min_matched_predictions: 2}

@@ -73,6 +73,13 @@ activated config manifest fixes the scenario definition and traffic-profile
 paths; the generated dataset manifest fixes their content hashes.
 `subscriptions-start` then uses that already active guest config.
 
+PyAnLF-A/B retrieve analytics data through ADRF. Their optional direct MongoDB
+fallback is disabled in the default and generated E2E config sets; MongoDB still
+runs in the Core VM for the 5GC NFs and ADRF itself. PyMTLF configuration is not
+changed by this policy. PyMTLF-C uses an explicit 300-second Model Monitor
+watchdog grace so initial prediction maturation cannot collide with the first
+periodic-report deadline.
+
 Teardown is deliberately split:
 
 ```sh

@@ -393,6 +393,7 @@ def main():
             anlf.get("containing_nwdaf", {}).get("request_timeout_seconds"), 30,
         )
         check.equal(anlf_name + " callback", anlf["collection"]["callback_base_uri"], uri(anlf_endpoint["address"], anlf_endpoint["port"]))
+        check.equal(anlf_name + " MongoDB fallback disabled", anlf.get("mongodb", {}).get("enabled"), False)
         check.equal(anlf_name + " sampling", anlf["analytics"]["ue_communication"]["sampling_interval_seconds"], sampling)
         check.equal(anlf_name + " ground-truth interval", anlf["accuracy_monitor"]["ground_truth_check_interval_seconds"], sampling)
         check.equal(anlf_name + " accuracy report period", anlf["accuracy_monitor"]["report_period_seconds"], monitoring["reportPeriodSeconds"])
@@ -440,6 +441,7 @@ def main():
         mtlf_c.get("containing_nwdaf", {}).get("request_timeout_seconds"), 30,
     )
     check.equal("pymtlf-c public URL", mtlf_c["artifact"]["public_base_url"], uri(mtlf_c_endpoint["address"], mtlf_c_endpoint["port"]))
+    check.equal("pymtlf-c monitor watchdog grace", mtlf_c["model_monitor"].get("watchdog_grace_seconds"), 300)
     check_pymtlf_data_paths(check, "pymtlf-c", mtlf_c)
     check.equal(
         "pymtlf-c seed models",
