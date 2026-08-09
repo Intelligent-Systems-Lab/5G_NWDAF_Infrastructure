@@ -3,6 +3,7 @@
 
 import argparse
 import ipaddress
+import json
 import sys
 from pathlib import Path
 from urllib.parse import urlparse
@@ -58,6 +59,59 @@ def check_pymtlf_data_paths(check, name, config):
             "{} {} must be inside {}".format(name, label, root),
             path != root and root in path.parents,
         )
+
+
+def check_subscriber_fixtures(check, testbed, config_dir):
+    subscriber_path = ROOT / "fixtures" / "full-core" / "ue-subscribers.json"
+    group_path = ROOT / "fixtures" / "full-core" / "group-memberships.json"
+    try:
+        subscribers = json.loads(subscriber_path.read_text(encoding="utf-8"))
+        groups = json.loads(group_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        check.true("cannot load full-core subscriber fixtures: {}".format(exc), False)
+        return
+
+    expected_supis = testbed["paths"]["a"]["ues"] + testbed["paths"]["b"]["ues"]
+    records = subscribers.get("subscribers", [])
+    fixture_supis = [record.get("supi") for record in records if isinstance(record, dict)]
+    fixture_gpsis = [record.get("gpsi") for record in records if isinstance(record, dict)]
+    defaults = subscribers.get("defaults", {})
+    authentication = defaults.get("authentication", {})
+    expected_plmn = testbed["mobileNetwork"]["plmn"]["mcc"] + testbed["mobileNetwork"]["plmn"]["mnc"]
+
+    check.equal("subscriber fixture schema", subscribers.get("schemaVersion"), 1)
+    check.equal("subscriber fixture PLMN", subscribers.get("servingPlmnId"), expected_plmn)
+    check.equal("subscriber fixture SUPIs", fixture_supis, expected_supis)
+    check.true("subscriber fixture GPSIs must be unique", len(fixture_gpsis) == len(set(fixture_gpsis)) == 6)
+    check.equal("subscriber fixture S-NSSAI", defaults.get("snssai"), testbed["mobileNetwork"]["snssai"])
+    check.equal("subscriber fixture DNN", defaults.get("dnn"), testbed["mobileNetwork"]["dnn"])
+
+    group_records = groups.get("groups", [])
+    check.equal("group fixture schema", groups.get("schemaVersion"), 1)
+    check.equal("group fixture count", len(group_records), 1)
+    if len(group_records) == 1:
+        check.equal(
+            "group fixture ID", group_records[0].get("intGroupId"),
+            testbed["mobileNetwork"]["internalGroupId"],
+        )
+        check.equal(
+            "group fixture SUPIs",
+            [item.get("supi") for item in group_records[0].get("ueIdList", [])],
+            expected_supis,
+        )
+
+    for index, expected_supi in enumerate(expected_supis, 1):
+        ue = load_yaml(config_dir / "ueransim" / "ue{}.yaml".format(index))
+        check.equal("UE{} fixture SUPI".format(index), ue.get("supi"), expected_supi)
+        check.equal("UE{} fixture key".format(index), ue.get("key"), authentication.get("permanentKeyValue"))
+        check.equal("UE{} fixture OP type".format(index), ue.get("opType"), "OPC")
+        check.equal("UE{} fixture OPc".format(index), ue.get("op"), authentication.get("opcValue"))
+        check.equal("UE{} fixture AMF".format(index), ue.get("amf"), authentication.get("authenticationManagementField"))
+        check.equal("UE{} fixture DNN".format(index), ue["sessions"][0].get("apn"), defaults.get("dnn"))
+        ue_snssai = dict(ue["sessions"][0].get("slice", {}))
+        sd = str(ue_snssai.get("sd", ""))
+        ue_snssai["sd"] = sd[2:] if sd.startswith("0x") else sd
+        check.equal("UE{} fixture S-NSSAI".format(index), ue_snssai, defaults.get("snssai"))
 
 
 def main():
@@ -129,6 +183,8 @@ def main():
     check.true("missing config files: {}".format(", ".join(missing)), not missing)
     if missing:
         return finish(check, testbed_path, config_dir)
+
+    check_subscriber_fixtures(check, testbed, config_dir)
 
     all_addresses = []
     networks = testbed["networks"]
@@ -209,6 +265,17 @@ def main():
         path_name = "a" if index <= 3 else "b"
         check.equal("UE{} SUPI".format(index), ue["supi"], testbed["paths"][path_name]["ues"][index - 1 if index <= 3 else index - 4])
         check.equal("UE{} gNB".format(index), ue["gnbSearchList"], [testbed["paths"][path_name]["gnb"]["n2"]["address"]])
+        check.equal(
+            "UE{} UAC access identities".format(index), ue.get("uacAic"),
+            {"mps": False, "mcs": False},
+        )
+        check.equal(
+            "UE{} UAC access classes".format(index), ue.get("uacAcc"),
+            {
+                "normalClass": 0, "class11": False, "class12": False,
+                "class13": False, "class14": False, "class15": False,
+            },
+        )
 
     for name in ("a", "b", "c"):
         native = load_yaml(config_dir / ("nwdafcfg-{}.yaml".format(name)))["configuration"]

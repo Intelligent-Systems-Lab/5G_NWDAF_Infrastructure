@@ -128,10 +128,32 @@ compressed or 128 MiB extracted. The committed seed model is about 0.4 MiB.
 ## Services and pseudo driver
 
 `make services-start` starts MongoDB and NRF first, then control-plane NFs,
-both UPFs, SMF, ADRF/NWDAF, and finally both gNB/UE groups. It does not start ML
-containers. Failure triggers reverse-order rollback. `make services-stop`
-performs the same reverse order without halting VMs; it also defensively stops
-any retained legacy guest ML units.
+idempotently provisions the six full-core subscribers and their one Internal
+Group, then starts both UPFs, SMF, ADRF/NWDAF, and finally both gNB/UE groups.
+It does not start ML containers. Failure triggers reverse-order rollback.
+`make services-stop` performs the same reverse order without halting VMs; it
+also defensively stops any retained legacy guest ML units.
+
+Subscriber data is experiment input rather than process state, so it persists
+across `services-stop` and VM restart. Inspect or manage only the committed
+scope with:
+
+```sh
+make subscriber-data-validate
+make subscriber-data-plan
+make subscriber-data-show
+make subscriber-data-apply
+make subscriber-data-clear
+```
+
+`apply` uses MongoDB `replaceOne(..., upsert=true)` for 48 documents belonging
+to the six named SUPIs and one named Internal Group. `clear` deletes only those
+SUPIs and that group; it never drops a database or collection. The fixtures in
+`fixtures/full-core/` were selected from
+`nwdaf-resources@d2634b84e8790a6b696e5b21ec1a0f660b683948`, but the runtime
+uses Core's installed `mongosh` and does not depend on that repository or a
+Host Python environment. `config-check` rejects fixture PLMN, SUPI, group,
+K/OPc, AMF, S-NSSAI, or DNN mismatches before mutation.
 
 ## Host ML endpoints
 

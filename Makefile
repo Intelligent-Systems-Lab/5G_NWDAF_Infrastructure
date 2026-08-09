@@ -6,7 +6,9 @@ NAME ?= local
 .PHONY: help preflight config-check config-render ml-compose-check ml-cpu-smoke ml-lifecycle-smoke \
 	ml-start ml-status ml-stop vm-up vm-status vm-halt \
 	services-start services-status services-stop subscriptions-start \
-	subscriptions-status subscriptions-stop observe logs
+	subscriptions-status subscriptions-stop subscriber-data-validate \
+	subscriber-data-plan subscriber-data-apply subscriber-data-show \
+	subscriber-data-clear observe logs
 
 help:
 	@echo "5G NWDAF Infrastructure"
@@ -17,6 +19,7 @@ help:
 	@echo "  make ml-start | ml-status | ml-stop"
 	@echo "  make vm-up | vm-status | vm-halt"
 	@echo "  make services-start | services-status | services-stop"
+	@echo "  make subscriber-data-validate | subscriber-data-plan | subscriber-data-apply | subscriber-data-show | subscriber-data-clear"
 	@echo "  make subscriptions-start | subscriptions-status | subscriptions-stop"
 	@echo "  make observe | logs"
 
@@ -65,6 +68,21 @@ services-status:
 
 services-stop:
 	@scripts/host/services-stop.sh
+
+subscriber-data-validate:
+	@scripts/host/subscriber-data.sh validate "$(TESTBED)" "$(CONFIG_DIR)"
+
+subscriber-data-plan:
+	@scripts/host/subscriber-data.sh plan "$(TESTBED)" "$(CONFIG_DIR)"
+
+subscriber-data-apply:
+	@scripts/host/subscriber-data.sh apply "$(TESTBED)" "$(CONFIG_DIR)"
+
+subscriber-data-show:
+	@scripts/host/subscriber-data.sh show "$(TESTBED)" "$(CONFIG_DIR)"
+
+subscriber-data-clear:
+	@scripts/host/subscriber-data.sh clear "$(TESTBED)" "$(CONFIG_DIR)"
 
 subscriptions-start:
 	@scripts/host/subscriptions-start.sh

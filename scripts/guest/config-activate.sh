@@ -20,7 +20,14 @@ if systemctl is-active --quiet 5g-nwdaf-consumer.service; then
   exit 1
 fi
 
-actual_hash=$(find "$staged" -type f -name '*.yaml' -print0 | sort -z | xargs -0 sha256sum | sha256sum | awk '{print $1}')
+actual_hash=$(
+  cd "$staged"
+  find . -type f -name '*.yaml' -print0 |
+    LC_ALL=C sort -z |
+    xargs -0 sha256sum |
+    sha256sum |
+    awk '{print $1}'
+)
 test "$actual_hash" = "$expected_hash" || { echo "config hash mismatch: $actual_hash" >&2; exit 1; }
 old_target=$(readlink "$root/active" 2>/dev/null || true)
 old_hash=$(cat "$root/active.sha256" 2>/dev/null || true)

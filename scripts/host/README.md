@@ -13,3 +13,8 @@ CDI-qualified device through NVIDIA runtime CDI mode before starting the
 project. It does not configure or restart the shared daemon. `ml-status.sh`
 reports the configured application device, OCI runtime, CDI selector, and
 in-container CUDA visibility separately.
+
+`subscriber-data.sh` validates the selected config and invokes the committed
+guest `mongosh` projection for scoped `validate`, `plan`, `apply`, `show`, or
+`clear`. `services-start.sh` uses only idempotent `apply`; stopping services
+does not delete subscriber or Internal Group data.

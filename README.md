@@ -28,6 +28,7 @@ automatically create a subscription.
 - `kernel/`: guest kernel dependencies such as gtp5g
 - `config/`: complete native config sets plus generated per-VM network aliases;
   `default` is the committed baseline
+- `fixtures/full-core/`: scoped six-UE subscriber and Internal Group test data
 - `scripts/host/`: host orchestration and read-only checks
 - `scripts/guest/`: VM provisioning, build, config activation, and systemd units
 - `tools/nwdaf-consumer/`: infrastructure-owned discovery/subscription client
@@ -68,8 +69,9 @@ for config selection, status, log filtering, and guest build details.
 ## Current validation boundary
 
 The repository has passed source-lock, YAML, config-render/check, consumer
-discovery, Python native-settings, shell syntax, Host preflight, and Vagrant
-definition validation. The topology
+discovery, Python native-settings, shell syntax, Host preflight, Vagrant
+definition validation, three-VM provisioning, config activation, and the full
+guest service lifecycle. The topology
 now allocates 10 GiB across the guests and reserves 6 GiB of available Host RAM
 for the physical host and ML containers. Each VM declares a 40 GiB dynamically
 allocated primary-disk ceiling; this does not allocate 120 GiB immediately.
@@ -85,13 +87,20 @@ CDI selection, and a CPU-only validation override are implemented. Bounded CPU i
 lifecycle smokes started all five services, verified status/log/stop behavior,
 and removed their disposable containers and volumes afterward. The production
 `ml-start`/`ml-status`/`ml-stop` lifecycle is implemented. Host toolkit-base,
-CDI inventory, NVIDIA runtime registration by daemon reload, and a disposable
-container GPU probe have passed without interrupting the eight shared
-containers; Host-to-VM reachability and the three new VMs remain unexecuted.
+CDI inventory, NVIDIA runtime registration by daemon reload, a disposable
+container GPU probe, and VM-to-Host SBI reachability have passed without
+interrupting the eight shared containers.
 Production GPU activation does not change the default runtime or require a
 shared-daemon restart. Guest source sync, provisioning, and service dispatch no
 longer include PyAnLF or PyMTLF; ML source and environments remain Host-container
 responsibilities.
+
+The guest lifecycle now applies six scoped subscriber records and one Internal
+Group idempotently before starting UERANSIM. A complete stop/start regression
+kept all 23 guest units active and established six registrations and six PDU
+Sessions: Path A received `10.60.0.1`-`10.60.0.3`, and Path B received
+`10.61.0.1`-`10.61.0.3`. Host ML containers, NWDAF subscriptions, N6 traffic,
+and PseudoDriver replay remain separate validation stages.
 
 The initial implementation intentionally does not support TLS/certificates,
 automatic experiment history, or 5g-viz.

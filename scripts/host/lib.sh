@@ -45,7 +45,14 @@ stop_unit() {
 }
 
 config_hash() {
-  find "$1" -type f -name '*.yaml' -print0 | sort -z | xargs -0 sha256sum | sha256sum | awk '{print $1}'
+  (
+    cd "$1"
+    find . -type f -name '*.yaml' -print0 |
+      LC_ALL=C sort -z |
+      xargs -0 sha256sum |
+      sha256sum |
+      awk '{print $1}'
+  )
 }
 
 effective_config_dir() {

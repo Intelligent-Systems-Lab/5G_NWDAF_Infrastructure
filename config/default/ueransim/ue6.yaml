@@ -13,10 +13,11 @@ imei: "356938035643806"
 imeiSv: "4370816125816106"
 tunNetmask: 255.255.0.0
 gnbSearchList: [192.168.58.30]
+uacAic: {mps: false, mcs: false}
+uacAcc: {normalClass: 0, class11: false, class12: false, class13: false, class14: false, class15: false}
 sessions: [{type: IPv4, apn: internet, slice: {sst: 1, sd: "0x010203"}}]
 configured-nssai: [{sst: 1, sd: "0x010203"}]
 default-nssai: [{sst: 1, sd: "0x010203"}]
 integrity: {IA1: true, IA2: true, IA3: true}
 ciphering: {EA1: true, EA2: true, EA3: true}
 integrityMaxRate: {uplink: full, downlink: full}
-

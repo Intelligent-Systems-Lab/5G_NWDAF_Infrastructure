@@ -13,8 +13,9 @@ go_nf() { as_runtime "$bin/$1" -c "$config/$2"; }
 
 case "$service:$machine" in
   mongodb:core) as_runtime /usr/bin/mongod --dbpath /var/lib/5g-nwdaf-infrastructure/mongodb --bind_ip 192.168.57.18 --port 27017 --wiredTigerCacheSizeGB 0.25 --quiet ;;
-  nrf:core|nssf:core|udr:core|udm:core|ausf:core|pcf:core|amf:core|smf:core|adrf:core)
+  nrf:core|nssf:core|udr:core|udm:core|ausf:core|pcf:core|amf:core|adrf:core)
     go_nf "$service" "${service}cfg.yaml" ;;
+  smf:core) as_runtime "$bin/smf" -c "$config/smfcfg.yaml" -u "$config/uerouting.yaml" ;;
   nwdaf-c:core) go_nf nwdaf nwdafcfg-c.yaml ;;
   upf-a:path-a) exec "$bin/upf" -c "$config/upfcfg-a.yaml" ;;
   upf-b:path-b) exec "$bin/upf" -c "$config/upfcfg-b.yaml" ;;

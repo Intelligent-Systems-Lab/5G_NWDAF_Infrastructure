@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 1,
+  "source": {
+    "repository": "https://github.com/Intelligent-Systems-Lab/nwdaf-resources.git",
+    "commit": "d2634b84e8790a6b696e5b21ec1a0f660b683948"
+  },
+  "groups": [
+    {
+      "intGroupId": "00000001-466-92-01",
+      "ueIdList": [
+        {"supi": "imsi-466920000000001"},
+        {"supi": "imsi-466920000000002"},
+        {"supi": "imsi-466920000000003"},
+        {"supi": "imsi-466920000000004"},
+        {"supi": "imsi-466920000000005"},
+        {"supi": "imsi-466920000000006"}
+      ]
+    }
+  ]
+}
