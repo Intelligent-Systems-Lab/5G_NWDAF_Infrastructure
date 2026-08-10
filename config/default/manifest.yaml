@@ -5,7 +5,7 @@ scenario:
   name: full-core-cat-transition
   kind: business-acceptance
   definition: fixtures/full-core/scenarios/full-core-cat-transition.yaml
-  definitionHash: 6c7f6cc2e5fc3d08dd684a4f793cddbedce7364836f6d87bfbe927b5ca671c8b
+  definitionHash: 8b78cd69c615df6bc6679413948a79351259bb58f745886bf889b160f59c738c
 sources:
   free5gcConfig:
     remote: https://github.com/free5gc/free5gc.git

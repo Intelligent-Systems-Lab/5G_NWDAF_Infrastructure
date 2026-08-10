@@ -5,11 +5,11 @@ import argparse
 import shutil
 import subprocess
 import sys
-from pathlib import Path
 
 from configlib import (
-    ROOT, canonical_sha256, dump_yaml, guest_network_configs, load_yaml,
-    load_scenario_definition, resolve_path, set_path, sha256_tree,
+    ROOT, canonical_sha256, config_generator_source_hash, dump_yaml,
+    guest_network_configs, load_yaml, load_scenario_definition, resolve_path,
+    set_path, sha256_tree,
 )
 
 
@@ -116,6 +116,7 @@ def render(testbed, baseline, output, scenario):
         upf["pfcp"]["addr"] = path["upf"]["n4"]["address"]
         upf["pfcp"]["nodeID"] = path["upf"]["n4"]["address"]
         upf["gtpu"]["ifList"][0]["addr"] = path["upf"]["n3"]["address"]
+        upf["gtpu"]["ifList"][0]["ifname"] = path["upf"]["gtpInterface"]
         upf["dnnList"] = [{"dnn": testbed["mobileNetwork"]["dnn"], "cidr": path["upf"]["uePool"]}]
         upf["ees"]["enabled"] = bool(path["upf"]["pseudoDriver"]["enabled"])
         upf["ees"]["listenAddr"] = "{}:{}".format(path["upf"]["eventExposure"]["address"], path["upf"]["eventExposure"]["port"])
@@ -152,6 +153,9 @@ def render(testbed, baseline, output, scenario):
         native["sbi"]["bindingIPv4"] = definition["sbi"]["address"]
         native["sbi"]["port"] = definition["sbi"]["port"]
         native["nrfUri"] = nrf_uri
+        for service in ("anlf", "mtlf"):
+            native[service]["server"]["registerIPv4"] = definition["sbi"]["address"]
+            native[service]["server"]["bindingIPv4"] = definition["sbi"]["address"]
         if name in ("a", "b"):
             native["nwdafInfo"]["mlAnalyticsList"][0]["trackingAreaList"] = [{"plmnId": dict(plmn), "tac": definition["tai"]}]
             native["anlfBackend"]["endpoint"] = endpoint_uri(
@@ -212,7 +216,9 @@ def render(testbed, baseline, output, scenario):
     mtlf_c["artifact"]["public_base_url"] = endpoint_uri(mtlf_c_endpoint)
     mtlf_c["federated_learning"]["public_base_url"] = endpoint_uri(mtlf_c_endpoint)
     mtlf_c["federated_learning"]["artifact_download"]["allowed_origins"] = [
-        endpoint_uri(backends["pymtlf-a"]), endpoint_uri(backends["pymtlf-b"])
+        endpoint_uri(backends["pymtlf-a"]),
+        endpoint_uri(backends["pymtlf-b"]),
+        endpoint_uri(mtlf_c_endpoint),
     ]
     mtlf_c["federated_learning"]["server"]["callback_uri"] = endpoint_uri(mtlf_c_endpoint) + "/internal/v1/ml-model-training/notifications"
     mtlf_c["federated_learning"]["server"]["round_count"] = training["fittingRounds"]
@@ -227,12 +233,16 @@ def render(testbed, baseline, output, scenario):
 
     consumer = read(output, "consumer.yaml")
     consumer["nrfUri"] = nrf_uri
+    consumer["requesterNfType"] = testbed["consumer"]["requesterNfType"]
+    consumer["discovery"]["serviceName"] = testbed["consumer"]["discovery"]["serviceName"]
+    consumer["discovery"]["event"] = testbed["consumer"]["discovery"]["event"]
     consumer["target"]["plmn"] = dict(plmn)
     consumer["target"]["internalGroupId"] = testbed["mobileNetwork"]["internalGroupId"]
     consumer["target"]["paths"] = [{"name": name, "tac": paths[name]["tai"]["tac"]} for name in ("a", "b")]
     callback = testbed["consumer"]["callback"]
     consumer["callback"]["bindAddress"] = callback["bindAddress"]
     consumer["callback"]["advertisedUri"] = "http://{}:{}{}".format(callback["advertisedAddress"], callback["port"], callback["path"])
+    consumer["reporting"]["method"] = testbed["consumer"]["reporting"]["method"]
     consumer["reporting"]["periodSeconds"] = sampling
     write(output, "consumer.yaml", consumer)
 
@@ -299,6 +309,7 @@ def main():
     manifest["generated"] = {
         "baselineHash": sha256_tree(baseline),
         "definitionHash": canonical_sha256(testbed),
+        "generatorSourceHash": config_generator_source_hash(),
         "generatorRevision": revision,
         "files": sorted(path.relative_to(output).as_posix() for path in output.rglob("*.yaml") if path.name != "manifest.yaml"),
     }

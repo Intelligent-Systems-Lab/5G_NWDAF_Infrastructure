@@ -102,6 +102,10 @@ def resolve_dataset_spec(testbed, config_dir):
         training.get("preparationDataWindowSeconds"),
         "scenario preparation data window",
     )
+    closure_budget = _positive_int(
+        training.get("closureBudgetSeconds"),
+        "scenario closure budget",
+    )
     if training.get("enforcePerformanceGate") is not False:
         raise ValueError("scenario must retain final validation with the performance gate disabled")
     warm_start_mode = scenario.get("warmStartMode")
@@ -146,6 +150,7 @@ def resolve_dataset_spec(testbed, config_dir):
     resolved_paths = {}
     common_sampling = None
     common_validation = None
+    common_min_matched = None
     for path_name in ("a", "b"):
         pseudo = testbed["paths"][path_name]["upf"]["pseudoDriver"]
         if pseudo.get("enabled") is not True or pseudo.get("mode") != "hybrid":
@@ -178,8 +183,25 @@ def resolve_dataset_spec(testbed, config_dir):
             anlf["analytics"]["ue_communication"]["sampling_interval_seconds"],
             "path {} sampling interval".format(path_name),
         )
+        min_matched = _positive_int(
+            anlf["accuracy_monitor"]["min_matched_predictions"],
+            "path {} minimum matched predictions".format(path_name),
+        )
         if sampling != sampling_contract:
             raise ValueError("path {} sampling differs from the scenario".format(path_name))
+        if monitor_period % sampling:
+            raise ValueError(
+                "path {} monitor period must align to the sampling interval".format(
+                    path_name
+                )
+            )
+        report_capacity = monitor_period // sampling
+        if report_capacity < min_matched:
+            raise ValueError(
+                "path {} monitor period cannot collect the required matched predictions".format(
+                    path_name
+                )
+            )
         validation_ratio = mtlf["federated_learning"]["client"]["training"]["validation_ratio"]
         if not isinstance(validation_ratio, (int, float)) or not 0 < validation_ratio < 1:
             raise ValueError("path {} validation_ratio must be between 0 and 1".format(path_name))
@@ -202,7 +224,11 @@ def resolve_dataset_spec(testbed, config_dir):
             raise ValueError("Path A and B sampling intervals differ")
         if common_validation is not None and validation_ratio != common_validation:
             raise ValueError("Path A and B validation ratios differ")
-        common_sampling, common_validation = sampling, validation_ratio
+        if common_min_matched is not None and min_matched != common_min_matched:
+            raise ValueError("Path A and B minimum matched predictions differ")
+        common_sampling = sampling
+        common_validation = validation_ratio
+        common_min_matched = min_matched
 
         historical_observations = profile["breakingTimeSeconds"] // sampling
         minimum_observations, minimum_training, minimum_validation = _minimum_observations(
@@ -216,9 +242,18 @@ def resolve_dataset_spec(testbed, config_dir):
             - profile["breakingTimeSeconds"]
         )
         degraded_tail = profile["degradedWindows"] * profile["windowSeconds"]
-        if stable_lead < minimum_reference * monitor_period:
+        minimum_stable_lead = (
+            (minimum_reference + 1) * monitor_period + sampling
+        )
+        minimum_degraded_tail = (
+            (required_hits + 1) * monitor_period + sampling + closure_budget
+        )
+        if stable_lead < minimum_stable_lead:
             raise ValueError("path {} stable live lead-in is too short for monitor reference".format(path_name))
-        if profile["postBoundaryMode"] == "degraded" and degraded_tail < required_hits * monitor_period:
+        if (
+            profile["postBoundaryMode"] == "degraded"
+            and degraded_tail < minimum_degraded_tail
+        ):
             raise ValueError("path {} degraded tail is too short for the accuracy policy".format(path_name))
         if path_name == "a" and profile["postBoundaryMode"] != "degraded":
             raise ValueError("Path A must carry the changed traffic profile")
@@ -226,9 +261,12 @@ def resolve_dataset_spec(testbed, config_dir):
             raise ValueError("Path B must remain the stable control")
         earliest_decision = required_hits * monitor_period
         earliest_trigger = stable_lead + earliest_decision
-        if profile["breakingTimeSeconds"] + earliest_trigger > preparation_window:
+        bounded_trigger = (
+            stable_lead + (required_hits + 1) * monitor_period + sampling
+        )
+        if profile["breakingTimeSeconds"] + bounded_trigger > preparation_window:
             raise ValueError(
-                "path {} preparation window cannot cover warm-start through earliest trigger".format(path_name)
+                "path {} preparation window cannot cover warm-start through bounded trigger".format(path_name)
             )
         trigger_observations = historical_observations + earliest_trigger // sampling
         trigger_training, trigger_validation = _sample_counts(
@@ -269,10 +307,17 @@ def resolve_dataset_spec(testbed, config_dir):
             "triggerTrainingSamples": trigger_training,
             "triggerValidationSamples": trigger_validation,
             "monitorReportPeriodSeconds": monitor_period,
+            "monitorReportCapacity": report_capacity,
+            "minimumMatchedPredictions": min_matched,
             "minimumReferenceReports": minimum_reference,
             "requiredDegradationHits": required_hits,
             "stableLeadInSeconds": stable_lead,
+            "minimumStableLeadInSeconds": minimum_stable_lead,
             "degradedTailSeconds": degraded_tail,
+            "minimumDegradedTailSeconds": minimum_degraded_tail,
+            "boundedTriggerSeconds": bounded_trigger,
+            "closureBudgetSeconds": closure_budget,
+            "boundedClosureSeconds": bounded_trigger + closure_budget,
         })
         resolved_paths["path-" + path_name] = resolved
 

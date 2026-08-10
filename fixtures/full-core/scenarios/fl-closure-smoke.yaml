@@ -7,7 +7,7 @@ trafficProfiles:
   a: fixtures/full-core/traffic/profiles/fl-closure-smoke/path-a.json
   b: fixtures/full-core/traffic/profiles/fl-closure-smoke/path-b.json
 monitoring:
-  reportPeriodSeconds: 30
+  reportPeriodSeconds: 90
   minimumReferenceReports: 2
   decisionWindowSize: 2
   requiredHits: 1
@@ -16,4 +16,5 @@ training:
   localEpochs: 2
   fittingRounds: 2
   preparationDataWindowSeconds: 3600
+  closureBudgetSeconds: 300
   enforcePerformanceGate: false

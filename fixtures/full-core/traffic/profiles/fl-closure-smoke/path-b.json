@@ -3,7 +3,7 @@
   "path": "b",
   "windowSeconds": 1,
   "breakingTimeSeconds": 3000,
-  "stableWindows": 3180,
+  "stableWindows": 3360,
   "degradedWindows": 600,
   "postBoundaryMode": "stable",
   "stableUplinkBytes": 120,

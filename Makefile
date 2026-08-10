@@ -4,7 +4,7 @@ CONFIG_DIR ?=
 NAME ?= local
 SCENARIO ?= fixtures/full-core/scenarios/full-core-cat-transition.yaml
 
-.PHONY: help preflight config-check config-render dataset-generate dataset-check dataset-show \
+.PHONY: help preflight config-check config-render config-contract-smoke dataset-generate dataset-check dataset-show \
 	dataset-smoke dataset-stage-plan dataset-stage ml-compose-check ml-cpu-smoke ml-lifecycle-smoke \
 	ml-start ml-status ml-stop vm-up vm-status vm-halt \
 	services-start services-status services-stop subscriptions-start \
@@ -17,6 +17,7 @@ help:
 	@echo "  make preflight"
 	@echo "  make config-check [TESTBED=...] [CONFIG_DIR=...]"
 	@echo "  make config-render NAME=... [SCENARIO=...] [TESTBED=...]"
+	@echo "  make config-contract-smoke [CONFIG_DIR=...]"
 	@echo "  make dataset-generate | dataset-check | dataset-show | dataset-smoke"
 	@echo "  make dataset-stage-plan | dataset-stage"
 	@echo "  make ml-compose-check | ml-cpu-smoke | ml-lifecycle-smoke"
@@ -35,6 +36,9 @@ config-check:
 
 config-render:
 	@python3 scripts/host/config-render.py --testbed "$(TESTBED)" --name "$(NAME)" --scenario "$(SCENARIO)"
+
+config-contract-smoke:
+	@python3 scripts/host/config-contract-smoke.py --testbed "$(TESTBED)" $(if $(CONFIG_DIR),--config-dir "$(CONFIG_DIR)")
 
 dataset-generate:
 	@python3 scripts/host/dataset.py --testbed "$(TESTBED)" $(if $(CONFIG_DIR),--config-dir "$(CONFIG_DIR)") generate

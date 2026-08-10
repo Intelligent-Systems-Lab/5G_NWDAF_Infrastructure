@@ -6,10 +6,10 @@ import ipaddress
 import json
 import sys
 from pathlib import Path
-from urllib.parse import urlparse
 
 from configlib import (
-    ROOT, get_path, guest_network_configs, load_yaml, resolve_config_dir,
+    ROOT, canonical_sha256, config_generator_source_hash, get_path,
+    guest_network_configs, load_yaml, resolve_config_dir,
     resolve_config_scenario, resolve_ml_bind_address, resolve_path, sha256_tree,
 )
 from datasetlib import resolve_dataset_spec
@@ -209,7 +209,10 @@ def main():
         )
     for section, fields in {
         "monitoring": ("reportPeriodSeconds", "minimumReferenceReports", "decisionWindowSize", "requiredHits"),
-        "training": ("minimumSamples", "localEpochs", "fittingRounds", "preparationDataWindowSeconds"),
+        "training": (
+            "minimumSamples", "localEpochs", "fittingRounds",
+            "preparationDataWindowSeconds", "closureBudgetSeconds",
+        ),
     }.items():
         values = scenario.get(section, {})
         for field in fields:
@@ -234,6 +237,13 @@ def main():
     sampling = scenario["samplingIntervalSeconds"]
     monitoring = scenario["monitoring"]
     training = scenario["training"]
+    seed = json.loads(
+        (ROOT / "ML" / "PyMTLF" / "seed_models" / "initial" / "config.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    seed_model = seed["model"]
+    seed_inference = seed["inference"]
 
     check_subscriber_fixtures(check, testbed, config_dir)
     try:
@@ -269,14 +279,29 @@ def main():
     }
     nrf = testbed["coreServices"]["nrf"]["sbi"]
     nrf_uri = uri(nrf["address"], nrf["port"])
+    mongo = testbed["coreServices"]["mongodb"]
+    mongo_uri = "mongodb://{}:{}".format(
+        mongo["endpoint"]["address"], mongo["endpoint"]["port"]
+    )
     for name, filename in core_files.items():
         cfg = load_yaml(config_dir / filename)
         endpoint = testbed["coreServices"][name]["sbi"]
         sbi = get_path(cfg, ["configuration", "sbi"])
+        check.equal(filename + " register", sbi["registerIPv4"], endpoint["address"])
         check.equal(filename + " bind", sbi["bindingIPv4"], endpoint["address"])
         check.equal(filename + " port", sbi["port"], endpoint["port"])
         if name != "nrf":
             check.equal(filename + " NRF", cfg["configuration"]["nrfUri"], nrf_uri)
+
+    nrf_config = load_yaml(config_dir / "nrfcfg.yaml")["configuration"]
+    check.equal("NRF MongoDB URL", nrf_config["MongoDBUrl"], mongo_uri)
+    check.equal("NRF MongoDB database", nrf_config["MongoDBName"], mongo["database"])
+    for filename in ("udrcfg.yaml", "pcfcfg.yaml"):
+        mongodb = load_yaml(config_dir / filename)["configuration"]["mongodb"]
+        check.equal(filename + " MongoDB URL", mongodb["url"], mongo_uri)
+        check.equal(filename + " MongoDB database", mongodb["name"], mongo["database"])
+    adrf_mongodb = load_yaml(config_dir / "adrfcfg.yaml")["configuration"]["mongodb"]
+    check.equal("ADRF MongoDB URL", adrf_mongodb["url"], mongo_uri)
 
     udm = load_yaml(config_dir / "udmcfg.yaml")["configuration"]
     group_id = testbed["mobileNetwork"]["internalGroupId"]
@@ -301,12 +326,23 @@ def main():
         upf = load_yaml(config_dir / ("upfcfg-{}.yaml".format(name)))
         node = smf["userplaneInformation"]["upNodes"]["UPF-{}".format(name.upper())]
         check.equal("UPF {} N4".format(name), upf["pfcp"]["addr"], path["upf"]["n4"]["address"])
+        check.equal("UPF {} node ID".format(name), upf["pfcp"]["nodeID"], path["upf"]["n4"]["address"])
         check.equal("SMF UPF {} N4".format(name), node["nodeID"], path["upf"]["n4"]["address"])
+        check.equal("SMF UPF {} address".format(name), node["addr"], path["upf"]["n4"]["address"])
         check.equal("UPF {} N3".format(name), upf["gtpu"]["ifList"][0]["addr"], path["upf"]["n3"]["address"])
+        check.equal("UPF {} GTP interface".format(name), upf["gtpu"]["ifList"][0].get("ifname"), path["upf"]["gtpInterface"])
         check.equal("UPF {} pool".format(name), upf["dnnList"][0]["cidr"], path["upf"]["uePool"])
         check.equal("SMF UPF {} TAI".format(name), node["tais"][0]["tac"], path["tai"]["tac"])
         check.equal("SMF UPF {} EES".format(name), node["nupfEeApiRoot"], uri(path["upf"]["eventExposure"]["address"], path["upf"]["eventExposure"]["port"]))
         check.true("UPF {} pseudo driver disabled".format(name), upf["ees"]["enabled"])
+        check.equal(
+            "UPF {} Event Exposure listener".format(name),
+            upf["ees"]["listenAddr"],
+            "{}:{}".format(
+                path["upf"]["eventExposure"]["address"],
+                path["upf"]["eventExposure"]["port"],
+            ),
+        )
         check.equal("UPF {} reporting period".format(name), upf["ees"]["periodSec"], sampling)
         check.equal(
             "UPF {} PseudoDriver directory".format(name),
@@ -354,8 +390,23 @@ def main():
         nwdaf_native[name] = native
         expected = testbed["analytics"]["nwdaf-{}".format(name)]
         check.equal("NWDAF {} ID".format(name), native["nfInstanceId"], expected["nfInstanceId"])
+        check.equal("NWDAF {} register".format(name), native["sbi"]["registerIPv4"], expected["sbi"]["address"])
         check.equal("NWDAF {} bind".format(name), native["sbi"]["bindingIPv4"], expected["sbi"]["address"])
+        check.equal("NWDAF {} port".format(name), native["sbi"]["port"], expected["sbi"]["port"])
         check.equal("NWDAF {} NRF".format(name), native["nrfUri"], nrf_uri)
+        for service, port in (("anlf", 8090), ("mtlf", 8091)):
+            internal = native[service]["server"]
+            check.equal(
+                "NWDAF {} {} register".format(name, service),
+                internal["registerIPv4"], expected["sbi"]["address"],
+            )
+            check.equal(
+                "NWDAF {} {} bind".format(name, service),
+                internal["bindingIPv4"], expected["sbi"]["address"],
+            )
+            check.equal(
+                "NWDAF {} {} port".format(name, service), internal["port"], port,
+            )
         if name in ("a", "b"):
             check.equal(
                 "NWDAF {} AnLF backend".format(name), native["anlfBackend"]["endpoint"],
@@ -368,6 +419,10 @@ def main():
 
     backends = testbed["analytics"]["backends"]
     services = ml_runtime["services"]
+    mtlf_c = load_yaml(config_dir / "pymtlf-c.yaml")
+    seed_descriptor = mtlf_c["model_provision"]["seed_models"][0]
+    expected_model_id = seed_descriptor["model_id"]
+    expected_interoperability = seed_descriptor["model_interoperability"]
     for backend_name in expected_ml_names:
         backend = backends.get(backend_name, {})
         check.equal("{} runtime".format(backend_name), backend.get("runtime"), "host-container")
@@ -393,10 +448,47 @@ def main():
             anlf.get("containing_nwdaf", {}).get("request_timeout_seconds"), 30,
         )
         check.equal(anlf_name + " callback", anlf["collection"]["callback_base_uri"], uri(anlf_endpoint["address"], anlf_endpoint["port"]))
+        check.equal(
+            anlf_name + " model provision callback",
+            anlf["model_provision"]["callback_uri"],
+            uri(anlf_endpoint["address"], anlf_endpoint["port"])
+            + "/internal/v1/ml-model-provision/notifications",
+        )
         check.equal(anlf_name + " MongoDB fallback disabled", anlf.get("mongodb", {}).get("enabled"), False)
+        check.equal(anlf_name + " MongoDB URL", anlf["mongodb"]["url"], mongo_uri)
+        check.equal(anlf_name + " MongoDB database", anlf["mongodb"]["database"], mongo["database"])
         check.equal(anlf_name + " sampling", anlf["analytics"]["ue_communication"]["sampling_interval_seconds"], sampling)
         check.equal(anlf_name + " ground-truth interval", anlf["accuracy_monitor"]["ground_truth_check_interval_seconds"], sampling)
         check.equal(anlf_name + " accuracy report period", anlf["accuracy_monitor"]["report_period_seconds"], monitoring["reportPeriodSeconds"])
+        check.true(
+            anlf_name + " report period cannot collect minimum matched predictions",
+            monitoring["reportPeriodSeconds"] // sampling
+            >= anlf["accuracy_monitor"]["min_matched_predictions"],
+        )
+        check.equal(anlf_name + " default model ID", anlf["model"]["default_model_unique_id"], expected_model_id)
+        check.equal(anlf_name + " model input size", anlf["model"]["input_size"], seed_model["input_size"])
+        check.equal(anlf_name + " model output size", anlf["model"]["output_size"], seed_model["output_size"])
+        check.equal(anlf_name + " model channels", anlf["model"]["num_channels"], seed_model["num_channels"])
+        check.equal(
+            anlf_name + " analytics input window",
+            anlf["analytics"]["ue_communication"]["input_window"],
+            seed_inference["seq_length"],
+        )
+        check.equal(
+            anlf_name + " analytics output window",
+            anlf["analytics"]["ue_communication"]["output_window"],
+            seed_inference["out_seq_len"],
+        )
+        check.equal(
+            anlf_name + " model interoperability",
+            anlf["model_provision"]["model_interoperability"],
+            expected_interoperability,
+        )
+        check.equal(
+            anlf_name + " model provider interoperability",
+            anlf["model_provider"]["model_interoperability_vendor_ids"],
+            [expected_interoperability],
+        )
         check.equal(
             anlf_name + " artifact origins", anlf["model"]["artifact_download"]["allowed_origins"],
             [
@@ -420,13 +512,25 @@ def main():
             mtlf.get("containing_nwdaf", {}).get("request_timeout_seconds"), 30,
         )
         check.equal(mtlf_name + " public URL", mtlf["artifact"]["public_base_url"], uri(mtlf_endpoint["address"], mtlf_endpoint["port"]))
+        check.equal(
+            mtlf_name + " FL public URL",
+            mtlf["federated_learning"]["public_base_url"],
+            uri(mtlf_endpoint["address"], mtlf_endpoint["port"]),
+        )
+        client = mtlf["federated_learning"]["client"]
+        check.equal(
+            mtlf_name + " FL interoperability",
+            client["model_interoperability_ids"],
+            [expected_interoperability],
+        )
         expected_device = args.ml_device_override or services[mtlf_name]["device"]
-        check.equal(mtlf_name + " device", mtlf["federated_learning"]["client"]["training"]["device"], expected_device)
-        check.equal(mtlf_name + " local epochs", mtlf["federated_learning"]["client"]["training"]["epochs"], training["localEpochs"])
+        check.equal(mtlf_name + " device", client["training"]["device"], expected_device)
+        check.equal(mtlf_name + " local epochs", client["training"]["epochs"], training["localEpochs"])
         check.equal(mtlf_name + " retrieval window", mtlf["dataset"]["retrieval_window_seconds"], training["preparationDataWindowSeconds"])
+        check.equal(mtlf_name + " dataset MongoDB URL", mtlf["dataset"]["mongodb"]["url"], mongo_uri)
+        check.equal(mtlf_name + " dataset MongoDB database", mtlf["dataset"]["mongodb"]["database"], mongo["database"])
         check_pymtlf_data_paths(check, mtlf_name, mtlf)
 
-    mtlf_c = load_yaml(config_dir / "pymtlf-c.yaml")
     mtlf_c_endpoint = backends["pymtlf-c"]
     check.equal("pymtlf-c bind", mtlf_c["server"]["binding_host"], "0.0.0.0")
     check.equal("pymtlf-c container port", mtlf_c["server"]["port"], services["pymtlf-c"]["containerPort"])
@@ -441,7 +545,13 @@ def main():
         mtlf_c.get("containing_nwdaf", {}).get("request_timeout_seconds"), 30,
     )
     check.equal("pymtlf-c public URL", mtlf_c["artifact"]["public_base_url"], uri(mtlf_c_endpoint["address"], mtlf_c_endpoint["port"]))
+    check.equal(
+        "pymtlf-c FL public URL",
+        mtlf_c["federated_learning"]["public_base_url"],
+        uri(mtlf_c_endpoint["address"], mtlf_c_endpoint["port"]),
+    )
     check.equal("pymtlf-c monitor watchdog grace", mtlf_c["model_monitor"].get("watchdog_grace_seconds"), 300)
+    check.equal("pymtlf-c missed report threshold", mtlf_c["model_monitor"].get("missed_report_threshold"), 2)
     check_pymtlf_data_paths(check, "pymtlf-c", mtlf_c)
     check.equal(
         "pymtlf-c seed models",
@@ -458,6 +568,18 @@ def main():
         }],
     )
     server = mtlf_c["federated_learning"]["server"]
+    check.equal(
+        "pymtlf-c training callback",
+        server["callback_uri"],
+        uri(mtlf_c_endpoint["address"], mtlf_c_endpoint["port"])
+        + "/internal/v1/ml-model-training/notifications",
+    )
+    check.equal(
+        "pymtlf-c monitor callback",
+        mtlf_c["model_monitor"]["callback_uri"],
+        uri(mtlf_c_endpoint["address"], mtlf_c_endpoint["port"])
+        + "/internal/v1/ml-model-monitor/notifications",
+    )
     check.equal("pymtlf-c fitting rounds", server["round_count"], training["fittingRounds"])
     check.equal("pymtlf-c preparation window", server["preparation_data_window_seconds"], training["preparationDataWindowSeconds"])
     check.equal("pymtlf-c performance gate", server["final_validation"]["enforce_performance_gate"], training["enforcePerformanceGate"])
@@ -465,12 +587,31 @@ def main():
     check.equal("pymtlf-c minimum references", mtlf_c["accuracy_policy"]["min_reference_samples"], monitoring["minimumReferenceReports"])
     check.equal("pymtlf-c decision window", mtlf_c["accuracy_policy"]["decision_window_size"], monitoring["decisionWindowSize"])
     check.equal("pymtlf-c required hits", mtlf_c["accuracy_policy"]["required_hits"], monitoring["requiredHits"])
+    for name in ("a", "b"):
+        client = load_yaml(config_dir / ("pymtlf-{}.yaml".format(name)))[
+            "federated_learning"
+        ]["client"]
+        fallback = client["fallback_deadlines"]
+        check.equal(
+            "pymtlf-{} preparation deadline".format(name),
+            fallback["preparation_timeout_seconds"],
+            server["preparation_timeout_seconds"],
+        )
+        check.equal(
+            "pymtlf-{} round deadline".format(name),
+            fallback["round_timeout_seconds"],
+            server["round_timeout_seconds"],
+        )
     check.equal(
         "pymtlf-c client origins", mtlf_c["federated_learning"]["artifact_download"]["allowed_origins"],
-        [uri(backends[name]["address"], backends[name]["port"]) for name in ("pymtlf-a", "pymtlf-b")],
+        [
+            uri(backends[name]["address"], backends[name]["port"])
+            for name in ("pymtlf-a", "pymtlf-b", "pymtlf-c")
+        ],
     )
 
     manifest = load_yaml(config_dir / "manifest.yaml")
+    check.equal("manifest schema", manifest.get("schemaVersion"), 1)
     check.equal("manifest scenario name", manifest.get("scenario", {}).get("name"), scenario["name"])
     check.equal("manifest scenario kind", manifest.get("scenario", {}).get("kind"), scenario["kind"])
     check.equal("manifest guest machines", manifest.get("runtime", {}).get("guestMachines"), sorted(testbed["machines"]))
@@ -494,15 +635,71 @@ def main():
         )
     if dataset_spec is not None:
         check.equal("dataset set paths", sorted(dataset_spec["paths"]), ["path-a", "path-b"])
+    generated = manifest.get("generated")
+    if generated is not None:
+        check.equal(
+            "manifest baseline hash",
+            generated.get("baselineHash"),
+            sha256_tree(ROOT / "config" / "default"),
+        )
+        check.equal(
+            "manifest topology hash",
+            generated.get("definitionHash"),
+            canonical_sha256(testbed),
+        )
+        check.equal(
+            "manifest config generator hash",
+            generated.get("generatorSourceHash"),
+            config_generator_source_hash(),
+        )
+        check.equal(
+            "manifest generated files",
+            generated.get("files"),
+            sorted(
+                path.relative_to(config_dir).as_posix()
+                for path in config_dir.rglob("*.yaml")
+                if path.name != "manifest.yaml"
+            ),
+        )
 
     consumer = load_yaml(config_dir / "consumer.yaml")
     check.equal("consumer NRF", consumer["nrfUri"], nrf_uri)
+    check.equal(
+        "consumer requester NF type",
+        consumer["requesterNfType"],
+        testbed["consumer"]["requesterNfType"],
+    )
+    check.equal("consumer target NF type", consumer["discovery"]["targetNfType"], "NWDAF")
+    check.equal(
+        "consumer discovery service",
+        consumer["discovery"]["serviceName"],
+        testbed["consumer"]["discovery"]["serviceName"],
+    )
+    check.equal(
+        "consumer discovery event",
+        consumer["discovery"]["event"],
+        testbed["consumer"]["discovery"]["event"],
+    )
     check.equal("consumer PLMN", consumer["target"]["plmn"], testbed["mobileNetwork"]["plmn"])
     check.equal("consumer group", consumer["target"]["internalGroupId"], testbed["mobileNetwork"]["internalGroupId"])
     check.equal("consumer paths", [p["tac"] for p in consumer["target"]["paths"]], expected_tacs)
+    check.equal(
+        "consumer reporting method",
+        consumer["reporting"]["method"],
+        testbed["consumer"]["reporting"]["method"],
+    )
     check.equal("consumer reporting period", consumer["reporting"]["periodSeconds"], sampling)
-    advertised = urlparse(consumer["callback"]["advertisedUri"])
-    check.equal("consumer callback host", advertised.hostname, testbed["consumer"]["callback"]["advertisedAddress"])
+    callback = testbed["consumer"]["callback"]
+    check.equal("consumer callback bind", consumer["callback"]["bindAddress"], callback["bindAddress"])
+    check.equal(
+        "consumer callback URI",
+        consumer["callback"]["advertisedUri"],
+        "http://{}:{}{}".format(
+            callback["advertisedAddress"], callback["port"], callback["path"]
+        ),
+    )
+    state_file = Path(consumer["stateFile"])
+    check.true("consumer state file must be absolute", state_file.is_absolute())
 
     addresses_only = [address for _, address in all_addresses]
     duplicates = sorted({address for address in addresses_only if addresses_only.count(address) > 1})

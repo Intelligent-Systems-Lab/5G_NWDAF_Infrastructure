@@ -64,6 +64,7 @@ rebuilding a VM:
 make config-render NAME=fl-closure-smoke \
   SCENARIO=fixtures/full-core/scenarios/fl-closure-smoke.yaml
 make config-check CONFIG_DIR=config/generated/fl-closure-smoke
+make config-contract-smoke CONFIG_DIR=config/generated/fl-closure-smoke
 make dataset-generate CONFIG_DIR=config/generated/fl-closure-smoke
 make dataset-show CONFIG_DIR=config/generated/fl-closure-smoke
 ```
@@ -78,7 +79,9 @@ fallback is disabled in the default and generated E2E config sets; MongoDB still
 runs in the Core VM for the 5GC NFs and ADRF itself. PyMTLF configuration is not
 changed by this policy. PyMTLF-C uses an explicit 300-second Model Monitor
 watchdog grace so initial prediction maturation cannot collide with the first
-periodic-report deadline.
+periodic-report deadline. Scenario validation also checks report sample
+capacity, startup margin, bounded trigger timing, and an explicit post-trigger
+closure budget before a dataset can be generated.
 
 Teardown is deliberately split:
 

@@ -16,6 +16,7 @@ federated_learning:
   client:
     model_interoperability_ids: ["001122"]
     max_concurrent_jobs: 1
+    fallback_deadlines: {preparation_timeout_seconds: 300, round_timeout_seconds: 300}
     training: {device: "cuda:0", batch_size: 32, learning_rate: 0.001, epochs: 18, validation_ratio: 0.1, random_seed: 42}
 adrf: {mode: nrf, discovery_timeout_seconds: 30, request_timeout_seconds: 120}
 dataset:

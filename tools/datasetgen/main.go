@@ -49,10 +49,17 @@ type resolvedProfile struct {
 	TriggerTrainingSamples          int      `json:"triggerTrainingSamples"`
 	TriggerValidationSamples        int      `json:"triggerValidationSamples"`
 	MonitorReportPeriodSeconds      int      `json:"monitorReportPeriodSeconds"`
+	MonitorReportCapacity           int      `json:"monitorReportCapacity"`
+	MinimumMatchedPredictions       int      `json:"minimumMatchedPredictions"`
 	MinimumReferenceReports         int      `json:"minimumReferenceReports"`
 	RequiredDegradationHits         int      `json:"requiredDegradationHits"`
 	StableLeadInSeconds             int      `json:"stableLeadInSeconds"`
+	MinimumStableLeadInSeconds      int      `json:"minimumStableLeadInSeconds"`
 	DegradedTailSeconds             int      `json:"degradedTailSeconds"`
+	MinimumDegradedTailSeconds      int      `json:"minimumDegradedTailSeconds"`
+	BoundedTriggerSeconds           int      `json:"boundedTriggerSeconds"`
+	ClosureBudgetSeconds            int      `json:"closureBudgetSeconds"`
+	BoundedClosureSeconds           int      `json:"boundedClosureSeconds"`
 }
 
 type scenarioIdentity struct {

@@ -101,6 +101,17 @@ def canonical_sha256(value):
     return hashlib.sha256(payload).hexdigest()
 
 
+def config_generator_source_hash():
+    digest = hashlib.sha256()
+    directory = ROOT / "scripts" / "host"
+    for name in ("config-render.py", "configlib.py"):
+        path = directory / name
+        digest.update(name.encode("utf-8") + b"\0")
+        digest.update(path.read_bytes())
+        digest.update(b"\0")
+    return digest.hexdigest()
+
+
 def guest_network_configs(testbed):
     """Build the role-specific guest alias files from one topology definition."""
     machines = testbed["machines"]

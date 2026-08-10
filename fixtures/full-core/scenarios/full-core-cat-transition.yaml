@@ -16,4 +16,5 @@ training:
   localEpochs: 18
   fittingRounds: 2
   preparationDataWindowSeconds: 3600
+  closureBudgetSeconds: 1800
   enforcePerformanceGate: false
