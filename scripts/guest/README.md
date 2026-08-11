@@ -22,3 +22,11 @@ rebuild used after a guest kernel update.
 identity, hash, bytes, and breaking-time metadata, then atomically switches the
 guest-local `datasets/active` symlink. It never reads generated artifacts from
 the rsynced source tree.
+
+`network-config.py` validates one role's generated network YAML against the
+Guest's current Vagrant anchor addresses and renders only process aliases into
+`/etc/netplan/60-5g-nwdaf-aliases.yaml`. `network-setup.sh` validates the
+candidate in an isolated Netplan root, installs it atomically, reloads networkd,
+and reconfigures only affected host-only interfaces. It refuses to reconfigure
+the default-route interface and restores the previous fragment on failure.
+Vagrant continues to own `50-vagrant.yaml`; Netplan merges both files at boot.

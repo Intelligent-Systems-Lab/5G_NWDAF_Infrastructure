@@ -113,15 +113,19 @@ endpoints and VM interface anchors in the selected `testbed.yaml`; they are not
 an independent topology source. During activation, each guest applies only its
 role file before any process starts. A missing anchor, wrong guest role, alias
 collision, or network setup failure rejects activation and restores the prior
-active set. Previously managed aliases absent from the new set are removed.
+active set. The Guest renders process aliases into the persistent
+`/etc/netplan/60-5g-nwdaf-aliases.yaml`; Vagrant retains ownership of
+`50-vagrant.yaml` and its base anchors. Netplan merges both files, so aliases
+survive Guest reboot and Vagrant's final network reconfiguration. Previously
+managed aliases absent from the new set are removed.
 
 Provisioning disables and masks the base box's `apt-daily` and
 `apt-daily-upgrade` units. Guest package changes are explicit provisioning
-operations: an unattended upgrade can invoke `needrestart`, restart
-`systemd-networkd`, and otherwise interrupt an active experiment. The topology
-alias unit waits for networkd to finish configuring the base interfaces and is
-restarted with networkd. `services-start` also reconciles all three guests after
-config and dataset staging, immediately before the first NF binds an alias.
+operations because an unattended upgrade can still interrupt an active
+experiment. The topology alias unit is an on-demand reconciler rather than an
+enabled boot service. `services-start` verifies all three guests after config
+and dataset staging, and only reconciles a missing, stale, or legacy runtime
+state before the first NF binds an alias.
 
 ## Guest builds
 
@@ -240,11 +244,13 @@ directory, and the ADRF-only `NfProfile` and `urilist` records in NRF. When Core
 is off, guest counts are explicitly unavailable; the command never powers it on
 and never deletes state.
 
-After a fresh `vagrant up core`, Vagrant may have reconfigured the base
-interfaces after the enabled alias unit ran. If the plan reports that the
-MongoDB bind address is inactive, reapply the already selected network config
-inside Core with `sudo systemctl restart 5g-nwdaf-network.service`; the reset
-does not change network state implicitly.
+After config activation has created the persistent Netplan fragment, a fresh
+`vagrant up core` applies the Vagrant anchors and the managed aliases together.
+If the plan still reports that the MongoDB bind address is inactive, first run
+`sudo /usr/local/libexec/5g-nwdaf-infrastructure/network-setup --verify` inside
+Core. A migration or drift failure can then be repaired with
+`sudo systemctl restart 5g-nwdaf-network.service`; the reset does not change
+network state implicitly.
 
 An apply requires all five Host ML containers and every guest experiment
 service to be stopped, Core to be running, and an exact scenario-name

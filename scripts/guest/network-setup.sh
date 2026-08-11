@@ -2,142 +2,202 @@
 set -euo pipefail
 
 root=/etc/5g-nwdaf-infrastructure
+fragment=/etc/netplan/60-5g-nwdaf-aliases.yaml
+renderer=/usr/local/libexec/5g-nwdaf-infrastructure/network-config
+legacy_state=/run/5g-nwdaf-infrastructure/network-aliases
+
 test "$(id -u)" -eq 0 || { echo "network setup requires root" >&2; exit 1; }
 machine=$(cat "$root/machine")
-state_dir=/run/5g-nwdaf-infrastructure
-state="$state_dir/network-aliases"
-state_tmp="$state.$$"
-install -d "$state_dir"
+action=apply
+config=$root/active/network/$machine.yaml
+case "${1:-}" in
+  "") ;;
+  --verify) action=verify ;;
+  --clear) action=clear ;;
+  *) config=$1 ;;
+esac
 
-clear_managed_aliases() {
-  local cidr device address
-  [ -f "$state" ] || return 0
+temporary=$(mktemp -d /tmp/5g-nwdaf-network.XXXXXX)
+addresses=$temporary/addresses.json
+candidate=$temporary/60-5g-nwdaf-aliases.yaml
+plan=$temporary/plan.json
+previous=$temporary/previous.yaml
+validation_root=$temporary/validation
+had_previous=false
+rollback_needed=false
+
+if [ -f "$fragment" ]; then
+  cp "$fragment" "$previous"
+  had_previous=true
+fi
+
+plan_devices() {
+  jq -r '.affectedDevices[]' "$plan"
+  if [ -f "$legacy_state" ]; then
+    awk -F '\t' 'NF >= 2 && $2 != "" {print $2}' "$legacy_state"
+  fi
+}
+
+verify_effective_addresses() {
+  local cidr device address prefix
   while IFS=$'\t' read -r cidr device; do
     [ -n "$cidr" ] && [ -n "$device" ] || continue
     address=${cidr%/*}
-    if ip -o -4 address show dev "$device" | awk -v target="$address" '
-      { split($4, item, "/"); if (item[1] == target) found = 1 }
+    prefix=${cidr#*/}
+    ip -o -4 address show dev "$device" | awk -v target="$address/$prefix" '
+      $4 == target { found = 1 }
+      END { exit(found ? 0 : 1) }
+    ' || {
+      echo "managed alias $cidr is missing from $device" >&2
+      return 1
+    }
+  done < <(jq -r '.aliases[] | [.cidr, .device] | @tsv' "$plan")
+
+  while IFS=$'\t' read -r cidr device; do
+    [ -n "$cidr" ] && [ -n "$device" ] || continue
+    if jq -e --arg cidr "$cidr" --arg device "$device" \
+      '.aliases[] | select(.cidr == $cidr and .device == $device)' "$plan" >/dev/null; then
+      continue
+    fi
+    if ip -o -4 address show dev "$device" | awk -v target="$cidr" '
+      $4 == target { found = 1 }
       END { exit(found ? 0 : 1) }
     '; then
-      ip address del "$cidr" dev "$device" || true
+      echo "stale managed alias $cidr remains on $device" >&2
+      return 1
     fi
-  done <"$state"
-  rm -f "$state"
+  done < <(jq -r '.staleAliases[] | [.cidr, .device] | @tsv' "$plan")
+
+  if [ -f "$legacy_state" ]; then
+    while IFS=$'\t' read -r cidr device; do
+      [ -n "$cidr" ] && [ -n "$device" ] || continue
+      if jq -e --arg cidr "$cidr" --arg device "$device" \
+        '.aliases[] | select(.cidr == $cidr and .device == $device)' "$plan" >/dev/null; then
+        continue
+      fi
+      if ip -o -4 address show dev "$device" | awk -v target="$cidr" '
+        $4 == target { found = 1 }
+        END { exit(found ? 0 : 1) }
+      '; then
+        echo "legacy runtime alias $cidr remains on $device" >&2
+        return 1
+      fi
+    done <"$legacy_state"
+  fi
 }
 
-if [ "${1:-}" = "--clear" ]; then
-  clear_managed_aliases
-  exit 0
-fi
+reconfigure_affected_devices() {
+  local device default_device
+  default_device=$(ip -4 route show default | awk 'NR == 1 {for (i = 1; i <= NF; i++) if ($i == "dev") {print $(i + 1); exit}}')
+  netplan generate
+  networkctl reload
+  while IFS= read -r device; do
+    [ -n "$device" ] || continue
+    if ! ip link show dev "$device" >/dev/null 2>&1; then
+      continue
+    fi
+    if [ -n "$default_device" ] && [ "$device" = "$default_device" ]; then
+      echo "refusing to reconfigure default-route interface $device" >&2
+      return 1
+    fi
+    networkctl reconfigure "$device"
+  done < <(plan_devices | LC_ALL=C sort -u)
 
-config=${1:-$root/active/network/$machine.yaml}
-test -f "$config" || { echo "network config not found: $config" >&2; exit 1; }
+  for _attempt in $(seq 1 10); do
+    verify_effective_addresses && return 0
+    sleep 1
+  done
+  verify_effective_addresses
+}
 
-plan=$(mktemp)
-resolved=$(mktemp)
-added=$(mktemp)
-rollback_additions=true
-cleanup() {
-  local status=$? cidr device
-  if [ "$status" -ne 0 ] && [ "$rollback_additions" = true ]; then
-    while IFS=$'\t' read -r cidr device; do
-      [ -n "$cidr" ] && ip address del "$cidr" dev "$device" >/dev/null 2>&1 || true
-    done <"$added"
+restore_previous_fragment() {
+  set +e
+  if [ "$had_previous" = true ]; then
+    install -m 0600 "$previous" "$fragment.rollback"
+    mv -f "$fragment.rollback" "$fragment"
+  else
+    rm -f "$fragment"
   fi
-  rm -f "$plan" "$resolved" "$added" "$state_tmp"
+  netplan generate
+  networkctl reload
+  while IFS= read -r device; do
+    [ -n "$device" ] || continue
+    ip link show dev "$device" >/dev/null 2>&1 && networkctl reconfigure "$device"
+  done < <(plan_devices | LC_ALL=C sort -u)
+  set -e
+}
+
+cleanup() {
+  local status=$?
   trap - EXIT
+  if [ "$status" -ne 0 ] && [ "$rollback_needed" = true ]; then
+    echo "network reconciliation failed; restoring previous Netplan fragment" >&2
+    restore_previous_fragment
+  fi
+  rm -rf "$temporary"
   exit "$status"
 }
 trap cleanup EXIT
 
-python3 - "$config" "$machine" >"$plan" <<'PY'
-import ipaddress
-import sys
-
-import yaml
-
-path, expected_machine = sys.argv[1:]
-with open(path, encoding="utf-8") as stream:
-    config = yaml.safe_load(stream) or {}
-
-if config.get("schemaVersion") != 1:
-    raise SystemExit("unsupported network config schema")
-if config.get("machine") != expected_machine:
-    raise SystemExit("network config machine does not match this guest")
-
-aliases = config.get("aliases", [])
-if not isinstance(aliases, list):
-    raise SystemExit("network aliases must be a list")
-
-seen = set()
-for item in aliases:
-    if not isinstance(item, dict):
-        raise SystemExit("network alias must be an object")
-    required = ("owner", "endpoint", "network", "address", "prefixLength", "anchor")
-    if any(key not in item for key in required):
-        raise SystemExit("network alias is missing a required field")
-    for key in ("owner", "endpoint", "network"):
-        if not isinstance(item[key], str) or not item[key] or any(
-            separator in item[key] for separator in ("\t", "\r", "\n")
-        ):
-            raise SystemExit("invalid network alias {}".format(key))
-    address = ipaddress.ip_address(item["address"])
-    anchor = ipaddress.ip_address(item["anchor"])
-    prefix = item["prefixLength"]
-    if address.version != 4 or anchor.version != 4:
-        raise SystemExit("only IPv4 aliases are supported")
-    if not isinstance(prefix, int) or not 0 <= prefix <= 32:
-        raise SystemExit("invalid alias prefix length")
-    if anchor not in ipaddress.ip_network("{}/{}".format(address, prefix), strict=False):
-        raise SystemExit("alias and anchor are not in the same subnet")
-    if address == anchor:
-        raise SystemExit("alias duplicates its anchor address")
-    if str(address) in seen:
-        raise SystemExit("duplicate alias address: {}".format(address))
-    seen.add(str(address))
-    print(
-        "{}\t{}\t{}\t{}\t{}".format(
-            address, prefix, anchor, item["owner"], item["endpoint"]
-        )
-    )
-PY
-
-while IFS=$'\t' read -r address prefix anchor owner endpoint; do
-  device=$(ip -o -4 address show | awk -v target="$anchor" '
-    { split($4, item, "/"); if (item[1] == target) { print $2; exit } }
-  ')
-  test -n "$device" || {
-    echo "cannot resolve interface for $owner/$endpoint via anchor $anchor" >&2
-    exit 1
-  }
-  printf '%s\t%s\n' "$address/$prefix" "$device" >>"$resolved"
-done <"$plan"
-
-while IFS=$'\t' read -r cidr device; do
-  address=${cidr%/*}
-  existing_device=$(ip -o -4 address show | awk -v target="$address" '
-    { split($4, item, "/"); if (item[1] == target) { print $2; exit } }
-  ')
-  if [ -n "$existing_device" ] && [ "$existing_device" != "$device" ]; then
-    echo "$address already exists on $existing_device instead of $device" >&2
-    exit 1
+if [ "$action" = clear ]; then
+  "$renderer" --clear --previous "$fragment" --plan-output "$plan"
+  if [ ! -f "$fragment" ] && [ ! -f "$legacy_state" ]; then
+    echo "NETWORK machine=$machine aliases=0 state=clear"
+    exit 0
   fi
-  if [ -z "$existing_device" ]; then
-    ip address add "$cidr" dev "$device"
-    printf '%s\t%s\n' "$cidr" "$device" >>"$added"
-  fi
-done <"$resolved"
-
-if [ -f "$state" ]; then
-  while IFS=$'\t' read -r cidr device; do
-    [ -n "$cidr" ] && [ -n "$device" ] || continue
-    if ! grep -Fqx "$cidr"$'\t'"$device" "$resolved"; then
-      ip address del "$cidr" dev "$device" >/dev/null 2>&1 || true
-    fi
-  done <"$state"
+  rollback_needed=true
+  rm -f "$fragment"
+  reconfigure_affected_devices
+  rm -f "$legacy_state"
+  rollback_needed=false
+  echo "NETWORK machine=$machine aliases=0 state=clear"
+  exit 0
 fi
 
-cp "$resolved" "$state_tmp"
-mv -f "$state_tmp" "$state"
-rollback_additions=false
-echo "NETWORK machine=$machine aliases=$(wc -l <"$state") config=$config"
+test -f "$config" || { echo "network config not found: $config" >&2; exit 1; }
+ip -j -4 address show >"$addresses"
+render_args=(
+  --config "$config"
+  --machine "$machine"
+  --addresses "$addresses"
+  --output "$candidate"
+  --plan-output "$plan"
+)
+[ -f "$fragment" ] && render_args+=(--previous "$fragment")
+"$renderer" "${render_args[@]}"
+
+if [ "$action" = verify ]; then
+  test -f "$fragment" || { echo "managed Netplan fragment is missing" >&2; exit 1; }
+  cmp -s "$candidate" "$fragment" || {
+    echo "managed Netplan fragment does not match the active config" >&2
+    exit 1
+  }
+  test ! -f "$legacy_state" || {
+    echo "legacy runtime alias state still requires migration" >&2
+    exit 1
+  }
+  verify_effective_addresses
+  echo "NETWORK machine=$machine aliases=$(jq '.aliases | length' "$plan") state=verified"
+  exit 0
+fi
+
+if [ -f "$fragment" ] && cmp -s "$candidate" "$fragment" && \
+   [ ! -f "$legacy_state" ] && verify_effective_addresses; then
+  echo "NETWORK machine=$machine aliases=$(jq '.aliases | length' "$plan") state=unchanged"
+  exit 0
+fi
+
+install -d "$validation_root/etc/netplan"
+while IFS= read -r -d '' source_file; do
+  install -m 0600 "$source_file" "$validation_root/etc/netplan/$(basename "$source_file")"
+done < <(find /etc/netplan -maxdepth 1 -type f -name '*.yaml' ! -name '60-5g-nwdaf-aliases.yaml' -print0)
+install -m 0600 "$candidate" "$validation_root/etc/netplan/60-5g-nwdaf-aliases.yaml"
+netplan generate --root-dir "$validation_root"
+
+rollback_needed=true
+install -m 0600 "$candidate" "$fragment.new"
+mv -f "$fragment.new" "$fragment"
+reconfigure_affected_devices
+rm -f "$legacy_state"
+rollback_needed=false
+echo "NETWORK machine=$machine aliases=$(jq '.aliases | length' "$plan") state=applied config=$config"

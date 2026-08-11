@@ -1,8 +1,7 @@
 [Unit]
-Description=5G NWDAF topology address aliases
+Description=5G NWDAF persistent topology address reconciliation
 After=systemd-networkd.service network-online.target
 Wants=network-online.target
-PartOf=systemd-networkd.service
 Before=5g-nwdaf-stack.target
 ConditionPathExists=/etc/5g-nwdaf-infrastructure/active/network
 
@@ -11,6 +10,3 @@ Type=oneshot
 ExecStartPre=/lib/systemd/systemd-networkd-wait-online --quiet --timeout=30
 ExecStart=/usr/local/libexec/5g-nwdaf-infrastructure/network-setup
 RemainAfterExit=yes
-
-[Install]
-WantedBy=multi-user.target

@@ -20,11 +20,14 @@ trap rollback EXIT
 stage_config_all "$config_dir" "$hash"
 "$HOST_ROOT/scripts/host/dataset-stage.sh" apply "$testbed" "$config_dir"
 
-# Staging can overlap a base-box unattended-upgrade on an older VM.  Reconcile
-# the real interface state immediately before any NF binds its topology address.
+# Persistent Netplan aliases should already match the active config.  Reconcile
+# only migration or runtime drift before any NF binds its topology address.
 for machine in "${MACHINES[@]}"; do
-  echo "NETWORK $machine"
-  vssh "$machine" "sudo systemctl restart 5g-nwdaf-network.service"
+  echo "NETWORK VERIFY $machine"
+  if ! vssh "$machine" "sudo /usr/local/libexec/5g-nwdaf-infrastructure/network-setup --verify"; then
+    echo "NETWORK RECONCILE $machine"
+    vssh "$machine" "sudo systemctl restart 5g-nwdaf-network.service"
+  fi
 done
 
 "$HOST_ROOT/scripts/host/gtp5g-preflight.sh"

@@ -39,6 +39,11 @@ directories, introduces representative ADRF storage/database, SMF timing,
 UERANSIM mode, PyAnLF device/delivery, endpoint, callback, GTP, Consumer schema,
 and manifest drift, and proves that `config-check.py` rejects every case.
 
+`network-config-smoke.py` exercises the Guest Netplan renderer without changing
+Host or VM networking. It covers deterministic Core alias grouping, role
+rejection, duplicate aliases, unowned cross-interface collisions, and a
+previous-fragment address migration with stale alias detection.
+
 `dataset.py` resolves the manifest-selected traffic profiles against
 `testbed.yaml`, the effective native config, and the seed model, then builds or
 audits ignored, content-addressed Parquet sets. The audit distinguishes

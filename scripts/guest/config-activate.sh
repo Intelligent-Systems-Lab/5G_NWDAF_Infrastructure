@@ -35,7 +35,7 @@ temporary="$root/.active.$$"
 ln -s "$staged" "$temporary"
 mv -Tf "$temporary" "$root/active"
 if ! systemctl restart 5g-nwdaf-network.service; then
-  echo "network activation failed; restoring previous config" >&2
+  echo "network activation failed; restoring previous config and persistent aliases" >&2
   if [ -n "$old_target" ]; then
     ln -s "$old_target" "$temporary"
     mv -Tf "$temporary" "$root/active"

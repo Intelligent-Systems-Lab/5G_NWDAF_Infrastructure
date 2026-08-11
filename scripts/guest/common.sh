@@ -5,10 +5,9 @@ machine=${1:?usage: common.sh core|path-a|path-b}
 case "$machine" in core|path-a|path-b) ;; *) echo "invalid machine: $machine" >&2; exit 2;; esac
 test "$(id -u)" -eq 0 || { echo "common setup requires root" >&2; exit 1; }
 
-# The base box enables randomized unattended upgrades.  needrestart may restart
-# systemd-networkd after those upgrades and flush the topology aliases while an
-# experiment is running.  Package changes in these reproducible guests are
-# owned by explicit provisioning instead.
+# The base box enables randomized unattended upgrades.  Package changes and a
+# needrestart-driven networkd restart can still interrupt a bounded experiment,
+# so changes in these reproducible guests are owned by explicit provisioning.
 systemctl disable --now apt-daily.timer apt-daily-upgrade.timer >/dev/null 2>&1 || true
 while systemctl is-active --quiet apt-daily.service || \
       systemctl is-active --quiet apt-daily-upgrade.service; do
@@ -42,6 +41,7 @@ printf '%s\n' "$machine" >/etc/5g-nwdaf-infrastructure/machine
 
 install -m 0755 /opt/5g-nwdaf-infrastructure/source/scripts/guest/service-run.sh /usr/local/libexec/5g-nwdaf-infrastructure/service-run
 install -m 0755 /opt/5g-nwdaf-infrastructure/source/scripts/guest/config-activate.sh /usr/local/libexec/5g-nwdaf-infrastructure/config-activate
+install -m 0755 /opt/5g-nwdaf-infrastructure/source/scripts/guest/network-config.py /usr/local/libexec/5g-nwdaf-infrastructure/network-config
 install -m 0755 /opt/5g-nwdaf-infrastructure/source/scripts/guest/network-setup.sh /usr/local/libexec/5g-nwdaf-infrastructure/network-setup
 install -m 0755 /opt/5g-nwdaf-infrastructure/source/scripts/guest/dataset-activate.sh /usr/local/libexec/5g-nwdaf-infrastructure/dataset-activate
 install -m 0755 /opt/5g-nwdaf-infrastructure/source/tools/nwdaf-consumer/consumer.py /usr/local/libexec/5g-nwdaf-infrastructure/nwdaf-consumer
@@ -52,4 +52,9 @@ install -m 0644 /opt/5g-nwdaf-infrastructure/source/scripts/guest/systemd/5g-nwd
 systemctl daemon-reload
 systemctl disable 5g-nwdaf-stack.target >/dev/null 2>&1 || true
 systemctl disable 5g-nwdaf-consumer.service >/dev/null 2>&1 || true
-systemctl enable --now 5g-nwdaf-network.service
+systemctl disable 5g-nwdaf-network.service >/dev/null 2>&1 || true
+if [ -f "/etc/5g-nwdaf-infrastructure/active/network/$machine.yaml" ]; then
+  systemctl restart 5g-nwdaf-network.service
+else
+  systemctl stop 5g-nwdaf-network.service >/dev/null 2>&1 || true
+fi

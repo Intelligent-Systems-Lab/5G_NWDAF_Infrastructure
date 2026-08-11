@@ -22,7 +22,7 @@ mongo_host=${mongo_uri#mongodb://}
 mongo_host=${mongo_host%%:*}
 if ! ip -o -4 address show | awk '{sub(/\/.*/, "", $4); print $4}' | grep -Fxq "$mongo_host"; then
   echo "MongoDB bind address $mongo_host is not active in Core; reconcile the selected config network before reset" >&2
-  echo "repair: sudo systemctl restart 5g-nwdaf-network.service" >&2
+  echo "repair: sudo /usr/local/libexec/5g-nwdaf-infrastructure/network-setup --verify || sudo systemctl restart 5g-nwdaf-network.service" >&2
   exit 1
 fi
 
