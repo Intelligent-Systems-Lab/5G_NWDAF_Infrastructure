@@ -97,6 +97,50 @@ verify_effective_addresses() {
   fi
 }
 
+address_is_present() {
+  local cidr=$1 device=$2
+  ip -o -4 address show dev "$device" 2>/dev/null | awk -v target="$cidr" '
+    $4 == target { found = 1 }
+    END { exit(found ? 0 : 1) }
+  '
+}
+
+verify_rollback_state() {
+  local cidr device
+  while IFS=$'\t' read -r cidr device; do
+    [ -n "$cidr" ] && [ -n "$device" ] || continue
+    address_is_present "$cidr" "$device" || {
+      echo "rollback alias $cidr is missing from $device" >&2
+      return 1
+    }
+  done < <(jq -r '.previousAliases[] | [.cidr, .device] | @tsv' "$plan")
+
+  if [ -f "$legacy_state" ]; then
+    while IFS=$'\t' read -r cidr device; do
+      [ -n "$cidr" ] && [ -n "$device" ] || continue
+      address_is_present "$cidr" "$device" || {
+        echo "legacy rollback alias $cidr is missing from $device" >&2
+        return 1
+      }
+    done <"$legacy_state"
+  fi
+
+  while IFS=$'\t' read -r cidr device; do
+    [ -n "$cidr" ] && [ -n "$device" ] || continue
+    if jq -e --arg cidr "$cidr" --arg device "$device" \
+      '.previousAliases[] | select(.cidr == $cidr and .device == $device)' "$plan" >/dev/null; then
+      continue
+    fi
+    if [ -f "$legacy_state" ] && grep -Fqx "$cidr"$'\t'"$device" "$legacy_state"; then
+      continue
+    fi
+    if address_is_present "$cidr" "$device"; then
+      echo "candidate alias $cidr remains after rollback on $device" >&2
+      return 1
+    fi
+  done < <(jq -r '.aliases[] | [.cidr, .device] | @tsv' "$plan")
+}
+
 reconfigure_affected_devices() {
   local device default_device
   default_device=$(ip -4 route show default | awk 'NR == 1 {for (i = 1; i <= NF; i++) if ($i == "dev") {print $(i + 1); exit}}')
@@ -122,20 +166,34 @@ reconfigure_affected_devices() {
 }
 
 restore_previous_fragment() {
-  set +e
+  local device cidr
   if [ "$had_previous" = true ]; then
     install -m 0600 "$previous" "$fragment.rollback"
     mv -f "$fragment.rollback" "$fragment"
   else
     rm -f "$fragment"
   fi
-  netplan generate
-  networkctl reload
+  /usr/sbin/netplan generate || return 1
+  /usr/bin/networkctl reload || return 1
   while IFS= read -r device; do
     [ -n "$device" ] || continue
-    ip link show dev "$device" >/dev/null 2>&1 && networkctl reconfigure "$device"
+    if ip link show dev "$device" >/dev/null 2>&1; then
+      /usr/bin/networkctl reconfigure "$device" || true
+    fi
   done < <(plan_devices | LC_ALL=C sort -u)
-  set -e
+
+  if [ -f "$legacy_state" ]; then
+    while IFS=$'\t' read -r cidr device; do
+      [ -n "$cidr" ] && [ -n "$device" ] || continue
+      address_is_present "$cidr" "$device" || ip address add "$cidr" dev "$device"
+    done <"$legacy_state"
+  fi
+
+  for _attempt in $(seq 1 10); do
+    verify_rollback_state >/dev/null 2>&1 && return 0
+    sleep 1
+  done
+  verify_rollback_state
 }
 
 cleanup() {
@@ -143,7 +201,9 @@ cleanup() {
   trap - EXIT
   if [ "$status" -ne 0 ] && [ "$rollback_needed" = true ]; then
     echo "network reconciliation failed; restoring previous Netplan fragment" >&2
-    restore_previous_fragment
+    if ! restore_previous_fragment; then
+      echo "network rollback did not converge; manual repair is required" >&2
+    fi
   fi
   rm -rf "$temporary"
   exit "$status"
