@@ -2,6 +2,8 @@
 
 Idempotent VM setup, guest-local builds, config activation, and disabled-by-
 default systemd units live here. Guests never clone component branches.
+Core provisioning creates the absolute ADRF model-storage directory owned by
+the unprivileged `5g-nwdaf` runtime account before services can start.
 
 `subscriber-data.js` runs under Core's installed `mongosh`. It projects the
 committed compact full-core fixtures into the free5GC collections and limits

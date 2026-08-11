@@ -33,8 +33,14 @@ setup_mongodb() {
   install -d -o 5g-nwdaf -g 5g-nwdaf /var/lib/5g-nwdaf-infrastructure/mongodb
 }
 
+setup_runtime_storage() {
+  install -d -o 5g-nwdaf -g 5g-nwdaf \
+    /var/lib/5g-nwdaf-infrastructure/adrf \
+    /var/lib/5g-nwdaf-infrastructure/adrf/models
+}
+
 case "$action" in
-  setup) setup_mongodb; "$0" build ;;
+  setup) setup_mongodb; setup_runtime_storage; "$0" build ;;
   build)
     for mapping in \
       NFs/nrf:nrf NFs/nssf:nssf NFs/udr:udr NFs/udm:udm NFs/ausf:ausf \

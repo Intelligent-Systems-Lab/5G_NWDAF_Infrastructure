@@ -10,6 +10,7 @@ configuration:
           dns: {ipv4: 8.8.8.8, ipv6: "2001:4860:4860::8888"}
   plmnList: [{mcc: "466", mnc: "92"}]
   locality: dual-tai
+  nrfRegistrationEnabled: true
   pfcp:
     nodeID: 192.168.61.10
     listenAddr: 192.168.61.10
@@ -51,4 +52,3 @@ configuration:
   urrThreshold: 500000
   requestedUnit: 1000
 logger: {enable: true, level: info, reportCaller: false}
-

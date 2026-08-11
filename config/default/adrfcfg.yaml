@@ -11,5 +11,5 @@ configuration:
   heartbeatInterval: 10
   mongodb: {name: adrf, url: mongodb://192.168.57.18:27017}
   retrieval: {corrIdBatchSize: 100, oneIdPerFetch: true, snapshot: {enabled: true}}
+  mlModelStorage: {localDirectory: /var/lib/5g-nwdaf-infrastructure/adrf/models}
 logger: {enable: true, level: info, reportCaller: false}
-

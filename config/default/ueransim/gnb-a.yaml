@@ -8,5 +8,5 @@ ngapIp: 192.168.58.20
 gtpIp: 192.168.59.20
 amfConfigs: [{address: 192.168.58.10, port: 38412}]
 slices: [{sst: 1, sd: "0x010203"}]
+cellAccessType: nr
 ignoreStreamIds: true
-

@@ -59,6 +59,20 @@ def render(testbed, baseline, output, scenario):
         set_path(cfg, ["configuration", "mongodb", "url"], mongo_uri)
         write(output, filename, cfg)
 
+    adrf = read(output, "adrfcfg.yaml")
+    adrf_definition = core["adrf"]
+    set_path(
+        adrf,
+        ["configuration", "mongodb", "name"],
+        adrf_definition["mongodb"]["database"],
+    )
+    set_path(
+        adrf,
+        ["configuration", "mlModelStorage", "localDirectory"],
+        adrf_definition["modelStorage"]["localDirectory"],
+    )
+    write(output, "adrfcfg.yaml", adrf)
+
     udm = read(output, "udmcfg.yaml")
     group_id = testbed["mobileNetwork"]["internalGroupId"]
     udm["configuration"]["internalGroupIdentifiersRanges"] = [
@@ -85,6 +99,8 @@ def render(testbed, baseline, output, scenario):
 
     smf = read(output, "smfcfg.yaml")
     smf_cfg = smf["configuration"]
+    smf_cfg["nrfRegistrationEnabled"] = True
+    smf_cfg["urrPeriod"] = sampling
     smf_cfg["plmnList"] = [dict(plmn)]
     smf_cfg["snssaiInfos"][0]["sNssai"] = dict(snssai)
     smf_cfg["snssaiInfos"][0]["dnnInfos"][0]["dnn"] = testbed["mobileNetwork"]["dnn"]
@@ -128,7 +144,7 @@ def render(testbed, baseline, output, scenario):
         gnb.update({"mcc": plmn["mcc"], "mnc": plmn["mnc"], "tac": int(path["tai"]["tac"], 16),
                     "linkIp": path["gnb"]["n2"]["address"], "ngapIp": path["gnb"]["n2"]["address"],
                     "gtpIp": path["gnb"]["n3"]["address"], "amfConfigs": [{"address": core["amf"]["n2"]["address"], "port": core["amf"]["n2"]["port"]}],
-                    "slices": [dict(ueransim_snssai)]})
+                    "slices": [dict(ueransim_snssai)], "cellAccessType": "nr"})
         write(output, "ueransim/gnb-{}.yaml".format(name), gnb)
 
     for index in range(1, 7):
@@ -141,6 +157,7 @@ def render(testbed, baseline, output, scenario):
         ue["sessions"][0]["slice"] = dict(ueransim_snssai)
         ue["configured-nssai"] = [dict(ueransim_snssai)]
         ue["default-nssai"] = [dict(ueransim_snssai)]
+        ue["useNamespace"] = False
         write(output, "ueransim/ue{}.yaml".format(index), ue)
 
     nwdaf_internal_roots = {}
@@ -175,6 +192,7 @@ def render(testbed, baseline, output, scenario):
 
     backends = testbed["analytics"]["backends"]
     runtime_services = testbed["mlRuntime"]["services"]
+    delivery = testbed["operations"]["pyanlfDelivery"]
     for name in ("a", "b"):
         anlf_name = "pyanlf-" + name
         mtlf_name = "pymtlf-" + name
@@ -184,6 +202,7 @@ def render(testbed, baseline, output, scenario):
         anlf["server"]["binding_host"] = "0.0.0.0"
         anlf["server"]["port"] = runtime_services[anlf_name]["containerPort"]
         anlf["containing_nwdaf"]["internal_api_root"] = nwdaf_internal_roots[name]["anlf"]
+        anlf["model"]["device"] = runtime_services[anlf_name]["device"]
         anlf["model"]["artifact_download"]["allowed_origins"] = [
             endpoint_uri(mtlf_endpoint), endpoint_uri(backends["pymtlf-c"]),
             endpoint_uri(core["adrf"]["sbi"])
@@ -192,8 +211,27 @@ def render(testbed, baseline, output, scenario):
         anlf["collection"]["callback_base_uri"] = endpoint_uri(anlf_endpoint)
         anlf["mongodb"]["url"] = mongo_uri
         anlf["analytics"]["ue_communication"]["sampling_interval_seconds"] = sampling
+        anlf["analytics"]["report_delivery"] = {
+            "request_timeout_seconds": delivery["analyticsReportTimeoutSeconds"],
+            "max_attempts": 4,
+            "retry_interval_seconds": 1,
+            "worker_stop_timeout_seconds": delivery[
+                "analyticsWorkerStopTimeoutSeconds"
+            ],
+        }
         anlf["accuracy_monitor"]["ground_truth_check_interval_seconds"] = sampling
         anlf["accuracy_monitor"]["report_period_seconds"] = monitoring["reportPeriodSeconds"]
+        anlf["accuracy_monitor"]["report_delivery"] = {
+            "request_timeout_seconds": delivery["accuracyReportTimeoutSeconds"],
+            "max_attempts": 3,
+            "retry_interval_seconds": 1,
+        }
+        anlf["runtime_completion_delivery"] = {
+            "request_timeout_seconds": delivery[
+                "runtimeCompletionTimeoutSeconds"
+            ],
+            "retry_interval_seconds": 1,
+        }
         write(output, anlf_name + ".yaml", anlf)
 
         mtlf = read(output, mtlf_name + ".yaml")

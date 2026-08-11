@@ -25,3 +25,14 @@ make subscriptions-stop
 ```
 
 These commands do not start or stop VMs and do not own the 5GC service stack.
+
+Validate a config without contacting NRF or creating runtime state with:
+
+```sh
+python3 tools/nwdaf-consumer/consumer.py \
+  --config config/default/consumer.yaml validate
+```
+
+Validation rejects missing and unknown fields, malformed PLMN/TAI values,
+non-HTTP endpoints, non-IP bind addresses, duplicate path names, unsupported
+reporting methods, and relative state paths.

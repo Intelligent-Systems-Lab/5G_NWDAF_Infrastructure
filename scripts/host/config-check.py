@@ -4,6 +4,7 @@
 import argparse
 import ipaddress
 import json
+import subprocess
 import sys
 from pathlib import Path
 
@@ -60,6 +61,31 @@ def check_pymtlf_data_paths(check, name, config):
             "{} {} must be inside {}".format(name, label, root),
             path != root and root in path.parents,
         )
+
+
+def check_consumer_native(check, config_path):
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(ROOT / "tools" / "nwdaf-consumer" / "consumer.py"),
+            "--config",
+            str(config_path),
+            "validate",
+        ],
+        cwd=ROOT,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    detail = (result.stderr or result.stdout).strip()
+    valid = result.returncode == 0
+    check.true(
+        "consumer native validation failed{}".format(
+            ": " + detail if detail else ""
+        ),
+        valid,
+    )
+    return valid
 
 
 def check_subscriber_fixtures(check, testbed, config_dir):
@@ -136,6 +162,45 @@ def main():
     check.true(
         "hostSafety.swapPolicy must be 'warn' or 'require'",
         host_safety.get("swapPolicy") in ("warn", "require"),
+    )
+    delivery = testbed.get("operations", {}).get("pyanlfDelivery", {})
+    delivery_limits = {
+        "analyticsReportTimeoutSeconds": 300,
+        "analyticsWorkerStopTimeoutSeconds": 3600,
+        "accuracyReportTimeoutSeconds": 300,
+        "runtimeCompletionTimeoutSeconds": 300,
+    }
+    for field, maximum in delivery_limits.items():
+        value = delivery.get(field)
+        check.true(
+            "operations.pyanlfDelivery.{} must be an integer from 1 to {}".format(
+                field, maximum
+            ),
+            isinstance(value, int)
+            and not isinstance(value, bool)
+            and 0 < value <= maximum,
+        )
+    check.true(
+        "PyAnLF analytics worker stop timeout must cover request timeout",
+        isinstance(delivery.get("analyticsWorkerStopTimeoutSeconds"), int)
+        and isinstance(delivery.get("analyticsReportTimeoutSeconds"), int)
+        and delivery["analyticsWorkerStopTimeoutSeconds"]
+        >= delivery["analyticsReportTimeoutSeconds"],
+    )
+
+    adrf_definition = testbed.get("coreServices", {}).get("adrf", {})
+    adrf_database = adrf_definition.get("mongodb", {}).get("database")
+    check.true(
+        "coreServices.adrf.mongodb.database must be non-empty",
+        isinstance(adrf_database, str) and bool(adrf_database),
+    )
+    storage_value = adrf_definition.get("modelStorage", {}).get("localDirectory")
+    storage_path = Path(storage_value) if isinstance(storage_value, str) else Path(".")
+    runtime_root = Path("/var/lib/5g-nwdaf-infrastructure")
+    check.true("ADRF model storage must be absolute", storage_path.is_absolute())
+    check.true(
+        "ADRF model storage must remain inside {}".format(runtime_root),
+        storage_path != runtime_root and runtime_root in storage_path.parents,
     )
 
     expected_placement = {
@@ -302,6 +367,42 @@ def main():
         check.equal(filename + " MongoDB database", mongodb["name"], mongo["database"])
     adrf_mongodb = load_yaml(config_dir / "adrfcfg.yaml")["configuration"]["mongodb"]
     check.equal("ADRF MongoDB URL", adrf_mongodb["url"], mongo_uri)
+    check.equal("ADRF MongoDB database", adrf_mongodb["name"], adrf_database)
+    adrf = load_yaml(config_dir / "adrfcfg.yaml")["configuration"]
+    check.equal("ADRF name", adrf.get("adrfName"), "ADRF")
+    check.equal(
+        "ADRF service names",
+        adrf.get("serviceNameList"),
+        ["nadrf-mlmodelmanagement", "nadrf-datamanagement"],
+    )
+    check.equal(
+        "ADRF PLMN and S-NSSAI",
+        adrf.get("plmnSupportList"),
+        [{
+            "plmnId": dict(testbed["mobileNetwork"]["plmn"]),
+            "snssaiList": [dict(testbed["mobileNetwork"]["snssai"])],
+        }],
+    )
+    check.equal("ADRF locality", adrf.get("locality"), "dual-tai")
+    check.true(
+        "ADRF heartbeat interval must be positive",
+        isinstance(adrf.get("heartbeatInterval"), int)
+        and adrf["heartbeatInterval"] > 0,
+    )
+    check.equal(
+        "ADRF retrieval contract",
+        adrf.get("retrieval"),
+        {
+            "corrIdBatchSize": 100,
+            "oneIdPerFetch": True,
+            "snapshot": {"enabled": True},
+        },
+    )
+    check.equal(
+        "ADRF model storage",
+        adrf.get("mlModelStorage", {}).get("localDirectory"),
+        storage_value,
+    )
 
     udm = load_yaml(config_dir / "udmcfg.yaml")["configuration"]
     group_id = testbed["mobileNetwork"]["internalGroupId"]
@@ -318,6 +419,8 @@ def main():
 
     smf = load_yaml(config_dir / "smfcfg.yaml")["configuration"]
     check.equal("SMF N4", smf["pfcp"]["listenAddr"], testbed["coreServices"]["smf"]["n4"]["address"])
+    check.equal("SMF NRF registration", smf.get("nrfRegistrationEnabled"), True)
+    check.equal("SMF URR period", smf.get("urrPeriod"), sampling)
     ueransim_snssai = dict(testbed["mobileNetwork"]["snssai"])
     sd = str(ueransim_snssai["sd"])
     ueransim_snssai["sd"] = sd if sd.startswith("0x") else "0x" + sd
@@ -363,6 +466,7 @@ def main():
         check.equal("gNB {} N2".format(name), gnb["ngapIp"], path["gnb"]["n2"]["address"])
         check.equal("gNB {} N3".format(name), gnb["gtpIp"], path["gnb"]["n3"]["address"])
         check.equal("gNB {} S-NSSAI".format(name), gnb["slices"], [ueransim_snssai])
+        check.equal("gNB {} cell access type".format(name), gnb.get("cellAccessType"), "nr")
 
     for index in range(1, 7):
         ue = load_yaml(config_dir / "ueransim" / ("ue{}.yaml".format(index)))
@@ -372,6 +476,7 @@ def main():
         check.equal("UE{} session S-NSSAI".format(index), ue["sessions"][0]["slice"], ueransim_snssai)
         check.equal("UE{} configured S-NSSAI".format(index), ue["configured-nssai"], [ueransim_snssai])
         check.equal("UE{} default S-NSSAI".format(index), ue["default-nssai"], [ueransim_snssai])
+        check.equal("UE{} network namespace".format(index), ue.get("useNamespace"), False)
         check.equal(
             "UE{} UAC access identities".format(index), ue.get("uacAic"),
             {"mps": False, "mcs": False},
@@ -437,6 +542,7 @@ def main():
         mtlf_endpoint = backends[mtlf_name]
         check.equal(anlf_name + " bind", anlf["server"]["binding_host"], "0.0.0.0")
         check.equal(anlf_name + " container port", anlf["server"]["port"], services[anlf_name]["containerPort"])
+        check.equal(anlf_name + " model device", anlf["model"].get("device"), services[anlf_name]["device"])
         expected_anlf_server = nwdaf_native[name]["anlf"]["server"]
         check.equal(
             anlf_name + " containing NWDAF",
@@ -458,8 +564,39 @@ def main():
         check.equal(anlf_name + " MongoDB URL", anlf["mongodb"]["url"], mongo_uri)
         check.equal(anlf_name + " MongoDB database", anlf["mongodb"]["database"], mongo["database"])
         check.equal(anlf_name + " sampling", anlf["analytics"]["ue_communication"]["sampling_interval_seconds"], sampling)
+        check.equal(
+            anlf_name + " analytics report delivery",
+            anlf["analytics"].get("report_delivery"),
+            {
+                "request_timeout_seconds": delivery["analyticsReportTimeoutSeconds"],
+                "max_attempts": 4,
+                "retry_interval_seconds": 1,
+                "worker_stop_timeout_seconds": delivery[
+                    "analyticsWorkerStopTimeoutSeconds"
+                ],
+            },
+        )
         check.equal(anlf_name + " ground-truth interval", anlf["accuracy_monitor"]["ground_truth_check_interval_seconds"], sampling)
         check.equal(anlf_name + " accuracy report period", anlf["accuracy_monitor"]["report_period_seconds"], monitoring["reportPeriodSeconds"])
+        check.equal(
+            anlf_name + " accuracy report delivery",
+            anlf["accuracy_monitor"].get("report_delivery"),
+            {
+                "request_timeout_seconds": delivery["accuracyReportTimeoutSeconds"],
+                "max_attempts": 3,
+                "retry_interval_seconds": 1,
+            },
+        )
+        check.equal(
+            anlf_name + " runtime completion delivery",
+            anlf.get("runtime_completion_delivery"),
+            {
+                "request_timeout_seconds": delivery[
+                    "runtimeCompletionTimeoutSeconds"
+                ],
+                "retry_interval_seconds": 1,
+            },
+        )
         check.true(
             anlf_name + " report period cannot collect minimum matched predictions",
             monitoring["reportPeriodSeconds"] // sampling
@@ -663,6 +800,8 @@ def main():
         )
 
     consumer = load_yaml(config_dir / "consumer.yaml")
+    if not check_consumer_native(check, config_dir / "consumer.yaml"):
+        return finish(check, testbed_path, config_dir)
     check.equal("consumer NRF", consumer["nrfUri"], nrf_uri)
     check.equal(
         "consumer requester NF type",

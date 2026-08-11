@@ -2,8 +2,10 @@
 """Discover two scoped NWDAFs and own their subscription resources."""
 
 import argparse
+import ipaddress
 import json
 import os
+import re
 import tempfile
 import threading
 import time
@@ -25,6 +27,135 @@ def now():
 def load_yaml(path):
     with open(path, "r", encoding="utf-8") as stream:
         return yaml.safe_load(stream)
+
+
+def require_mapping(value, label):
+    if not isinstance(value, dict):
+        raise ValueError("{} must be a mapping".format(label))
+    return value
+
+
+def require_exact_keys(value, label, expected):
+    value = require_mapping(value, label)
+    missing = sorted(set(expected) - set(value))
+    unknown = sorted(set(value) - set(expected))
+    if missing:
+        raise ValueError("{} missing fields: {}".format(label, ", ".join(missing)))
+    if unknown:
+        raise ValueError("{} unknown fields: {}".format(label, ", ".join(unknown)))
+    return value
+
+
+def require_non_empty_string(value, label):
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError("{} must be a non-empty string".format(label))
+    return value.strip()
+
+
+def require_http_uri(value, label, require_path=False, require_port=False):
+    value = require_non_empty_string(value, label)
+    parsed = urlparse(value)
+    if parsed.scheme not in ("http", "https") or not parsed.hostname:
+        raise ValueError("{} must be an absolute HTTP URI".format(label))
+    try:
+        port = parsed.port
+    except ValueError as error:
+        raise ValueError("{} has an invalid port: {}".format(label, error))
+    if port is not None and not 0 < port < 65536:
+        raise ValueError("{} has an invalid port".format(label))
+    if require_port and port is None:
+        raise ValueError("{} must include an explicit port".format(label))
+    if parsed.username or parsed.password or parsed.query or parsed.fragment:
+        raise ValueError("{} must not contain credentials, query, or fragment".format(label))
+    if require_path and (not parsed.path or parsed.path == "/"):
+        raise ValueError("{} must include a callback path".format(label))
+    return value
+
+
+def validate_config(config):
+    config = require_exact_keys(
+        config,
+        "config",
+        {
+            "nrfUri",
+            "requesterNfType",
+            "discovery",
+            "target",
+            "callback",
+            "reporting",
+            "stateFile",
+        },
+    )
+    require_http_uri(config["nrfUri"], "nrfUri")
+    require_non_empty_string(config["requesterNfType"], "requesterNfType")
+
+    discovery = require_exact_keys(
+        config["discovery"],
+        "discovery",
+        {"targetNfType", "serviceName", "event"},
+    )
+    for field in ("targetNfType", "serviceName", "event"):
+        require_non_empty_string(discovery[field], "discovery." + field)
+
+    target = require_exact_keys(
+        config["target"],
+        "target",
+        {"plmn", "internalGroupId", "paths"},
+    )
+    plmn = require_exact_keys(target["plmn"], "target.plmn", {"mcc", "mnc"})
+    if not re.fullmatch(r"[0-9]{3}", str(plmn["mcc"])):
+        raise ValueError("target.plmn.mcc must contain three digits")
+    if not re.fullmatch(r"[0-9]{2,3}", str(plmn["mnc"])):
+        raise ValueError("target.plmn.mnc must contain two or three digits")
+    require_non_empty_string(target["internalGroupId"], "target.internalGroupId")
+    paths = target["paths"]
+    if not isinstance(paths, list) or not paths:
+        raise ValueError("target.paths must be a non-empty list")
+    names = []
+    for index, path in enumerate(paths):
+        label = "target.paths[{}]".format(index)
+        path = require_exact_keys(path, label, {"name", "tac"})
+        names.append(require_non_empty_string(path["name"], label + ".name"))
+        if not re.fullmatch(r"[0-9A-Fa-f]{6}", str(path["tac"])):
+            raise ValueError("{}.tac must contain six hexadecimal digits".format(label))
+    if len(names) != len(set(names)):
+        raise ValueError("target.paths names must be unique")
+
+    callback = require_exact_keys(
+        config["callback"],
+        "callback",
+        {"bindAddress", "advertisedUri"},
+    )
+    try:
+        ipaddress.ip_address(callback["bindAddress"])
+    except (TypeError, ValueError):
+        raise ValueError("callback.bindAddress must be an IP address")
+    require_http_uri(
+        callback["advertisedUri"],
+        "callback.advertisedUri",
+        require_path=True,
+        require_port=True,
+    )
+
+    reporting = require_exact_keys(
+        config["reporting"],
+        "reporting",
+        {"method", "periodSeconds"},
+    )
+    if reporting["method"] != "PERIODIC":
+        raise ValueError("reporting.method must be PERIODIC")
+    period = reporting["periodSeconds"]
+    if not isinstance(period, int) or isinstance(period, bool) or period <= 0:
+        raise ValueError("reporting.periodSeconds must be a positive integer")
+
+    state_file = require_non_empty_string(config["stateFile"], "stateFile")
+    state_path = Path(state_file)
+    if not state_path.is_absolute():
+        raise ValueError("stateFile must be absolute")
+    state_root = Path("/var/lib/5g-nwdaf-infrastructure/consumer")
+    if state_path == state_root or state_root not in state_path.parents:
+        raise ValueError("stateFile must remain inside {}".format(state_root))
+    return config
 
 
 def request_json(method, url, body=None, timeout=30):
@@ -263,9 +394,15 @@ def run(config, store):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", required=True)
-    parser.add_argument("command", choices=("run", "delete", "status"))
+    parser.add_argument("command", choices=("run", "delete", "status", "validate"))
     args = parser.parse_args()
-    config = load_yaml(args.config)
+    try:
+        config = validate_config(load_yaml(args.config))
+    except (OSError, ValueError, yaml.YAMLError) as error:
+        parser.error(str(error))
+    if args.command == "validate":
+        print("OK config={}".format(Path(args.config).resolve()))
+        return 0
     store = StateStore(config["stateFile"])
     if args.command == "run":
         run(config, store)

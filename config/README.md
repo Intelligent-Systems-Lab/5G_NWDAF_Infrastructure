@@ -18,3 +18,8 @@ training epochs/rounds, preparation window, and traffic profile identities.
 Topology and component endpoints still come from `testbed.yaml`. Generated sets
 remain ignored and must be selected as one complete `CONFIG_DIR`; do not mix
 individual files from different scenarios.
+
+`webuicfg.yaml` is retained as an optional upstream-compatible asset, but
+WebConsole is not part of the current placement or validation contract. Do not
+treat its presence as evidence that WebConsole or billing support has been
+qualified for this testbed.

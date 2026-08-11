@@ -77,6 +77,78 @@ def main():
             "UPF a GTP interface",
         ),
         (
+            "adrf-model-storage",
+            "adrfcfg.yaml",
+            lambda value: value["configuration"]["mlModelStorage"].update(
+                {"localDirectory": "./storage/models"}
+            ),
+            "ADRF model storage",
+        ),
+        (
+            "adrf-database",
+            "adrfcfg.yaml",
+            lambda value: value["configuration"]["mongodb"].update(
+                {"name": "free5gc"}
+            ),
+            "ADRF MongoDB database",
+        ),
+        (
+            "smf-nrf-registration",
+            "smfcfg.yaml",
+            lambda value: value["configuration"].update(
+                {"nrfRegistrationEnabled": False}
+            ),
+            "SMF NRF registration",
+        ),
+        (
+            "smf-urr-period",
+            "smfcfg.yaml",
+            lambda value: value["configuration"].update({"urrPeriod": 31}),
+            "SMF URR period",
+        ),
+        (
+            "gnb-cell-access-type",
+            "ueransim/gnb-a.yaml",
+            lambda value: value.update({"cellAccessType": "nr-leo"}),
+            "gNB a cell access type",
+        ),
+        (
+            "ue-network-namespace",
+            "ueransim/ue1.yaml",
+            lambda value: value.update({"useNamespace": True}),
+            "UE1 network namespace",
+        ),
+        (
+            "pyanlf-device",
+            "pyanlf-a.yaml",
+            lambda value: value["model"].update({"device": "cuda:0"}),
+            "pyanlf-a model device",
+        ),
+        (
+            "pyanlf-accuracy-timeout",
+            "pyanlf-a.yaml",
+            lambda value: value["accuracy_monitor"]["report_delivery"].update(
+                {"request_timeout_seconds": 5}
+            ),
+            "pyanlf-a accuracy report delivery",
+        ),
+        (
+            "pyanlf-analytics-timeout",
+            "pyanlf-a.yaml",
+            lambda value: value["analytics"]["report_delivery"].update(
+                {"request_timeout_seconds": 5}
+            ),
+            "pyanlf-a analytics report delivery",
+        ),
+        (
+            "pyanlf-completion-timeout",
+            "pyanlf-a.yaml",
+            lambda value: value["runtime_completion_delivery"].update(
+                {"request_timeout_seconds": 5}
+            ),
+            "pyanlf-a runtime completion delivery",
+        ),
+        (
             "fl-public-url",
             "pymtlf-a.yaml",
             lambda value: value["federated_learning"].update(
@@ -91,6 +163,18 @@ def main():
                 {"advertisedUri": "http://192.168.57.32:9090/wrong"}
             ),
             "consumer callback URI",
+        ),
+        (
+            "consumer-unknown-field",
+            "consumer.yaml",
+            lambda value: value.update({"callbackPath": "/wrong"}),
+            "consumer native validation failed",
+        ),
+        (
+            "consumer-missing-field",
+            "consumer.yaml",
+            lambda value: value.pop("stateFile"),
+            "consumer native validation failed",
         ),
         (
             "manifest-baseline",

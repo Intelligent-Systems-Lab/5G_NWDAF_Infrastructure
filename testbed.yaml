@@ -113,6 +113,9 @@ coreServices:
     database: free5gc
   adrf:
     sbi: {network: sbi, address: 192.168.57.19, port: 9888}
+    mongodb: {database: adrf}
+    modelStorage:
+      localDirectory: /var/lib/5g-nwdaf-infrastructure/adrf/models
 
 paths:
   a:
@@ -208,4 +211,11 @@ consumer:
   reporting: {method: PERIODIC, periodSeconds: 30}
 
 security: {tls: false, oauth: false}
-operations: {clockSkewToleranceMs: 1000, journalMaxUseMiB: 512}
+operations:
+  clockSkewToleranceMs: 1000
+  journalMaxUseMiB: 512
+  pyanlfDelivery:
+    analyticsReportTimeoutSeconds: 120
+    analyticsWorkerStopTimeoutSeconds: 300
+    accuracyReportTimeoutSeconds: 120
+    runtimeCompletionTimeoutSeconds: 30

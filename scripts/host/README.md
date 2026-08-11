@@ -24,7 +24,8 @@ ignored config set. The config manifest records the scenario definition and
 canonical hash, so later commands reject a stale or mixed scenario/config set.
 
 `config-contract-smoke.py` copies a valid generated config into temporary
-directories, introduces representative reporting, endpoint, callback, GTP,
+directories, introduces representative ADRF storage/database, SMF timing,
+UERANSIM mode, PyAnLF device/delivery, endpoint, callback, GTP, Consumer schema,
 and manifest drift, and proves that `config-check.py` rejects every case.
 
 `dataset.py` resolves the manifest-selected traffic profiles against
