@@ -47,7 +47,7 @@ services:
       dockerfile: containers/ml/Dockerfile
       target: pyanlf
       args:
-        COMPONENT_REVISION: 5c305c7b69a50e9356bcfca8229f1a3cffd11a9a
+        COMPONENT_REVISION: 08798f15c3693027e00bc60dd53f74ebaa26c3a1
     environment: *environment
     cpus: 1.0
     mem_limit: 768m
@@ -70,7 +70,7 @@ services:
       dockerfile: containers/ml/Dockerfile
       target: pyanlf
       args:
-        COMPONENT_REVISION: 5c305c7b69a50e9356bcfca8229f1a3cffd11a9a
+        COMPONENT_REVISION: 08798f15c3693027e00bc60dd53f74ebaa26c3a1
     environment: *environment
     cpus: 1.0
     mem_limit: 768m
