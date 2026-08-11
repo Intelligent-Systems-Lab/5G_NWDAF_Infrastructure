@@ -10,7 +10,8 @@ SCENARIO ?= fixtures/full-core/scenarios/full-core-cat-transition.yaml
 	services-start services-status services-stop subscriptions-start \
 	subscriptions-status subscriptions-stop subscriber-data-validate \
 	subscriber-data-plan subscriber-data-apply subscriber-data-show \
-	subscriber-data-clear observe logs
+	subscriber-data-clear experiment-reset-plan experiment-reset \
+	experiment-reset-verify observe logs
 
 help:
 	@echo "5G NWDAF Infrastructure"
@@ -26,6 +27,7 @@ help:
 	@echo "  make services-start | services-status | services-stop"
 	@echo "  make subscriber-data-validate | subscriber-data-plan | subscriber-data-apply | subscriber-data-show | subscriber-data-clear"
 	@echo "  make subscriptions-start | subscriptions-status | subscriptions-stop"
+	@echo "  make experiment-reset-plan | experiment-reset RESET_CONFIRM=<scenario> | experiment-reset-verify"
 	@echo "  make observe | logs"
 
 preflight:
@@ -118,6 +120,15 @@ subscriptions-status:
 
 subscriptions-stop:
 	@scripts/host/subscriptions-stop.sh
+
+experiment-reset-plan:
+	@scripts/host/experiment-reset.sh plan "$(TESTBED)" "$(CONFIG_DIR)"
+
+experiment-reset:
+	@RESET_CONFIRM="$(RESET_CONFIRM)" scripts/host/experiment-reset.sh apply "$(TESTBED)" "$(CONFIG_DIR)"
+
+experiment-reset-verify:
+	@scripts/host/experiment-reset.sh verify "$(TESTBED)" "$(CONFIG_DIR)"
 
 observe:
 	@scripts/host/observe.sh

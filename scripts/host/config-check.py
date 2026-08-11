@@ -6,6 +6,7 @@ import ipaddress
 import json
 import subprocess
 import sys
+import uuid
 from pathlib import Path
 
 from configlib import (
@@ -44,6 +45,20 @@ class Check:
 
 def uri(host, port):
     return "http://{}:{}".format(host, port)
+
+
+def is_lowercase_uuid4(value):
+    if not isinstance(value, str) or value != value.lower():
+        return False
+    try:
+        parsed = uuid.UUID(value)
+    except (ValueError, AttributeError):
+        return False
+    return (
+        str(parsed) == value
+        and parsed.version == 4
+        and parsed.variant == uuid.RFC_4122
+    )
 
 
 def check_pymtlf_data_paths(check, name, config):
@@ -189,6 +204,20 @@ def main():
     )
 
     adrf_definition = testbed.get("coreServices", {}).get("adrf", {})
+    adrf_instance_id = adrf_definition.get("nfInstanceId")
+    check.true(
+        "coreServices.adrf.nfInstanceId must be a lowercase UUIDv4",
+        is_lowercase_uuid4(adrf_instance_id),
+    )
+    analytics_instance_ids = [
+        definition.get("nfInstanceId")
+        for definition in testbed.get("analytics", {}).values()
+        if isinstance(definition, dict)
+    ]
+    check.true(
+        "ADRF NF instance ID must be unique across the testbed",
+        adrf_instance_id not in analytics_instance_ids,
+    )
     adrf_database = adrf_definition.get("mongodb", {}).get("database")
     check.true(
         "coreServices.adrf.mongodb.database must be non-empty",
@@ -369,6 +398,11 @@ def main():
     check.equal("ADRF MongoDB URL", adrf_mongodb["url"], mongo_uri)
     check.equal("ADRF MongoDB database", adrf_mongodb["name"], adrf_database)
     adrf = load_yaml(config_dir / "adrfcfg.yaml")["configuration"]
+    check.equal(
+        "ADRF NF instance ID",
+        adrf.get("nfInstanceId"),
+        adrf_instance_id,
+    )
     check.equal("ADRF name", adrf.get("adrfName"), "ADRF")
     check.equal(
         "ADRF service names",

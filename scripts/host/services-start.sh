@@ -27,6 +27,8 @@ for machine in "${MACHINES[@]}"; do
   vssh "$machine" "sudo systemctl restart 5g-nwdaf-network.service"
 done
 
+"$HOST_ROOT/scripts/host/gtp5g-preflight.sh"
+
 start_unit core mongodb
 start_unit core nrf
 for unit in nssf udr udm ausf pcf amf; do start_unit core "$unit"; done

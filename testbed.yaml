@@ -112,6 +112,7 @@ coreServices:
     endpoint: {network: sbi, address: 192.168.57.18, port: 27017}
     database: free5gc
   adrf:
+    nfInstanceId: a0494f77-36db-4639-9f6f-e3e71fb5bfe6
     sbi: {network: sbi, address: 192.168.57.19, port: 9888}
     mongodb: {database: adrf}
     modelStorage:

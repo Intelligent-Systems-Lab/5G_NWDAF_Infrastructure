@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-path_name=${1:?usage: path.sh A|B setup|build}
+path_name=${1:?usage: path.sh A|B setup|build|kernel}
 action=${2:-setup}
 case "$path_name" in A|B) ;; *) echo "path must be A or B" >&2; exit 2;; esac
 root=/opt/5g-nwdaf-infrastructure
@@ -27,6 +27,7 @@ build_gtp5g() {
 
 case "$action" in
   setup) "$0" "$path_name" build ;;
+  kernel) build_gtp5g ;;
   build)
     build_gtp5g
     stage NFs/upf upf
@@ -39,5 +40,5 @@ case "$action" in
     cmake -S "$work_root/ueransim" -B "$work_root/ueransim/build" -G Ninja -DCMAKE_BUILD_TYPE=Release
     cmake --build "$work_root/ueransim/build"
     ;;
-  *) echo "usage: path.sh A|B setup|build" >&2; exit 2;;
+  *) echo "usage: path.sh A|B setup|build|kernel" >&2; exit 2;;
 esac

@@ -153,6 +153,19 @@ Go components use Go 1.26.2; gtp5g is compiled against the running Path kernel;
 UERANSIM is compiled independently inside both Path VMs. Provisioning records
 no experiment run and starts no experiment unit at boot.
 
+`services-start` checks both Path VMs before starting MongoDB or any NF. The
+installed gtp5g module must have vermagic matching the currently running guest
+kernel and must load successfully. This catches a guest kernel update that left
+only an older module build installed. Repair only that kernel dependency inside
+the affected Path VM, then retry service startup:
+
+```sh
+sudo /opt/5g-nwdaf-infrastructure/source/scripts/guest/path.sh A kernel
+sudo /opt/5g-nwdaf-infrastructure/source/scripts/guest/path.sh B kernel
+```
+
+The `kernel` action does not rebuild UPF, NWDAF, or UERANSIM.
+
 This is a compact functional baseline, not a capacity claim. The 40 GiB values
 are primary logical capacities because the selected Bento base disk cannot be
 shrunk by Vagrant. Dynamically allocated provider disks grow with writes and do
@@ -205,6 +218,60 @@ SUPIs and that group; it never drops a database or collection. The fixtures in
 uses Core's installed `mongosh` and does not depend on that repository or a
 Host Python environment. `config-check` rejects fixture PLMN, SUPI, group,
 K/OPc, AMF, S-NSSAI, or DNN mismatches before mutation.
+
+## Experiment-state reset
+
+ADRF uses one stable, topology-owned lowercase UUIDv4 from `testbed.yaml`.
+Generated config sets copy that value into `adrfcfg.yaml`, and config validation
+rejects a missing, malformed, or mismatched value. The UUID is only a globally
+unique NF instance identity; its digits do not encode the ADRF role, site, TAI,
+or scenario.
+
+A service stop deliberately retains experiment artifacts. Before a clean E2E
+run, inspect the reset scope while all VMs may remain powered off:
+
+```sh
+make experiment-reset-plan CONFIG_DIR=config/generated/full-core-cat-transition
+```
+
+The plan reports the five retained Compose containers and named volumes. If
+Core is running, it also reads the two ADRF record collections, ADRF model
+directory, and the ADRF-only `NfProfile` and `urilist` records in NRF. When Core
+is off, guest counts are explicitly unavailable; the command never powers it on
+and never deletes state.
+
+After a fresh `vagrant up core`, Vagrant may have reconfigured the base
+interfaces after the enabled alias unit ran. If the plan reports that the
+MongoDB bind address is inactive, reapply the already selected network config
+inside Core with `sudo systemctl restart 5g-nwdaf-network.service`; the reset
+does not change network state implicitly.
+
+An apply requires all five Host ML containers and every guest experiment
+service to be stopped, Core to be running, and an exact scenario-name
+confirmation:
+
+```sh
+make experiment-reset \
+  CONFIG_DIR=config/generated/full-core-cat-transition \
+  RESET_CONFIRM=full-core-cat-transition
+make experiment-reset-verify \
+  CONFIG_DIR=config/generated/full-core-cat-transition
+```
+
+The reset preserves VMs, container objects, images, the Compose network, named
+volume objects, generated datasets, activated config sets, and full-core
+subscriber/group fixtures. It clears only:
+
+- contents of the five project-owned PyAnLF/PyMTLF state volumes;
+- all documents in ADRF `data_store_records` and `mlmodel_store_records`;
+- files below the configured ADRF model-storage directory;
+- NRF `NfProfile` and `urilist` documents whose `nfType` is `ADRF`.
+
+It never runs Docker prune, removes a container or volume, drops a database, or
+deletes another NF type. MongoDB is started temporarily by the guarded guest
+operation and returned to its prior stopped state. An ordinary stop/start does
+not require this reset; use it only when the next experiment must not inherit a
+previous model or report history.
 
 PseudoDriver Parquet files are generated artifacts, not committed source and
 not files inherited from the go-upf submodule. Committed profiles describe

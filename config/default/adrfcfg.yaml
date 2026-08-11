@@ -1,5 +1,6 @@
 info: {version: 1.0.0, description: shared ADRF}
 configuration:
+  nfInstanceId: a0494f77-36db-4639-9f6f-e3e71fb5bfe6
   adrfName: ADRF
   nrfUri: http://192.168.57.10:8000
   sbi: {scheme: http, registerIPv4: 192.168.57.19, bindingIPv4: 192.168.57.19, port: 9888, oauth: false}

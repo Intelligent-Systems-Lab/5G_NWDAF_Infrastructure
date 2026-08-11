@@ -92,6 +92,12 @@ make services-stop       # leave all three VMs running
 make vm-halt             # power off the VMs
 ```
 
+Stopping retains experiment state. For a deliberately clean run, first review
+`make experiment-reset-plan`, then use the scenario-confirmed reset and its
+verification target documented in [OPERATIONS.md](OPERATIONS.md). The reset
+keeps the existing containers and named volumes; it clears only their scoped
+contents plus ADRF-owned database, model, and NRF registration state.
+
 There is no `vm-destroy` target. Destruction must be an explicit Vagrant action
 after its exact targets have been reviewed. See [OPERATIONS.md](OPERATIONS.md)
 for config selection, status, log filtering, and guest build details.

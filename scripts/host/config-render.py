@@ -63,6 +63,11 @@ def render(testbed, baseline, output, scenario):
     adrf_definition = core["adrf"]
     set_path(
         adrf,
+        ["configuration", "nfInstanceId"],
+        adrf_definition["nfInstanceId"],
+    )
+    set_path(
+        adrf,
         ["configuration", "mongodb", "name"],
         adrf_definition["mongodb"]["database"],
     )

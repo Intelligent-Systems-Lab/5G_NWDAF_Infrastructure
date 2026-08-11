@@ -19,6 +19,17 @@ guest `mongosh` projection for scoped `validate`, `plan`, `apply`, `show`, or
 `clear`. `services-start.sh` uses only idempotent `apply`; stopping services
 does not delete subscriber or Internal Group data.
 
+`experiment-reset.sh` has separate `plan`, confirmation-gated `apply`, and
+`verify` actions. It retains the Compose project containers and named volumes,
+but can clear their five exact state mounts plus ADRF-owned guest state. It
+refuses apply while any related Host container or guest process is active and
+never performs a global Docker cleanup.
+
+`gtp5g-preflight.sh` uploads the current read-only checker to each Path VM and
+blocks `services-start` before the first NF if module vermagic does not match
+the running kernel. The explicit guest `path.sh A|B kernel` action is the
+repair path.
+
 `config-render.py` resolves one committed scenario contract into a complete
 ignored config set. The config manifest records the scenario definition and
 canonical hash, so later commands reject a stale or mixed scenario/config set.

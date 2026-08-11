@@ -77,6 +77,14 @@ def main():
             "UPF a GTP interface",
         ),
         (
+            "adrf-instance-id",
+            "adrfcfg.yaml",
+            lambda value: value["configuration"].update(
+                {"nfInstanceId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"}
+            ),
+            "ADRF NF instance ID",
+        ),
+        (
             "adrf-model-storage",
             "adrfcfg.yaml",
             lambda value: value["configuration"]["mlModelStorage"].update(
