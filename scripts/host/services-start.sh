@@ -20,6 +20,13 @@ trap rollback EXIT
 stage_config_all "$config_dir" "$hash"
 "$HOST_ROOT/scripts/host/dataset-stage.sh" apply "$testbed" "$config_dir"
 
+# Staging can overlap a base-box unattended-upgrade on an older VM.  Reconcile
+# the real interface state immediately before any NF binds its topology address.
+for machine in "${MACHINES[@]}"; do
+  echo "NETWORK $machine"
+  vssh "$machine" "sudo systemctl restart 5g-nwdaf-network.service"
+done
+
 start_unit core mongodb
 start_unit core nrf
 for unit in nssf udr udm ausf pcf amf; do start_unit core "$unit"; done

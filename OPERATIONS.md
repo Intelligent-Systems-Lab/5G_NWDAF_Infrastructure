@@ -115,6 +115,14 @@ role file before any process starts. A missing anchor, wrong guest role, alias
 collision, or network setup failure rejects activation and restores the prior
 active set. Previously managed aliases absent from the new set are removed.
 
+Provisioning disables and masks the base box's `apt-daily` and
+`apt-daily-upgrade` units. Guest package changes are explicit provisioning
+operations: an unattended upgrade can invoke `needrestart`, restart
+`systemd-networkd`, and otherwise interrupt an active experiment. The topology
+alias unit waits for networkd to finish configuring the base interfaces and is
+restarted with networkd. `services-start` also reconciles all three guests after
+config and dataset staging, immediately before the first NF binds an alias.
+
 ## Guest builds
 
 The root Vagrant project pins the cached Ubuntu 22.04 box

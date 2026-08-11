@@ -5,6 +5,18 @@ machine=${1:?usage: common.sh core|path-a|path-b}
 case "$machine" in core|path-a|path-b) ;; *) echo "invalid machine: $machine" >&2; exit 2;; esac
 test "$(id -u)" -eq 0 || { echo "common setup requires root" >&2; exit 1; }
 
+# The base box enables randomized unattended upgrades.  needrestart may restart
+# systemd-networkd after those upgrades and flush the topology aliases while an
+# experiment is running.  Package changes in these reproducible guests are
+# owned by explicit provisioning instead.
+systemctl disable --now apt-daily.timer apt-daily-upgrade.timer >/dev/null 2>&1 || true
+while systemctl is-active --quiet apt-daily.service || \
+      systemctl is-active --quiet apt-daily-upgrade.service; do
+  sleep 2
+done
+systemctl mask apt-daily.service apt-daily-upgrade.service \
+  apt-daily.timer apt-daily-upgrade.timer >/dev/null
+
 export DEBIAN_FRONTEND=noninteractive
 apt-get update
 apt-get install -y --no-install-recommends \
