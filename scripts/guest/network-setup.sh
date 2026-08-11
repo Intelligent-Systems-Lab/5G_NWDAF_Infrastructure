@@ -38,6 +38,17 @@ plan_devices() {
   fi
 }
 
+reject_default_route_aliases() {
+  local default_device
+  default_device=$(ip -4 route show default | awk 'NR == 1 {for (i = 1; i <= NF; i++) if ($i == "dev") {print $(i + 1); exit}}')
+  [ -n "$default_device" ] || return 0
+  if jq -e --arg device "$default_device" \
+    '.aliases[] | select(.device == $device)' "$plan" >/dev/null; then
+    echo "refusing managed aliases on default-route interface $default_device" >&2
+    return 1
+  fi
+}
+
 verify_effective_addresses() {
   local cidr device address prefix
   while IFS=$'\t' read -r cidr device; do
@@ -165,6 +176,7 @@ render_args=(
 )
 [ -f "$fragment" ] && render_args+=(--previous "$fragment")
 "$renderer" "${render_args[@]}"
+reject_default_route_aliases
 
 if [ "$action" = verify ]; then
   test -f "$fragment" || { echo "managed Netplan fragment is missing" >&2; exit 1; }
