@@ -131,6 +131,12 @@ Each guest verifies the full hash and atomically switches
 service or the consumer is active. Core, Path A, and Path B can therefore not
 accidentally mix config sets.
 
+Before activation, `services-start` also installs a hash-verified bundle of the
+current Host checkout's runtime helpers and systemd definitions on every Guest.
+This updates existing VMs without rerunning package or component provisioning.
+It reloads unit definitions but neither starts nor restarts a process; the
+subsequent lifecycle commands remain responsible for process state.
+
 Every complete set also contains `network/core.yaml`, `network/path-a.yaml`,
 and `network/path-b.yaml`. The renderer derives these files from the process
 endpoints and VM interface anchors in the selected `testbed.yaml`; they are not

@@ -4,6 +4,12 @@ These scripts coordinate Vagrant, configuration, guest services, Host ML
 containers, subscriptions, and terminal observability. They do not compile
 network functions on the host.
 
+`guest-tools-sync.sh` uploads a hash-verified archive containing only the
+committed runtime helpers and systemd definitions to all three running guests.
+`services-start.sh` performs this sync before config activation, so existing
+VMs use the same helper revision as the Host checkout without reprovisioning.
+The sync reloads unit definitions but does not start or restart processes.
+
 `ml-start.sh`, `ml-status.sh`, and `ml-stop.sh` own only the Compose project
 `5g-nwdaf-infrastructure`. Stop retains containers, named volumes, and images.
 `ml-lifecycle-smoke.sh` uses a separate disposable project and CPU-only config.
@@ -16,7 +22,7 @@ reports the configured application device, OCI runtime, CDI selector, and
 in-container CUDA visibility separately.
 
 `subscriber-data.sh` validates the selected config, uploads only its selected
-subscriber/group inputs to temporary Core paths, and invokes the committed guest
+subscriber/group inputs to temporary Core paths, and invokes the installed guest
 `mongosh` projection for scoped `validate`, `plan`, `apply`, `show`, or `clear`.
 `show` performs expected-vs-actual comparison. `services-start.sh` uses only
 idempotent `apply`; stopping services does not delete subscriber or Internal

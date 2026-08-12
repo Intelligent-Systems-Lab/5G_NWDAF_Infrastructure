@@ -17,6 +17,7 @@ rollback() {
   exit "$status"
 }
 trap rollback EXIT
+"$HOST_ROOT/scripts/host/guest-tools-sync.sh"
 stage_config_all "$config_dir" "$hash"
 "$HOST_ROOT/scripts/host/dataset-stage.sh" apply "$testbed" "$config_dir"
 

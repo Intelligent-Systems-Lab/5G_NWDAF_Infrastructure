@@ -62,7 +62,7 @@ printf -v command 'ACTION=%q SUBSCRIBER_FIXTURE=%q GROUP_FIXTURE=%q mongosh --qu
   "$remote_subscriber" \
   "$remote_group" \
   "$mongo_uri/$mongo_database" \
-  "/opt/5g-nwdaf-infrastructure/source/scripts/guest/subscriber-data.js"
+  "/usr/local/libexec/5g-nwdaf-infrastructure/subscriber-data.js"
 vssh core "$command"
 trap - EXIT
 cleanup
