@@ -12,6 +12,10 @@ The sync reloads unit definitions but does not start or restart processes.
 
 `ml-start.sh`, `ml-status.sh`, and `ml-stop.sh` own only the Compose project
 `5g-nwdaf-infrastructure`. Stop retains containers, named volumes, and images.
+`experiment-stop.sh` first removes the consumer's exact subscriptions and then,
+while every ML and Guest backend remains available, waits 40 seconds for
+asynchronous resource cleanup before invoking `ml-stop.sh`. Set the optional
+non-negative integer `ML_CLEANUP_GRACE_SECONDS` to override that grace period.
 `ml-lifecycle-smoke.sh` uses a separate disposable project and CPU-only config.
 Production `ml-start.sh` reads `runtime.mlDevicePolicy` from the selected
 complete config. GPU policy requires the Host CDI inventory to contain

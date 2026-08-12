@@ -94,6 +94,10 @@ make experiment-stop  # subscriptions, consumer, ML, and Guest services
 make vm-halt          # optional: power off the VMs
 ```
 
+After exact subscription deletion, `experiment-stop` keeps every ML and Guest
+backend available for a 40-second asynchronous cleanup grace before stopping
+the processes. `ML_CLEANUP_GRACE_SECONDS` may override this non-negative value.
+
 Stopping retains experiment state. For a deliberately clean run, first review
 `make reset-show`, then use the scenario-confirmed `make reset` documented in
 [OPERATIONS.md](OPERATIONS.md). Reset performs its own post-delete verification.
@@ -166,9 +170,11 @@ ADRF publication, A/B reprovision, generation cutover, and a post-cutover
 accuracy report. Existing VMs receive a hash-verified runtime helper bundle
 before config activation, so this lifecycle no longer depends on provision-time
 helper copies. Continuous degradation is expected to trigger later FL processes
-while the experiment remains active. Model Monitor cleanup remains asynchronous;
-an active-runtime regression showed that merely stopping PyMTLF-C before A/B
-does not guarantee cleanup before NWDAF-C marks that backend unavailable.
+while the experiment remains active. Model Monitor cleanup remains asynchronous.
+The aggregate stop therefore waits before signaling any ML container; merely
+stopping PyMTLF-C before A/B was shown not to preserve the cleanup path. An
+active-runtime regression verified that the default grace drains both A/B
+Model Monitor paths with `204` responses before container shutdown.
 
 The initial implementation intentionally does not support TLS/certificates,
 automatic experiment history, or 5g-viz.

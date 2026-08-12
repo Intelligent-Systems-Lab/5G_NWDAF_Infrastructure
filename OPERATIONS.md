@@ -397,13 +397,28 @@ volumes.
 
 `ml-status` reports state, application health, effective configured device,
 actual CUDA visibility, live memory, image ID, component revision, config-set
-name, and config hash. `ml-stop` stops only running containers labeled as the
-`5g-nwdaf-infrastructure` project; stopped containers, named volumes, images,
-VMs, guest processes, and subscriptions remain intact. An active-runtime
-regression proved that stopping PyMTLF-C before A/B does not by itself drain
-Model Monitor cleanup: NWDAF-C marks its MTLF backend unavailable during the
-C shutdown and rejects the late DELETE. Ordered shutdown must not be claimed as
-converged until the cleanup state is explicitly observable before SIGTERM.
+name, and config hash. `ml-stop` is the immediate domain primitive: it stops
+only running containers labeled as the `5g-nwdaf-infrastructure` project;
+stopped containers, named volumes, images, VMs, guest processes, and
+subscriptions remain intact.
+
+The aggregate `experiment-stop` first removes the consumer's exact
+subscriptions, then leaves all ML containers and Guest services available for
+a fixed cleanup grace before calling `ml-stop`. The default is 40 seconds and
+can be overridden with a non-negative integer, for example:
+
+```sh
+ML_CLEANUP_GRACE_SECONDS=60 make experiment-stop
+```
+
+The default exceeds the approximately 30-second asynchronous Model Monitor
+cleanup window observed in the active-runtime regression. Merely stopping
+PyMTLF-C before A/B did not work: NWDAF-C marked its MTLF backend unavailable
+during C shutdown and rejected a late DELETE. Setting the grace to `0` opts out
+of this protection and is intended only for focused debugging. A subsequent
+active-runtime regression established two A/B Model Monitor subscriptions,
+then verified that the default grace allowed every related DELETE to return
+`204` before the first ML container shutdown began.
 
 Run the bounded CPU-only image/config/health/lifecycle test:
 
