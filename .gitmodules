@@ -24,39 +24,39 @@
 	branch = main
 [submodule "NFs/nrf"]
 	path = NFs/nrf
-	url = git@github.com:Intelligent-Systems-Lab/nrf.git
+	url = https://github.com/Intelligent-Systems-Lab/nrf.git
 	branch = feat/r18-nwdaf-discovery
 [submodule "NFs/smf"]
 	path = NFs/smf
-	url = git@github.com:Intelligent-Systems-Lab/smf-nwdaf-ext.git
+	url = https://github.com/Intelligent-Systems-Lab/smf-nwdaf-ext.git
 	branch = feat/r18-federated-learning
 [submodule "NFs/udm"]
 	path = NFs/udm
-	url = git@github.com:Intelligent-Systems-Lab/udm.git
+	url = https://github.com/Intelligent-Systems-Lab/udm.git
 	branch = feat/r18-federated-learning
 [submodule "NFs/udr"]
 	path = NFs/udr
-	url = git@github.com:Intelligent-Systems-Lab/udr.git
+	url = https://github.com/Intelligent-Systems-Lab/udr.git
 	branch = feat/r18-federated-learning
 [submodule "NFs/upf"]
 	path = NFs/upf
-	url = git@github.com:Intelligent-Systems-Lab/go-upf.git
+	url = https://github.com/Intelligent-Systems-Lab/go-upf.git
 	branch = fix/r18-nupf-event-exposure-contract
 [submodule "NFs/nwdaf"]
 	path = NFs/nwdaf
-	url = git@github.com:Intelligent-Systems-Lab/NWDAF.git
+	url = https://github.com/Intelligent-Systems-Lab/NWDAF.git
 	branch = feat/r18-federated-learning
 [submodule "NFs/adrf"]
 	path = NFs/adrf
-	url = git@github.com:Intelligent-Systems-Lab/adrf.git
+	url = https://github.com/Intelligent-Systems-Lab/adrf.git
 	branch = feat/r18-federated-learning
 [submodule "ML/PyAnLF"]
 	path = ML/PyAnLF
-	url = git@github.com:Intelligent-Systems-Lab/PyAnLF.git
+	url = https://github.com/Intelligent-Systems-Lab/PyAnLF.git
 	branch = feat/r18-federated-learning
 [submodule "ML/PyMTLF"]
 	path = ML/PyMTLF
-	url = git@github.com:Intelligent-Systems-Lab/PyMTLF.git
+	url = https://github.com/Intelligent-Systems-Lab/PyMTLF.git
 	branch = feat/r18-federated-learning
 [submodule "kernel/gtp5g"]
 	path = kernel/gtp5g

@@ -36,6 +36,10 @@ automatically create a subscription.
 
 `nwdaf-resources` is not a runtime dependency or submodule. Component source
 is fixed by parent gitlinks and is never cloned by guest provisioning.
+All committed submodule URLs use HTTPS. The Intelligent-Systems-Lab sources
+still require GitHub credentials while those repositories remain private;
+making this parent repository public alone would not make a recursive clone
+anonymous. URL changes never replace the pinned gitlink revisions.
 
 ## Command surface
 
