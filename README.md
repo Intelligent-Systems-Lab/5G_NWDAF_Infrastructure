@@ -160,8 +160,15 @@ kept all 23 guest units active and established six registrations and six PDU
 Sessions: Path A received `10.60.0.1`-`10.60.0.3`, and Path B received
 `10.61.0.1`-`10.61.0.3`. A bounded follow-up also proved two NRF-discovered
 subscriptions, both Nupf Event Exposure resources, PseudoDriver replay into
-PyAnLF, and two consumer analytics callbacks. Automatic federated training,
-publication, reprovision, and generation cutover remain the next runtime gate.
+PyAnLF, and two consumer analytics callbacks. A later GPU bounded run completed
+A-only degradation detection, two rounds of A/B local training and C FedAvg,
+ADRF publication, A/B reprovision, generation cutover, and a post-cutover
+accuracy report. Existing VMs receive a hash-verified runtime helper bundle
+before config activation, so this lifecycle no longer depends on provision-time
+helper copies. Continuous degradation can trigger another FL process after the
+first closure, and teardown still needs monitor-delete convergence before the
+ML backends stop; these are lifecycle follow-ups rather than missing closure
+paths.
 
 The initial implementation intentionally does not support TLS/certificates,
 automatic experiment history, or 5g-viz.
