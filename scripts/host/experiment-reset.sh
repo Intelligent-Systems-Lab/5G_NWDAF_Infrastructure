@@ -139,6 +139,7 @@ if [ "$action" = plan ]; then
   else
     echo "GUEST_STATE unavailable=core-not-running"
   fi
+  printf 'RESET_COMMAND make reset CONFIG_DIR=%q RESET_CONFIRM=%q\n' "$config_dir" "$scenario"
   echo "PLAN_ONLY no experiment state was deleted"
   exit 0
 fi

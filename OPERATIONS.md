@@ -10,6 +10,12 @@ The repository treats five states independently:
 4. `ml-start` starts five Host ML containers from that same config identity.
 5. `subscriptions-start` runs one Core consumer and creates two NWDAF resources.
 
+`experiment-start` and `experiment-stop` are convenience orchestration over
+states 3-5. They do not change VM power or reset retained state. A clean start
+refuses pre-existing active experiment processes so rollback can stop only the
+domains started by that invocation. The three domain lifecycles remain public
+for focused operation and debugging.
+
 VM provisioning installs toolchains and builds binaries but leaves the
 experiment stack disabled. Vagrant creates only the declared base interfaces;
 process aliases are applied when a complete config set is activated. A VM can
@@ -25,13 +31,14 @@ git submodule update --init --recursive
 cp testbed.local.example.yaml testbed.local.yaml
 ```
 
-Choose `virtualbox` or `libvirt` only after its host driver is known to work.
+Select `virtualbox` after its host driver is known to work.
 `testbed.local.yaml` is ignored and may contain the provider name, expected VM
 and Docker storage paths, physical ML bind address, and selected complete config
 directory. It must not redefine the advertised topology, TAI, UE, NWDAF, or
 experiment semantics.
 
-`make preflight` is read-only. It checks:
+`make experiment-validate CONFIG_DIR=...` is read-only. It runs the Host
+preflight plus Compose wiring and Vagrant definition validation. It checks:
 
 - Vagrant/provider and Docker daemon access;
 - 10 GiB guest RAM plus a 6 GiB physical-host/ML reserve;
@@ -44,13 +51,22 @@ experiment semantics.
 - an already generated PseudoDriver set matching the selected topology and
   effective config.
 
-A failed preflight is a stop condition for `make vm-up`; free resources or fix
+A failed validation is a stop condition for `make vm-up`; free resources or fix
 the provider instead of weakening the topology silently.
 
 ## Config sets
 
-`config/default` is a complete native baseline. To modify individual component
-files manually, copy the whole directory to `config/local/<name>` and select it:
+`config/default` is a complete native baseline. Create a full editable copy of
+the main reference example with:
+
+```sh
+make config-create NAME=my-lab
+make config-validate CONFIG_DIR=config/local/my-lab
+```
+
+Use `FROM=fl-closure-smoke` to select the bounded example instead. The command
+writes only `config/local/<name>` and refuses to overwrite an existing set.
+Select that complete set explicitly or through the ignored local settings:
 
 ```yaml
 # testbed.local.yaml
@@ -58,7 +74,8 @@ config:
   directory: config/local/my-lab
 ```
 
-For an explicit alternate topology definition, render a complete ignored set:
+The lower-level renderer remains available for an explicit alternate topology
+definition:
 
 ```sh
 make config-render NAME=my-lab TESTBED=testbed.my-lab.yaml
@@ -66,15 +83,14 @@ make config-check TESTBED=testbed.my-lab.yaml CONFIG_DIR=config/generated/my-lab
 ```
 
 Scenario selection is independent of VM topology. `config/default` is the
-`full-core-cat-transition` business example. Render the shorter FL closure
+`full-core-cat-transition` business example. Create the shorter FL closure
 scenario as another complete ignored set:
 
 ```sh
-make config-render NAME=fl-closure-smoke \
-  SCENARIO=fixtures/full-core/scenarios/fl-closure-smoke.yaml
-make config-check CONFIG_DIR=config/generated/fl-closure-smoke
-make dataset-generate CONFIG_DIR=config/generated/fl-closure-smoke
-make dataset-show CONFIG_DIR=config/generated/fl-closure-smoke
+make config-create NAME=my-smoke FROM=fl-closure-smoke
+make config-validate CONFIG_DIR=config/local/my-smoke
+make dataset-generate CONFIG_DIR=config/local/my-smoke
+make dataset-show CONFIG_DIR=config/local/my-smoke
 ```
 
 The generated manifest pins the scenario name, kind, definition hash, and Path
@@ -86,9 +102,7 @@ or addresses, so selecting the smoke does not require recreating the VMs.
 When running it, use the same complete set in both execution domains:
 
 ```sh
-make services-start CONFIG_DIR=config/generated/fl-closure-smoke
-make ml-start CONFIG_DIR=config/generated/fl-closure-smoke
-make subscriptions-start
+make experiment-start CONFIG_DIR=config/local/my-smoke
 ```
 
 Do not claim the smoke as business acceptance. It keeps the real Consumer/NRF,
@@ -235,7 +249,7 @@ A service stop deliberately retains experiment artifacts. Before a clean E2E
 run, inspect the reset scope while all VMs may remain powered off:
 
 ```sh
-make experiment-reset-plan CONFIG_DIR=config/generated/full-core-cat-transition
+make reset-show CONFIG_DIR=config/local/my-experiment
 ```
 
 The plan reports the five retained Compose containers and named volumes. If
@@ -257,12 +271,14 @@ service to be stopped, Core to be running, and an exact scenario-name
 confirmation:
 
 ```sh
-make experiment-reset \
-  CONFIG_DIR=config/generated/full-core-cat-transition \
+make reset \
+  CONFIG_DIR=config/local/my-experiment \
   RESET_CONFIRM=full-core-cat-transition
-make experiment-reset-verify \
-  CONFIG_DIR=config/generated/full-core-cat-transition
 ```
+
+`reset` runs the post-delete verification automatically. It fails before
+deletion unless `RESET_CONFIRM` exactly matches the scenario name shown by
+`reset-show`.
 
 The reset preserves VMs, container objects, images, the Compose network, named
 volume objects, generated datasets, activated config sets, and full-core
@@ -286,9 +302,9 @@ for UE pools. Generate and inspect the current content-addressed set with:
 
 ```sh
 make dataset-generate
-make dataset-check
+make dataset-validate
 make dataset-show
-make dataset-stage-plan
+make dataset-load
 ```
 
 Generation resolves the manifest-selected profiles against effective
@@ -301,10 +317,10 @@ trigger has 107 observations and 43 training/4 validation samples. Both reject
 insufficient stable reference lead-in, degradation tail, retrieval lookback, or
 trigger-time evidence. Generation derives `.1` through `.3` from each UE pool
 and writes below `.generated/datasets/<dataset-set-id>/`.
-`make dataset-smoke` performs two independent generations and proves that a
-tampered Parquet artifact is rejected.
+`make test` performs two independent generations and proves that a tampered
+Parquet artifact is rejected as part of the repository test suite.
 
-`make dataset-stage` uploads only the matching Path artifact. The guest checks
+`make dataset-load` uploads only the matching Path artifact. The guest checks
 its set ID, role, SHA-256, bytes, and breaking time before atomically switching
 `/var/lib/5g-nwdaf-infrastructure/datasets/active`. `services-start` performs
 this automatically before starting any process; UPF startup rejects an absent
@@ -335,11 +351,11 @@ log rotation, health check, memory/CPU limit, read-only config bind, and its own
 writable named volume. The three PyMTLF volumes contain artifact storage, model
 state, publication journal, and FL workspaces under one service-specific root.
 
-Validate the resolved production and CPU-only definitions without starting a
-container:
+Repository-wide static, config, network, dataset, Compose, and Vagrant
+definition checks run without starting a container or VM:
 
 ```sh
-make ml-compose-check
+make test
 ```
 
 Operate the long-lived production project independently from VM services:
@@ -365,19 +381,17 @@ name, and config hash. `ml-stop` stops only running containers labeled as the
 `5g-nwdaf-infrastructure` project; stopped containers, named volumes, images,
 VMs, guest processes, and subscriptions remain intact.
 
-Run the bounded CPU-only image/config/health smoke:
+Run the bounded CPU-only image/config/health/lifecycle test:
 
 ```sh
-make ml-cpu-smoke
-make ml-lifecycle-smoke
+make test-containers
 ```
 
-Each smoke binds only loopback, generates an ignored config set with A/B training
-set to CPU, builds each image target once, starts all five services, reports
-effective device and container memory, then removes only its own containers,
-network, volumes, and generated config. The lifecycle smoke additionally proves
-start/status/log/stop, including retention of five stopped containers and five
-volumes before its final disposable cleanup. Both retain the two images. They do
+The test binds only loopback, generates an ignored config set with A/B training
+set to CPU, builds each image target once, starts all five services, verifies
+non-root identity, effective device, status/log/stop, and retention of five
+stopped containers and volumes, then removes only its own containers, network,
+volumes, and generated config. It retains the two images. It does
 not exercise CUDA, modify the NVIDIA driver/toolkit, create a VM, or prove
 VM-to-Host reachability.
 
@@ -428,12 +442,11 @@ from an ID.
 Use compact state without changing processes:
 
 ```sh
-make vm-status
-make services-status
-make ml-status
-make subscriptions-status
-make observe
+make experiment-status CONFIG_DIR=config/local/my-experiment
 ```
+
+The individual `vm-status`, `services-status`, `ml-status`, and
+`subscriptions-status` targets remain available through `make help-advanced`.
 
 Follow journald directly when detail is needed:
 
@@ -444,7 +457,9 @@ scripts/host/logs.sh --source ml --service pymtlf-a --since '5 minutes ago'
 scripts/host/logs.sh --source ml --service pyanlf-a --tail 20 --no-follow
 ```
 
-`make observe` includes VM, guest service, ML container, and subscription state.
+`experiment-status` adds config identity, configured ML devices, and Host
+resource headroom to the VM, Guest service, ML container, and subscription
+state previously shown by `observe`.
 Log selection is label-scoped for ML containers and supports VM, ML, or combined
 sources. Stopping the log follower does not stop any process. This version does
 not assign run IDs, collect logs automatically, or bind VM lifetime to experiment

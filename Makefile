@@ -2,9 +2,12 @@ SHELL := /usr/bin/env bash
 TESTBED ?= testbed.yaml
 CONFIG_DIR ?=
 NAME ?= local
+FROM ?= full-core-cat-transition
 SCENARIO ?= fixtures/full-core/scenarios/full-core-cat-transition.yaml
 
-.PHONY: help preflight config-check config-render config-contract-smoke network-config-smoke dataset-generate dataset-check dataset-show \
+.PHONY: help help-advanced help-dev help-all experiment-validate experiment-start experiment-status experiment-stop \
+	config-create config-validate dataset-validate dataset-load reset-show reset test test-containers \
+	preflight config-check config-render config-contract-smoke network-config-smoke dataset-generate dataset-check dataset-show \
 	dataset-smoke dataset-stage-plan dataset-stage ml-compose-check ml-cpu-smoke ml-lifecycle-smoke \
 	ml-start ml-status ml-stop vm-up vm-status vm-halt \
 	services-start services-status services-stop subscriptions-start \
@@ -15,21 +18,81 @@ SCENARIO ?= fixtures/full-core/scenarios/full-core-cat-transition.yaml
 
 help:
 	@echo "5G NWDAF Infrastructure"
-	@echo "  make preflight"
-	@echo "  make config-check [TESTBED=...] [CONFIG_DIR=...]"
-	@echo "  make config-render NAME=... [SCENARIO=...] [TESTBED=...]"
-	@echo "  make config-contract-smoke [CONFIG_DIR=...]"
-	@echo "  make network-config-smoke"
-	@echo "  make dataset-generate | dataset-check | dataset-show | dataset-smoke"
-	@echo "  make dataset-stage-plan | dataset-stage"
-	@echo "  make ml-compose-check | ml-cpu-smoke | ml-lifecycle-smoke"
-	@echo "  make ml-start | ml-status | ml-stop"
-	@echo "  make vm-up | vm-status | vm-halt"
-	@echo "  make services-start | services-status | services-stop"
-	@echo "  make subscriber-data-validate | subscriber-data-plan | subscriber-data-apply | subscriber-data-show | subscriber-data-clear"
+	@echo ""
+	@echo "Experiment lifecycle"
+	@echo "  make experiment-validate CONFIG_DIR=...  Validate prerequisites and inputs without changing state"
+	@echo "  make vm-up                               Create or start the three VMs"
+	@echo "  make experiment-start CONFIG_DIR=...     Start Guest, ML, consumer, and subscriptions"
+	@echo "  make experiment-status CONFIG_DIR=...    Show the complete experiment state"
+	@echo "  make logs                                Follow experiment logs"
+	@echo "  make experiment-stop                     Stop processes but retain state and VMs"
+	@echo "  make vm-halt                             Gracefully power off the VMs"
+	@echo ""
+	@echo "More commands: make help-advanced | help-dev | help-all"
+
+help-advanced:
+	@echo "5G NWDAF Infrastructure — advanced operations"
+	@echo ""
+	@echo "Configuration and datasets"
+	@echo "  make config-create NAME=... [FROM=full-core-cat-transition|fl-closure-smoke]"
+	@echo "  make config-validate CONFIG_DIR=..."
+	@echo "  make dataset-generate | dataset-validate | dataset-show | dataset-load CONFIG_DIR=..."
+	@echo ""
+	@echo "Independent execution domains"
+	@echo "  make services-start CONFIG_DIR=... | services-status | services-stop"
+	@echo "  make ml-start CONFIG_DIR=... | ml-status | ml-stop"
 	@echo "  make subscriptions-start | subscriptions-status | subscriptions-stop"
-	@echo "  make experiment-reset-plan | experiment-reset RESET_CONFIRM=<scenario> | experiment-reset-verify"
-	@echo "  make observe | logs"
+	@echo ""
+	@echo "Subscriber and retained experiment state"
+	@echo "  make subscriber-data-show | subscriber-data-apply | subscriber-data-clear CONFIG_DIR=..."
+	@echo "  make reset-show CONFIG_DIR=..."
+	@echo "  make reset CONFIG_DIR=... RESET_CONFIRM=<scenario>"
+
+help-dev:
+	@echo "5G NWDAF Infrastructure — repository tests"
+	@echo "  make test             Run static and host-only repository checks"
+	@echo "  make test-containers  Run the disposable five-container CPU lifecycle test"
+
+help-all: help
+	@echo ""
+	@$(MAKE) --no-print-directory help-advanced
+	@echo ""
+	@$(MAKE) --no-print-directory help-dev
+
+experiment-validate:
+	@scripts/host/experiment-validate.sh "$(TESTBED)" "$(CONFIG_DIR)"
+
+experiment-start:
+	@scripts/host/experiment-start.sh "$(TESTBED)" "$(CONFIG_DIR)"
+
+experiment-status:
+	@scripts/host/experiment-status.sh "$(TESTBED)" "$(CONFIG_DIR)"
+
+experiment-stop:
+	@scripts/host/experiment-stop.sh
+
+config-create:
+	@case "$(FROM)" in full-core-cat-transition|fl-closure-smoke) ;; *) echo "FROM must be full-core-cat-transition or fl-closure-smoke" >&2; exit 2;; esac
+	@python3 scripts/host/config-render.py --testbed "$(TESTBED)" --name "$(NAME)" \
+		--scenario "fixtures/full-core/scenarios/$(FROM).yaml" --output-root config/local
+
+config-validate: config-check
+
+dataset-validate: dataset-check
+
+dataset-load: dataset-stage
+
+reset-show: experiment-reset-plan
+
+reset:
+	@RESET_CONFIRM="$(RESET_CONFIRM)" scripts/host/experiment-reset.sh apply "$(TESTBED)" "$(CONFIG_DIR)"
+	@scripts/host/experiment-reset.sh verify "$(TESTBED)" "$(CONFIG_DIR)"
+
+test:
+	@scripts/host/repository-test.sh "$(TESTBED)" "$(CONFIG_DIR)"
+
+test-containers:
+	@scripts/host/ml-lifecycle-smoke.sh
 
 preflight:
 	@scripts/host/preflight.sh "$(TESTBED)" "$(CONFIG_DIR)"
@@ -69,7 +132,7 @@ ml-compose-check:
 	@python3 scripts/host/ml-compose-check.py --testbed "$(TESTBED)" $(if $(CONFIG_DIR),--config-dir "$(CONFIG_DIR)") --mode cpu-smoke
 
 ml-cpu-smoke:
-	@scripts/host/ml-cpu-smoke.sh
+	@scripts/host/ml-lifecycle-smoke.sh
 
 ml-lifecycle-smoke:
 	@scripts/host/ml-lifecycle-smoke.sh

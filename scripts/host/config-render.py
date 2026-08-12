@@ -301,6 +301,7 @@ def main():
         "--scenario",
         default="fixtures/full-core/scenarios/full-core-cat-transition.yaml",
     )
+    parser.add_argument("--output-root", default="config/generated")
     parser.add_argument("--force", action="store_true")
     args = parser.parse_args()
     if not args.name.replace("-", "").replace("_", "").isalnum():
@@ -309,7 +310,7 @@ def main():
     testbed = load_yaml(testbed_path)
     scenario_path, scenario = load_scenario_definition(args.scenario)
     baseline = ROOT / "config" / "default"
-    output = ROOT / "config" / "generated" / args.name
+    output = resolve_path(args.output_root) / args.name
     if output.exists():
         if not args.force:
             raise SystemExit("output exists; pass --force to replace it: {}".format(output))

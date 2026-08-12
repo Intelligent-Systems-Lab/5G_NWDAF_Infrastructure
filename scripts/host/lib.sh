@@ -164,6 +164,33 @@ PY
   echo "ML HOST available_ram=${available_mib}MiB reserve=${reserve_mib}MiB docker_free=${docker_free_gib}GiB"
 }
 
+ml_runtime_gate() {
+  local mode cdi_device cdi_inventory
+  mode=$(ml_runtime_mode)
+  if [ "$mode" = cpu-smoke ]; then
+    echo "ML RUNTIME mode=cpu-smoke nvidia=not-required"
+    return 0
+  fi
+
+  cdi_device=nvidia.com/gpu=all
+  if ! command -v nvidia-ctk >/dev/null 2>&1; then
+    echo "NVIDIA CDI prerequisite is missing: nvidia-ctk was not found" >&2
+    return 1
+  fi
+  cdi_inventory=$(nvidia-ctk cdi list)
+  if ! grep -Fxq "$cdi_device" <<<"$cdi_inventory"; then
+    echo "NVIDIA CDI device is unavailable: $cdi_device" >&2
+    printf '%s\n' "$cdi_inventory" >&2
+    return 1
+  fi
+  if ! docker info --format '{{json .Runtimes}}' | python3 -c \
+    'import json, sys; raise SystemExit(0 if "nvidia" in json.load(sys.stdin) else 1)'; then
+    echo "NVIDIA Docker runtime is unavailable; register it and reload Docker" >&2
+    return 1
+  fi
+  echo "ML RUNTIME mode=baseline cdi=$cdi_device docker_runtime=nvidia"
+}
+
 stage_config_all() {
   local config_dir=$1 hash=$2 name archive temporary machine destination
   name=$(basename "$config_dir")

@@ -7,7 +7,9 @@ once=false
 [ "${1:-}" = "--once" ] && once=true
 
 while :; do
-  command -v clear >/dev/null && clear || true
+  if ! $once; then
+    command -v clear >/dev/null && clear || true
+  fi
   date --iso-8601=seconds
   echo
   (cd "$HOST_ROOT" && vagrant status --machine-readable 2>/dev/null | awk -F, '$3=="state" {printf "%-8s vm=%s\n", $2, $4}') || true

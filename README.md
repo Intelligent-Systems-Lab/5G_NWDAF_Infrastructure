@@ -46,33 +46,36 @@ complete sequence is:
 ```sh
 git submodule update --init --recursive
 cp testbed.local.example.yaml testbed.local.yaml
-# Select and verify a working provider in testbed.local.yaml.
-make dataset-generate
-make preflight
+# Select VirtualBox in testbed.local.yaml.
+make config-create NAME=my-experiment
+make dataset-generate CONFIG_DIR=config/local/my-experiment
+make experiment-validate CONFIG_DIR=config/local/my-experiment
 make vm-up
-make services-start
-make ml-start
-make subscriptions-start
-make observe
+make experiment-start CONFIG_DIR=config/local/my-experiment
+make experiment-status CONFIG_DIR=config/local/my-experiment
+make logs
 ```
 
-The default config is the `full-core-cat-transition` business example. To
-prepare the bounded `fl-closure-smoke` without changing VM topology or
+`experiment-validate` is deliberately read-only and rejects a missing dataset;
+`experiment-start` regenerates and revalidates that dataset before activating
+the process domains. The default example is `full-core-cat-transition`. To
+create the bounded `fl-closure-smoke` instead, without changing VM topology or
 rebuilding a VM:
 
 ```sh
-make config-render NAME=fl-closure-smoke \
-  SCENARIO=fixtures/full-core/scenarios/fl-closure-smoke.yaml
-make config-check CONFIG_DIR=config/generated/fl-closure-smoke
-make config-contract-smoke CONFIG_DIR=config/generated/fl-closure-smoke
-make dataset-generate CONFIG_DIR=config/generated/fl-closure-smoke
-make dataset-show CONFIG_DIR=config/generated/fl-closure-smoke
+make config-create NAME=my-smoke FROM=fl-closure-smoke
+make config-validate CONFIG_DIR=config/local/my-smoke
+make dataset-generate CONFIG_DIR=config/local/my-smoke
+make dataset-show CONFIG_DIR=config/local/my-smoke
 ```
 
-Use the same explicit `CONFIG_DIR` for `services-start` and `ml-start`. The
+Use the same explicit `CONFIG_DIR` throughout one lifecycle. The
 activated config manifest fixes the scenario definition and traffic-profile
 paths; the generated dataset manifest fixes their content hashes.
-`subscriptions-start` then uses that already active guest config.
+The advanced `services-*`, `ml-*`, and `subscriptions-*` targets remain
+available when an execution domain must be operated independently. Run
+`make help`, `make help-advanced`, or `make help-dev` for the layered command
+surface.
 
 PyAnLF-A/B retrieve analytics data through ADRF. Their optional direct MongoDB
 fallback is disabled in the default and generated E2E config sets; MongoDB still
@@ -83,19 +86,17 @@ periodic-report deadline. Scenario validation also checks report sample
 capacity, startup margin, bounded trigger timing, and an explicit post-trigger
 closure budget before a dataset can be generated.
 
-Teardown is deliberately split:
+The normal teardown keeps VM power and experiment process state separate:
 
 ```sh
-make subscriptions-stop  # delete the two exact NWDAF resources
-make ml-stop             # stop ML containers without deleting images/volumes
-make services-stop       # leave all three VMs running
-make vm-halt             # power off the VMs
+make experiment-stop  # subscriptions, consumer, ML, and Guest services
+make vm-halt          # optional: power off the VMs
 ```
 
 Stopping retains experiment state. For a deliberately clean run, first review
-`make experiment-reset-plan`, then use the scenario-confirmed reset and its
-verification target documented in [OPERATIONS.md](OPERATIONS.md). The reset
-keeps the existing containers and named volumes; it clears only their scoped
+`make reset-show`, then use the scenario-confirmed `make reset` documented in
+[OPERATIONS.md](OPERATIONS.md). Reset performs its own post-delete verification.
+It keeps the existing containers and named volumes; it clears only their scoped
 contents plus ADRF-owned database, model, and NRF registration state.
 
 There is no `vm-destroy` target. Destruction must be an explicit Vagrant action

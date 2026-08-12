@@ -28,24 +28,7 @@ if ! host_has_address "$bind_address"; then
 fi
 ml_host_resource_gate "$testbed"
 
-if [ "$mode" = baseline ]; then
-  cdi_device=nvidia.com/gpu=all
-  if ! command -v nvidia-ctk >/dev/null 2>&1; then
-    echo "NVIDIA CDI prerequisite is missing: nvidia-ctk was not found" >&2
-    exit 1
-  fi
-  cdi_inventory=$(nvidia-ctk cdi list)
-  if ! grep -Fxq "$cdi_device" <<<"$cdi_inventory"; then
-    echo "NVIDIA CDI device is unavailable: $cdi_device" >&2
-    printf '%s\n' "$cdi_inventory" >&2
-    exit 1
-  fi
-  if ! docker info --format '{{json .Runtimes}}' | python3 -c \
-    'import json, sys; raise SystemExit(0 if "nvidia" in json.load(sys.stdin) else 1)'; then
-    echo "NVIDIA Docker runtime is unavailable; register it and reload Docker" >&2
-    exit 1
-  fi
-fi
+ml_runtime_gate
 
 export CONFIG_DIR="$config_dir"
 export CONFIG_SET_NAME="$config_name"
@@ -56,6 +39,7 @@ echo "ML CONFIG project=$project mode=$mode set=$config_name hash=$hash bind=$bi
 ml_compose build pyanlf-a pymtlf-a
 
 if [ "$mode" = baseline ]; then
+  cdi_device=nvidia.com/gpu=all
   echo "GPU PROBE device=$cdi_device image=5g-nwdaf-infrastructure/pymtlf:local"
   docker run --rm --runtime nvidia \
     --env "NVIDIA_VISIBLE_DEVICES=$cdi_device" \

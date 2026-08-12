@@ -61,9 +61,8 @@ PY
         warn "VirtualBox host-only allowlist /etc/vbox/networks.conf is not readable"
       fi
       ;;
-    libvirt) command -v virsh >/dev/null && ok "libvirt CLI available" || fail "libvirt selected but virsh is missing" ;;
-    "") warn "provider not selected; set testbed.local.yaml or VAGRANT_DEFAULT_PROVIDER" ;;
-    *) warn "provider '$provider' has no dedicated feasibility check" ;;
+    "") fail "provider not selected; set provider.name=virtualbox in testbed.local.yaml or VAGRANT_DEFAULT_PROVIDER=virtualbox" ;;
+    *) fail "unsupported provider '$provider'; the reference deployment supports virtualbox only" ;;
   esac
 fi
 

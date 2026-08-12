@@ -14,6 +14,7 @@ abort "unsupported testbed schema" unless testbed["schemaVersion"] == 1
 local_path = File.join(ROOT, "testbed.local.yaml")
 local = File.file?(local_path) ? YAML.safe_load(File.read(local_path), aliases: false) : {}
 provider_name = ENV["VAGRANT_DEFAULT_PROVIDER"] || local.dig("provider", "name")
+abort "unsupported provider #{provider_name}; expected virtualbox" if provider_name && provider_name != "virtualbox"
 
 machines = testbed.fetch("machines")
 networks = testbed.fetch("networks")
@@ -55,11 +56,6 @@ Vagrant.configure("2") do |config|
         vb.memory = resources.fetch("memoryMiB")
         vb.cpus = resources.fetch("cpus")
       end
-      node.vm.provider "libvirt" do |lv|
-        lv.memory = resources.fetch("memoryMiB")
-        lv.cpus = resources.fetch("cpus")
-      end
-
       node.vm.provision "shell", path: "scripts/guest/common.sh",
         args: [machine_name], run: "once"
       if machine_name == "core"
