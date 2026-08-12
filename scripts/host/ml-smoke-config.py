@@ -37,6 +37,7 @@ def main():
         dump_yaml(output / name, config)
 
     manifest = load_yaml(output / "manifest.yaml")
+    manifest.setdefault("runtime", {})["mlDevicePolicy"] = "cpu"
     manifest["smoke"] = {
         "purpose": "cpu-container-health",
         "sourceConfigHash": sha256_tree(source),

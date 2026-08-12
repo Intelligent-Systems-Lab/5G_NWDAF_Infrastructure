@@ -3,6 +3,7 @@ set -euo pipefail
 source "$(dirname "$0")/lib.sh"
 
 export ML_RUNTIME_MODE=cpu-smoke
+export ML_DEVICE_POLICY=cpu
 export ML_PROJECT_NAME=5g-nwdaf-infrastructure-lifecycle-smoke
 config_dir="$HOST_ROOT/config/generated/ml-lifecycle-smoke"
 

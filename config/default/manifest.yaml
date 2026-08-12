@@ -22,6 +22,7 @@ constraints:
 runtime:
   guestMachines: [core, path-a, path-b]
   hostContainers: [pyanlf-a, pymtlf-a, pyanlf-b, pymtlf-b, pymtlf-c]
+  mlDevicePolicy: gpu
 datasets:
   path-a:
     profile: fixtures/full-core/traffic/profiles/full-core-cat-transition/path-a.json

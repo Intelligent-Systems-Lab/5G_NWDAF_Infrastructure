@@ -133,6 +133,12 @@ def main():
             "pyanlf-a model device",
         ),
         (
+            "ml-device-policy",
+            "manifest.yaml",
+            lambda value: value["runtime"].update({"mlDevicePolicy": "cpu"}),
+            "pymtlf-a device",
+        ),
+        (
             "pyanlf-accuracy-timeout",
             "pyanlf-a.yaml",
             lambda value: value["accuracy_monitor"]["report_delivery"].update(

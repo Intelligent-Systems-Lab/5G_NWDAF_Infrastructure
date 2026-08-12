@@ -160,7 +160,6 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--testbed", default="testbed.yaml")
     parser.add_argument("--config-dir")
-    parser.add_argument("--ml-device-override", choices=("cpu",))
     args = parser.parse_args()
 
     testbed_path = resolve_path(args.testbed)
@@ -278,6 +277,13 @@ def main():
     check.true("missing config files: {}".format(", ".join(missing)), not missing)
     if missing:
         return finish(check, testbed_path, config_dir)
+
+    manifest = load_yaml(config_dir / "manifest.yaml")
+    ml_device_policy = manifest.get("runtime", {}).get("mlDevicePolicy")
+    check.true(
+        "manifest runtime.mlDevicePolicy must be cpu or gpu",
+        ml_device_policy in ("cpu", "gpu"),
+    )
 
     try:
         _scenario_path, scenario = resolve_config_scenario(config_dir)
@@ -694,7 +700,7 @@ def main():
             client["model_interoperability_ids"],
             [expected_interoperability],
         )
-        expected_device = args.ml_device_override or services[mtlf_name]["device"]
+        expected_device = "cpu" if ml_device_policy == "cpu" else "cuda:0"
         check.equal(mtlf_name + " device", client["training"]["device"], expected_device)
         check.equal(mtlf_name + " local epochs", client["training"]["epochs"], training["localEpochs"])
         check.equal(mtlf_name + " retrieval window", mtlf["dataset"]["retrieval_window_seconds"], training["preparationDataWindowSeconds"])

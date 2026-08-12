@@ -12,13 +12,14 @@ config_name=$(basename "$config_dir")
 
 check_args=(--testbed "$testbed" --config-dir "$config_dir")
 if [ "$mode" = cpu-smoke ]; then
-  check_args+=(--ml-device-override cpu)
   bind_address=127.0.0.1
 else
   bind_address=$(effective_ml_bind_address "$testbed")
 fi
 
 python3 "$HOST_ROOT/scripts/host/config-check.py" "${check_args[@]}"
+device_policy=$(config_ml_device_policy "$config_dir")
+export ML_DEVICE_POLICY="$device_policy"
 python3 "$HOST_ROOT/scripts/host/ml-compose-check.py" \
   --testbed "$testbed" --config-dir "$config_dir" --mode "$mode"
 
@@ -35,10 +36,10 @@ export CONFIG_SET_NAME="$config_name"
 export CONFIG_HASH="$hash"
 export ML_BIND_ADDRESS="$bind_address"
 
-echo "ML CONFIG project=$project mode=$mode set=$config_name hash=$hash bind=$bind_address"
+echo "ML CONFIG project=$project mode=$mode device_policy=$device_policy set=$config_name hash=$hash bind=$bind_address"
 ml_compose build pyanlf-a pymtlf-a
 
-if [ "$mode" = baseline ]; then
+if [ "$device_policy" = gpu ]; then
   cdi_device=nvidia.com/gpu=all
   echo "GPU PROBE device=$cdi_device image=5g-nwdaf-infrastructure/pymtlf:local"
   docker run --rm --runtime nvidia \

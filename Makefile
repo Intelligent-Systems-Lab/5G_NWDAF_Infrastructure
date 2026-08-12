@@ -3,6 +3,7 @@ TESTBED ?= testbed.yaml
 CONFIG_DIR ?=
 NAME ?= local
 FROM ?= full-core-cat-transition
+DEVICE ?= gpu
 SCENARIO ?= fixtures/full-core/scenarios/full-core-cat-transition.yaml
 
 .PHONY: help help-advanced help-dev help-all experiment-validate experiment-start experiment-status experiment-stop \
@@ -34,7 +35,7 @@ help-advanced:
 	@echo "5G NWDAF Infrastructure — advanced operations"
 	@echo ""
 	@echo "Configuration and datasets"
-	@echo "  make config-create NAME=... [FROM=full-core-cat-transition|fl-closure-smoke]"
+	@echo "  make config-create NAME=... [FROM=full-core-cat-transition|fl-closure-smoke] [DEVICE=gpu|cpu]"
 	@echo "  make config-validate CONFIG_DIR=..."
 	@echo "  make dataset-generate | dataset-validate | dataset-show | dataset-load CONFIG_DIR=..."
 	@echo ""
@@ -73,8 +74,9 @@ experiment-stop:
 
 config-create:
 	@case "$(FROM)" in full-core-cat-transition|fl-closure-smoke) ;; *) echo "FROM must be full-core-cat-transition or fl-closure-smoke" >&2; exit 2;; esac
+	@case "$(DEVICE)" in gpu|cpu) ;; *) echo "DEVICE must be gpu or cpu" >&2; exit 2;; esac
 	@python3 scripts/host/config-render.py --testbed "$(TESTBED)" --name "$(NAME)" \
-		--scenario "fixtures/full-core/scenarios/$(FROM).yaml" --output-root config/local
+		--scenario "fixtures/full-core/scenarios/$(FROM).yaml" --output-root config/local --ml-device "$(DEVICE)"
 
 config-validate: config-check
 

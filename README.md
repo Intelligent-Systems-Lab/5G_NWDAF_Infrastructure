@@ -47,7 +47,7 @@ complete sequence is:
 git submodule update --init --recursive
 cp testbed.local.example.yaml testbed.local.yaml
 # Select VirtualBox in testbed.local.yaml.
-make config-create NAME=my-experiment
+make config-create NAME=my-experiment DEVICE=gpu
 make dataset-generate CONFIG_DIR=config/local/my-experiment
 make experiment-validate CONFIG_DIR=config/local/my-experiment
 make vm-up
@@ -58,12 +58,14 @@ make logs
 
 `experiment-validate` is deliberately read-only and rejects a missing dataset;
 `experiment-start` regenerates and revalidates that dataset before activating
-the process domains. The default example is `full-core-cat-transition`. To
+the process domains. `DEVICE` is an explicit config policy: choose `gpu` or
+`cpu`; no Host detection silently changes it. The default is the recommended
+`gpu` policy. The default example is `full-core-cat-transition`. To
 create the bounded `fl-closure-smoke` instead, without changing VM topology or
 rebuilding a VM:
 
 ```sh
-make config-create NAME=my-smoke FROM=fl-closure-smoke
+make config-create NAME=my-smoke FROM=fl-closure-smoke DEVICE=cpu
 make config-validate CONFIG_DIR=config/local/my-smoke
 make dataset-generate CONFIG_DIR=config/local/my-smoke
 make dataset-show CONFIG_DIR=config/local/my-smoke
@@ -119,8 +121,8 @@ The committed config publishes all five ML endpoints on the isolated Host SBI
 candidate `192.168.57.1`, using ports `9091`-`9094` and `9292`. Container
 listeners bind their own `0.0.0.0` interfaces; callbacks and Go NWDAF clients
 use only the advertised Host endpoints. A pinned Python 3.12 image definition,
-PyAnLF/PyMTLF targets, five-service Compose topology, production NVIDIA runtime
-CDI selection, and a CPU-only validation override are implemented. Bounded CPU image and
+PyAnLF/PyMTLF targets, five-service Compose topology, config-owned CPU/GPU
+policy, and production NVIDIA runtime CDI selection are implemented. Bounded CPU image and
 lifecycle smokes started all five services, verified status/log/stop behavior,
 and removed their disposable containers and volumes afterward. The production
 `ml-start`/`ml-status`/`ml-stop` lifecycle is implemented and has also started

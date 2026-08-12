@@ -8,7 +8,14 @@ import subprocess
 import sys
 from pathlib import Path
 
-from configlib import ROOT, load_yaml, resolve_config_dir, resolve_ml_bind_address, resolve_path
+from configlib import (
+    ROOT,
+    load_yaml,
+    resolve_config_dir,
+    resolve_ml_bind_address,
+    resolve_ml_device_policy,
+    resolve_path,
+)
 
 
 class Check:
@@ -24,10 +31,10 @@ class Check:
             self.errors.append(label)
 
 
-def compose_config(mode, config_dir, bind_address):
+def compose_config(mode, device_policy, config_dir, bind_address):
     command = ["docker", "compose", "-f", str(ROOT / "compose.yaml")]
-    if mode == "cpu-smoke":
-        command.extend(["-f", str(ROOT / "compose.cpu-smoke.yaml")])
+    if device_policy == "cpu":
+        command.extend(["-f", str(ROOT / "compose.cpu.yaml")])
     command.extend(["config", "--format", "json"])
     environment = dict(os.environ)
     environment.update(
@@ -50,8 +57,9 @@ def main():
 
     testbed = load_yaml(resolve_path(args.testbed))
     config_dir = resolve_config_dir(testbed, args.config_dir)
+    device_policy = resolve_ml_device_policy(config_dir)
     bind_address = "127.0.0.1" if args.mode == "cpu-smoke" else resolve_ml_bind_address(testbed)
-    resolved = compose_config(args.mode, config_dir, bind_address)
+    resolved = compose_config(args.mode, device_policy, config_dir, bind_address)
     services = resolved.get("services", {})
     expected_services = testbed["mlRuntime"]["services"]
     component_locks = {
@@ -74,6 +82,13 @@ def main():
 
     for name, expected in expected_services.items():
         service = services.get(name, {})
+        native = load_yaml(config_dir / (name + ".yaml"))
+        if name.startswith("pyanlf-"):
+            configured_device = native["model"]["device"]
+        elif native.get("runtime", {}).get("mode") == "fl_client":
+            configured_device = native["federated_learning"]["client"]["training"]["device"]
+        else:
+            configured_device = "cpu"
         image_type = expected["image"]
         check.equal(name + " build target", service.get("build", {}).get("target"), image_type)
         check.equal(name + " image", service.get("image"), "5g-nwdaf-infrastructure/{}:local".format(image_type))
@@ -108,8 +123,8 @@ def main():
             any(item.get("type") == "volume" and item.get("target") == data_targets[name] for item in mounts),
         )
 
-        expected_gpu = expected["device"].startswith("cuda") and args.mode == "baseline"
-        cpu_override = args.mode == "cpu-smoke" and expected["device"].startswith("cuda")
+        expected_gpu = configured_device.startswith("cuda")
+        cpu_override = device_policy == "cpu" and expected["device"].startswith("cuda")
         expected_runtime = "nvidia" if expected_gpu else ("runc" if cpu_override else None)
         check.equal(name + " OCI runtime", service.get("runtime"), expected_runtime)
         environment = service.get("environment", {})
@@ -137,7 +152,9 @@ def main():
         for error in check.errors:
             print("ERROR: " + error, file=sys.stderr)
         return 1
-    print("OK compose mode={} services={} config={}".format(args.mode, len(services), config_dir))
+    print("OK compose mode={} device_policy={} services={} config={}".format(
+        args.mode, device_policy, len(services), config_dir
+    ))
     return 0
 
 

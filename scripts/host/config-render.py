@@ -2,6 +2,7 @@
 """Render an explicit topology into a complete generated native config set."""
 
 import argparse
+import copy
 import shutil
 import subprocess
 import sys
@@ -302,12 +303,18 @@ def main():
         default="fixtures/full-core/scenarios/full-core-cat-transition.yaml",
     )
     parser.add_argument("--output-root", default="config/generated")
+    parser.add_argument("--ml-device", choices=("cpu", "gpu"))
     parser.add_argument("--force", action="store_true")
     args = parser.parse_args()
     if not args.name.replace("-", "").replace("_", "").isalnum():
         raise SystemExit("name may contain only letters, digits, '-' and '_'")
     testbed_path = resolve_path(args.testbed)
-    testbed = load_yaml(testbed_path)
+    topology_definition = load_yaml(testbed_path)
+    testbed = copy.deepcopy(topology_definition)
+    if args.ml_device:
+        training_device = "cpu" if args.ml_device == "cpu" else "cuda:0"
+        for service_name in ("pymtlf-a", "pymtlf-b"):
+            testbed["mlRuntime"]["services"][service_name]["device"] = training_device
     scenario_path, scenario = load_scenario_definition(args.scenario)
     baseline = ROOT / "config" / "default"
     output = resolve_path(args.output_root) / args.name
@@ -339,6 +346,14 @@ def main():
     manifest["runtime"] = {
         "guestMachines": sorted(testbed["machines"]),
         "hostContainers": list(testbed["placement"]["host-containers"]),
+        "mlDevicePolicy": (
+            "gpu"
+            if any(
+                service["device"].startswith("cuda")
+                for service in testbed["mlRuntime"]["services"].values()
+            )
+            else "cpu"
+        ),
     }
     manifest["datasets"] = {}
     profiles = scenario["trafficProfiles"]
@@ -352,7 +367,7 @@ def main():
         }
     manifest["generated"] = {
         "baselineHash": sha256_tree(baseline),
-        "definitionHash": canonical_sha256(testbed),
+        "definitionHash": canonical_sha256(topology_definition),
         "generatorSourceHash": config_generator_source_hash(),
         "generatorRevision": revision,
         "files": sorted(path.relative_to(output).as_posix() for path in output.rglob("*.yaml") if path.name != "manifest.yaml"),

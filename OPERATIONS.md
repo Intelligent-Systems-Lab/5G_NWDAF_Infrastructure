@@ -60,12 +60,16 @@ the provider instead of weakening the topology silently.
 the main reference example with:
 
 ```sh
-make config-create NAME=my-lab
+make config-create NAME=my-lab DEVICE=gpu
 make config-validate CONFIG_DIR=config/local/my-lab
 ```
 
 Use `FROM=fl-closure-smoke` to select the bounded example instead. The command
 writes only `config/local/<name>` and refuses to overwrite an existing set.
+`DEVICE=gpu` is the recommended default; `DEVICE=cpu` creates an otherwise
+equivalent config whose two FL clients train on CPU. The choice is recorded as
+`runtime.mlDevicePolicy` and must match both native PyMTLF configs. Validation
+never changes it based on Host hardware.
 Select that complete set explicitly or through the ignored local settings:
 
 ```yaml
@@ -87,7 +91,7 @@ Scenario selection is independent of VM topology. `config/default` is the
 scenario as another complete ignored set:
 
 ```sh
-make config-create NAME=my-smoke FROM=fl-closure-smoke
+make config-create NAME=my-smoke FROM=fl-closure-smoke DEVICE=cpu
 make config-validate CONFIG_DIR=config/local/my-smoke
 make dataset-generate CONFIG_DIR=config/local/my-smoke
 make dataset-show CONFIG_DIR=config/local/my-smoke
@@ -344,9 +348,11 @@ baseline advertises `192.168.57.1` with these fixed mappings:
 The physical bind address may be overridden in `testbed.local.yaml`, but all
 three VMs must still route to the advertised address. Container-native configs
 listen on `0.0.0.0`; public URLs and callbacks use the advertised Host endpoint.
-`compose.yaml` defines the five production services. PyMTLF-A/B request one
-NVIDIA GPU and keep `cuda:0` in their native config; the other services are CPU
-placed. Every service has a non-root user, read-only root filesystem, bounded
+`compose.yaml` defines the five production services. Under the recommended GPU
+policy, PyMTLF-A/B request the NVIDIA runtime and keep `cuda:0` in native
+config. Under the CPU policy, `compose.cpu.yaml` returns both to `runc` and their
+native configs use `cpu`. The other three services are CPU placed under either
+policy. Every service has a non-root user, read-only root filesystem, bounded
 log rotation, health check, memory/CPU limit, read-only config bind, and its own
 writable named volume. The three PyMTLF volumes contain artifact storage, model
 state, publication journal, and FL workspaces under one service-specific root.
@@ -367,11 +373,12 @@ make ml-stop
 ```
 
 `ml-start` validates and hashes the selected complete config set, builds each
-image target once, verifies the Host bind address, requires the configured Host
-RAM reserve and Docker free-space threshold, and performs an actual CUDA
-visibility probe before starting the production GPU services. Low swap follows
-the configured warn/require policy. Missing NVIDIA runtime support therefore
-fails before Compose service creation instead of silently falling back to CPU.
+image target once, verifies the Host bind address, and requires the configured
+Host RAM reserve and Docker free-space threshold. For a GPU config it also
+checks CDI/runtime and performs an actual CUDA visibility probe before service
+creation. A CPU config does not require NVIDIA. Low swap follows the configured
+warn/require policy. A missing GPU prerequisite fails instead of silently
+falling back to CPU.
 A failed Compose startup stops only this ML project and retains images and named
 volumes.
 

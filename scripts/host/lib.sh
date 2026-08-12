@@ -98,14 +98,32 @@ ml_runtime_mode() {
   esac
 }
 
+config_ml_device_policy() {
+  local config_dir=$1
+  PYTHONPATH="$HOST_ROOT/scripts/host" python3 - "$config_dir" <<'PY'
+import sys
+from configlib import resolve_ml_device_policy, resolve_path
+print(resolve_ml_device_policy(resolve_path(sys.argv[1])))
+PY
+}
+
+ml_device_policy() {
+  local policy=${ML_DEVICE_POLICY:-}
+  case "$policy" in
+    cpu|gpu) printf '%s\n' "$policy" ;;
+    "") echo "ML_DEVICE_POLICY is unset; resolve it from the selected config first" >&2; return 2 ;;
+    *) echo "invalid ML device policy: $policy" >&2; return 2 ;;
+  esac
+}
+
 ml_compose() {
-  local project mode
+  local project policy
   local -a command
   project=$(ml_project_name)
-  mode=$(ml_runtime_mode)
+  policy=$(ml_device_policy)
   command=(docker compose -p "$project" -f "$HOST_ROOT/compose.yaml")
-  if [ "$mode" = cpu-smoke ]; then
-    command+=(-f "$HOST_ROOT/compose.cpu-smoke.yaml")
+  if [ "$policy" = cpu ]; then
+    command+=(-f "$HOST_ROOT/compose.cpu.yaml")
   fi
   "${command[@]}" "$@"
 }
@@ -165,10 +183,10 @@ PY
 }
 
 ml_runtime_gate() {
-  local mode cdi_device cdi_inventory
-  mode=$(ml_runtime_mode)
-  if [ "$mode" = cpu-smoke ]; then
-    echo "ML RUNTIME mode=cpu-smoke nvidia=not-required"
+  local policy cdi_device cdi_inventory
+  policy=$(ml_device_policy)
+  if [ "$policy" = cpu ]; then
+    echo "ML RUNTIME device_policy=cpu nvidia=not-required"
     return 0
   fi
 
@@ -188,7 +206,7 @@ ml_runtime_gate() {
     echo "NVIDIA Docker runtime is unavailable; register it and reload Docker" >&2
     return 1
   fi
-  echo "ML RUNTIME mode=baseline cdi=$cdi_device docker_runtime=nvidia"
+  echo "ML RUNTIME device_policy=gpu cdi=$cdi_device docker_runtime=nvidia"
 }
 
 stage_config_all() {

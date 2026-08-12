@@ -77,6 +77,14 @@ def resolve_ml_bind_address(testbed):
     )
 
 
+def resolve_ml_device_policy(config_dir):
+    manifest = load_yaml(Path(config_dir) / "manifest.yaml")
+    policy = manifest.get("runtime", {}).get("mlDevicePolicy")
+    if policy not in ("cpu", "gpu"):
+        raise ValueError("runtime.mlDevicePolicy must be cpu or gpu")
+    return policy
+
+
 def sha256_file(path):
     digest = hashlib.sha256()
     with Path(path).open("rb") as stream:
