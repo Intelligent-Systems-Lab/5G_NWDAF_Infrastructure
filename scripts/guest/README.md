@@ -30,3 +30,10 @@ candidate in an isolated Netplan root, installs it atomically, reloads networkd,
 and reconfigures only affected host-only interfaces. It refuses to reconfigure
 the default-route interface and restores the previous fragment on failure.
 Vagrant continues to own `50-vagrant.yaml`; Netplan merges both files at boot.
+
+`webconsole-build.sh` is installed as a runtime helper but runs only for an
+enabled WebConsole config. It verifies the uploaded source archive, installs
+Node.js 20 on first use, runs Yarn 4.1.0 and the Go build as the unprivileged
+runtime account from an isolated staging directory, and atomically publishes a
+content-addressed release. Failed builds remove the stage and never replace the
+`current` artifact; ordinary stop retains releases, toolchain, and caches.

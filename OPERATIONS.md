@@ -2,16 +2,17 @@
 
 ## Lifecycle boundaries
 
-The repository treats five states independently:
+The repository treats six states independently:
 
 1. Source and config are selected on the physical host.
 2. `vagrant up` creates or powers on `core`, `path-a`, and `path-b`.
 3. `services-start` stages one config set and starts guest processes.
-4. `ml-start` starts five Host ML containers from that same config identity.
-5. `subscriptions-start` runs one Core consumer and creates two NWDAF resources.
+4. An enabled `webconsole-start` starts the optional Core management UI.
+5. `ml-start` starts five Host ML containers from that same config identity.
+6. `subscriptions-start` runs one Core consumer and creates two NWDAF resources.
 
 `experiment-start` and `experiment-stop` are convenience orchestration over
-states 3-5. They do not change VM power or reset retained state. A clean start
+states 3-6. They do not change VM power or reset retained state. A clean start
 refuses pre-existing active experiment processes so rollback can stop only the
 domains started by that invocation. The three domain lifecycles remain public
 for focused operation and debugging.
@@ -76,6 +77,9 @@ writes only `config/local/<name>` and refuses to overwrite an existing set.
 equivalent config whose two FL clients train on CPU. The choice is recorded as
 `runtime.mlDevicePolicy` and must match both native PyMTLF configs. Validation
 never changes it based on Host hardware.
+Add `WEBCONSOLE=true` to record that the optional Core WebConsole should be
+built and started. Its default is `false`; a disabled config performs no
+WebConsole toolchain installation, build, or process mutation.
 Select that complete set explicitly or through the ignored local settings:
 
 ```yaml
@@ -231,6 +235,51 @@ both gNB/UE groups.
 It does not start ML containers. Failure triggers reverse-order rollback.
 `make services-stop` performs the same reverse order without halting VMs; it
 also defensively stops any retained legacy guest ML units.
+
+## Optional WebConsole
+
+WebConsole is a separate lifecycle from VM power, Guest services, Host ML, and
+subscriptions. It requires Core's active config identity, MongoDB, and NRF, but
+does not become a dependency of the other Guest services:
+
+```sh
+make config-create NAME=my-webconsole DEVICE=cpu WEBCONSOLE=true
+make dataset-generate CONFIG_DIR=config/local/my-webconsole
+make vm-up
+make services-start CONFIG_DIR=config/local/my-webconsole
+make webconsole-start CONFIG_DIR=config/local/my-webconsole
+make webconsole-status
+# Browse http://192.168.56.10:5000; default login is admin / free5gc.
+make webconsole-stop
+```
+
+The first enabled start verifies the clean pinned `webconsole` gitlink, installs
+Node.js 20 only in Core, activates Yarn 4.1.0 through Corepack, and builds the
+frontend and Go server from a source archive. The artifact identity includes
+the exact source revision and build-helper hash. Complete releases live below
+`/var/lib/5g-nwdaf-infrastructure/webconsole/releases/`; `current` changes
+atomically, and matching later starts reuse it. Stop retains the artifact,
+toolchain, caches, active config, MongoDB, and all other services.
+
+The HTTP listener binds only the VirtualBox host-only management address
+`192.168.56.10:5000`. Upstream WebConsole revision `70d282f` contains a boolean
+validation regression that rejects `billingServer.enable: false`. This
+integration therefore leaves it `true` without patching upstream, but validates
+that its FTP control listener is fixed to Core loopback `127.0.0.1:2121` with
+passive range `2123`-`2130`. It is unused without CHF and is not reachable from
+the Host or laboratory LAN. Billing transfer, TLS, certificates, OAuth, and
+subscriber write behavior are outside the qualified boundary.
+
+The pinned upstream startup path deletes and recreates the WebConsole-owned
+`admin` tenant and user on every start, resetting its credentials to
+`admin/free5gc`. The Host command prints this warning before starting the unit.
+This does not replace the six config-owned subscriber records, but WebConsole
+start is therefore not a completely read-only MongoDB operation. View its unit
+log with:
+
+```sh
+scripts/host/logs.sh --source vm --vm core --service webconsole --no-follow
+```
 
 Subscriber data is config-owned experiment input rather than process state, so
 it persists across `services-stop` and VM restart. Each complete config selects

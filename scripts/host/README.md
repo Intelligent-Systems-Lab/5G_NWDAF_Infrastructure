@@ -25,6 +25,15 @@ does not require NVIDIA. It does not configure or restart the shared daemon. `ml
 reports the configured application device, OCI runtime, CDI selector, and
 in-container CUDA visibility separately.
 
+`webconsole-prepare.sh` is a Core-only lazy builder. Disabled configs return
+before Vagrant access. Enabled configs require the clean locked WebConsole
+gitlink, compute an identity from its revision and `webconsole-build.sh`, and
+reuse a matching Guest artifact. `webconsole-start.sh`, `webconsole-status.sh`,
+and `webconsole-stop.sh` own only the optional systemd instance; they require
+MongoDB/NRF but never stop them. The pinned upstream billing workaround is
+validated as enabled on Core loopback, not exposed through the management
+address.
+
 `subscriber-data.sh` validates the selected config, uploads only its selected
 subscriber/group inputs to temporary Core paths, and invokes the installed guest
 `mongosh` projection for scoped `validate`, `plan`, `apply`, `show`, or `clear`.

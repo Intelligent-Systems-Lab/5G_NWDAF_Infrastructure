@@ -27,6 +27,15 @@ case "$service:$machine" in
     go_nf "$service" "${service}cfg.yaml" ;;
   smf:core) as_runtime "$bin/smf" -c "$config/smfcfg.yaml" -u "$config/uerouting.yaml" ;;
   nwdaf-c:core) go_nf nwdaf nwdafcfg-c.yaml ;;
+  webconsole:core)
+    artifact=/var/lib/5g-nwdaf-infrastructure/webconsole/current
+    test -x "$artifact/webconsole" -a -f "$artifact/public/index.html" || {
+      echo "WebConsole artifact is missing or incomplete" >&2
+      exit 1
+    }
+    cd "$artifact"
+    as_runtime "$artifact/webconsole" -c "$config/webuicfg.yaml"
+    ;;
   upf-a:path-a) upf upfcfg-a.yaml ;;
   upf-b:path-b) upf upfcfg-b.yaml ;;
   nwdaf-a:path-a) go_nf nwdaf nwdafcfg-a.yaml ;;

@@ -5,8 +5,10 @@ source "$(dirname "$0")/lib.sh"
 testbed=${1:-testbed.yaml}
 explicit_config=${2:-}
 cpu_config="$HOST_ROOT/config/generated/ml-repository-test"
+webconsole_root=$(mktemp -d)
 cleanup() {
   rm -rf "$cpu_config"
+  rm -rf "$webconsole_root"
 }
 trap cleanup EXIT
 check_args=(--testbed "$testbed")
@@ -30,6 +32,15 @@ print("PASS Python syntax")
 PY
 
 python3 "$HOST_ROOT/scripts/host/config-contract-smoke.py" "${check_args[@]}"
+"$HOST_ROOT/scripts/host/webconsole-prepare.sh" "$testbed" "config/default" |
+  grep -F "no toolchain or artifact was changed"
+"$HOST_ROOT/scripts/host/webconsole-start.sh" "$testbed" "config/default" |
+  grep -F "no toolchain, artifact, or process was changed"
+python3 "$HOST_ROOT/scripts/host/config-render.py" --testbed "$testbed" \
+  --name enabled --scenario fixtures/full-core/scenarios/fl-closure-smoke.yaml \
+  --output-root "$webconsole_root" --ml-device cpu --webconsole true
+python3 "$HOST_ROOT/scripts/host/config-check.py" --testbed "$testbed" \
+  --config-dir "$webconsole_root/enabled"
 python3 "$HOST_ROOT/scripts/host/network-config-smoke.py"
 "$HOST_ROOT/scripts/host/dataset-smoke.sh" "$testbed" "$explicit_config"
 python3 "$HOST_ROOT/scripts/host/ml-compose-check.py" "${check_args[@]}"

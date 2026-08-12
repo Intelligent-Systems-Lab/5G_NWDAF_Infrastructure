@@ -77,6 +77,11 @@ placement:
   path-b: [upf-b, gnb-b, ue4, ue5, ue6, nwdaf-b]
   host-containers: [pyanlf-a, pymtlf-a, pyanlf-b, pymtlf-b, pymtlf-c]
 
+optionalServices:
+  webconsole:
+    machine: core
+    endpoint: {network: management, address: 192.168.56.10, port: 5000}
+
 mlRuntime:
   engine: docker-compose-v2
   networkMode: bridge

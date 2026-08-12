@@ -16,6 +16,8 @@ while :; do
   echo
   "$HOST_ROOT/scripts/host/services-status.sh" 2>/dev/null || echo "service status unavailable"
   echo
+  "$HOST_ROOT/scripts/host/webconsole-status.sh" 2>/dev/null || echo "WebConsole status unavailable"
+  echo
   "$HOST_ROOT/scripts/host/ml-status.sh" 2>/dev/null || echo "ML container status unavailable"
   if [ -x "$HOST_ROOT/scripts/host/subscriptions-status.sh" ]; then
     echo

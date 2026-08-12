@@ -23,6 +23,9 @@ runtime:
   guestMachines: [core, path-a, path-b]
   hostContainers: [pyanlf-a, pymtlf-a, pyanlf-b, pymtlf-b, pymtlf-c]
   mlDevicePolicy: gpu
+optionalServices:
+  webconsole:
+    enabled: false
 subscriberData:
   subscribers: subscriber/ue-subscribers.json
   groups: subscriber/group-memberships.json

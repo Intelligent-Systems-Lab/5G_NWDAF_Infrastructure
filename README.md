@@ -78,6 +78,28 @@ available when an execution domain must be operated independently. Run
 `make help`, `make help-advanced`, or `make help-dev` for the layered command
 surface.
 
+WebConsole is optional at both build and runtime. Add `WEBCONSOLE=true` when
+creating a config set to include it in `experiment-start`, or operate it
+independently after Guest services are active:
+
+```sh
+make config-create NAME=my-lab DEVICE=gpu WEBCONSOLE=true
+make webconsole-start CONFIG_DIR=config/local/my-lab
+make webconsole-status
+make webconsole-stop
+```
+
+The first enabled start installs Node.js 20 in Core and builds the pinned
+frontend and Go server. Later starts reuse the content-addressed artifact.
+Disabled configs do not install, build, or start WebConsole. The HTTP endpoint
+is `http://192.168.56.10:5000` on the isolated management network. The pinned
+upstream revision cannot validate `billingServer.enable: false`, so its unused
+FTP server remains enabled but is restricted to Core loopback
+`127.0.0.1:2121`; billing transfers, TLS, and certificates are not supported.
+The upstream startup path also recreates its own `admin` tenant/account and
+resets the credentials to `admin/free5gc` each time; it does not replace the
+config-owned subscriber records.
+
 PyAnLF-A/B retrieve analytics data through ADRF. Their optional direct MongoDB
 fallback is disabled in the default and generated E2E config sets; MongoDB still
 runs in the Core VM for the 5GC NFs and ADRF itself. PyMTLF configuration is not

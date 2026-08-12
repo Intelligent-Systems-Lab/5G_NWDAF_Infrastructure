@@ -24,6 +24,7 @@ install -m 0755 "$source_root/scripts/guest/config-activate.sh" "$destination/co
 install -m 0755 "$source_root/scripts/guest/network-config.py" "$destination/network-config"
 install -m 0755 "$source_root/scripts/guest/network-setup.sh" "$destination/network-setup"
 install -m 0755 "$source_root/scripts/guest/dataset-activate.sh" "$destination/dataset-activate"
+install -m 0755 "$source_root/scripts/guest/webconsole-build.sh" "$destination/webconsole-build"
 install -m 0755 "$source_root/tools/nwdaf-consumer/consumer.py" "$destination/nwdaf-consumer"
 install -m 0644 "$source_root/scripts/guest/subscriber-data.js" "$destination/subscriber-data.js"
 install -m 0644 "$source_root/scripts/guest/systemd/5g-nwdaf@.service" /etc/systemd/system/5g-nwdaf@.service

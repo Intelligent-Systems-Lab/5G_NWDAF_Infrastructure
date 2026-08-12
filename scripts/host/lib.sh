@@ -107,6 +107,29 @@ print(resolve_ml_device_policy(resolve_path(sys.argv[1])))
 PY
 }
 
+config_webconsole_enabled() {
+  local config_dir=$1
+  PYTHONPATH="$HOST_ROOT/scripts/host" python3 - "$config_dir" <<'PY'
+import sys
+from configlib import load_yaml, resolve_path
+manifest = load_yaml(resolve_path(sys.argv[1]) / "manifest.yaml")
+enabled = manifest.get("optionalServices", {}).get("webconsole", {}).get("enabled")
+if not isinstance(enabled, bool):
+    raise SystemExit("optionalServices.webconsole.enabled must be boolean")
+print(str(enabled).lower())
+PY
+}
+
+config_webconsole_endpoint() {
+  local config_dir=$1
+  PYTHONPATH="$HOST_ROOT/scripts/host" python3 - "$config_dir" <<'PY'
+import sys
+from configlib import load_yaml, resolve_path
+config = load_yaml(resolve_path(sys.argv[1]) / "webuicfg.yaml")["configuration"]["webServer"]
+print(config["ipv4Address"], config["port"])
+PY
+}
+
 ml_device_policy() {
   local policy=${ML_DEVICE_POLICY:-}
   case "$policy" in

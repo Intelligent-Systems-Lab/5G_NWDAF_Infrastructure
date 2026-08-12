@@ -4,6 +4,7 @@ CONFIG_DIR ?=
 NAME ?= local
 FROM ?= full-core-cat-transition
 DEVICE ?= gpu
+WEBCONSOLE ?= false
 SCENARIO ?= fixtures/full-core/scenarios/full-core-cat-transition.yaml
 
 .PHONY: help help-advanced help-dev help-all experiment-validate experiment-start experiment-status experiment-stop \
@@ -11,6 +12,7 @@ SCENARIO ?= fixtures/full-core/scenarios/full-core-cat-transition.yaml
 	preflight config-check config-render config-contract-smoke network-config-smoke dataset-generate dataset-check dataset-show \
 	dataset-smoke dataset-stage-plan dataset-stage ml-compose-check ml-cpu-smoke ml-lifecycle-smoke \
 	ml-start ml-status ml-stop vm-up vm-status vm-halt \
+	webconsole-start webconsole-status webconsole-stop \
 	services-start services-status services-stop subscriptions-start \
 	subscriptions-status subscriptions-stop subscriber-data-validate \
 	subscriber-data-plan subscriber-data-apply subscriber-data-show \
@@ -35,13 +37,14 @@ help-advanced:
 	@echo "5G NWDAF Infrastructure — advanced operations"
 	@echo ""
 	@echo "Configuration and datasets"
-	@echo "  make config-create NAME=... [FROM=full-core-cat-transition|fl-closure-smoke] [DEVICE=gpu|cpu]"
+	@echo "  make config-create NAME=... [FROM=full-core-cat-transition|fl-closure-smoke] [DEVICE=gpu|cpu] [WEBCONSOLE=false|true]"
 	@echo "  make config-validate CONFIG_DIR=..."
 	@echo "  make dataset-generate | dataset-validate | dataset-show | dataset-load CONFIG_DIR=..."
 	@echo ""
 	@echo "Independent execution domains"
 	@echo "  make services-start CONFIG_DIR=... | services-status | services-stop"
 	@echo "  make ml-start CONFIG_DIR=... | ml-status | ml-stop"
+	@echo "  make webconsole-start CONFIG_DIR=... | webconsole-status | webconsole-stop"
 	@echo "  make subscriptions-start | subscriptions-status | subscriptions-stop"
 	@echo ""
 	@echo "Subscriber and retained experiment state"
@@ -75,8 +78,10 @@ experiment-stop:
 config-create:
 	@case "$(FROM)" in full-core-cat-transition|fl-closure-smoke) ;; *) echo "FROM must be full-core-cat-transition or fl-closure-smoke" >&2; exit 2;; esac
 	@case "$(DEVICE)" in gpu|cpu) ;; *) echo "DEVICE must be gpu or cpu" >&2; exit 2;; esac
+	@case "$(WEBCONSOLE)" in false|true) ;; *) echo "WEBCONSOLE must be false or true" >&2; exit 2;; esac
 	@python3 scripts/host/config-render.py --testbed "$(TESTBED)" --name "$(NAME)" \
-		--scenario "fixtures/full-core/scenarios/$(FROM).yaml" --output-root config/local --ml-device "$(DEVICE)"
+		--scenario "fixtures/full-core/scenarios/$(FROM).yaml" --output-root config/local --ml-device "$(DEVICE)" \
+		--webconsole "$(WEBCONSOLE)"
 
 config-validate: config-check
 
@@ -147,6 +152,15 @@ ml-status:
 
 ml-stop:
 	@scripts/host/ml-stop.sh
+
+webconsole-start:
+	@scripts/host/webconsole-start.sh "$(TESTBED)" "$(CONFIG_DIR)"
+
+webconsole-status:
+	@scripts/host/webconsole-status.sh
+
+webconsole-stop:
+	@scripts/host/webconsole-stop.sh
 
 vm-up:
 	@TESTBED="$(TESTBED)" vagrant up

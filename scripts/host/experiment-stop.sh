@@ -18,6 +18,7 @@ if [ "$consumer" = active ]; then
 else
   echo "Consumer is not active; no subscriptions were changed."
 fi
+"$HOST_ROOT/scripts/host/webconsole-stop.sh"
 "$HOST_ROOT/scripts/host/ml-stop.sh"
 "$HOST_ROOT/scripts/host/services-stop.sh"
 

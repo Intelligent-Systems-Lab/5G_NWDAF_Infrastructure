@@ -9,6 +9,7 @@ files=(
   scripts/guest/network-config.py
   scripts/guest/network-setup.sh
   scripts/guest/dataset-activate.sh
+  scripts/guest/webconsole-build.sh
   scripts/guest/subscriber-data.js
   scripts/guest/systemd/5g-nwdaf@.service
   scripts/guest/systemd/5g-nwdaf-stack.target
@@ -27,7 +28,15 @@ tar -C "$HOST_ROOT" -czf "$archive" "${files[@]}"
 source_hash=$(sha256sum "$archive" | awk '{print $1}')
 remote_archive="/tmp/5g-nwdaf-runtime-tools-${source_hash:0:16}.tgz"
 
-for machine in "${MACHINES[@]}"; do
+selected_machines=("${MACHINES[@]}")
+if [ "$#" -gt 0 ]; then
+  selected_machines=("$@")
+  for machine in "${selected_machines[@]}"; do
+    case "$machine" in core|path-a|path-b) ;; *) echo "invalid guest-tools-sync machine: $machine" >&2; exit 2;; esac
+  done
+fi
+
+for machine in "${selected_machines[@]}"; do
   echo "SYNC RUNTIME TOOLS $machine source=$source_hash"
   (cd "$HOST_ROOT" && vagrant upload "$archive" "$remote_archive" "$machine")
   printf -v command \

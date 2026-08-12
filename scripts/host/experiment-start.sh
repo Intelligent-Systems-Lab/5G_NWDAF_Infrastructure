@@ -4,11 +4,14 @@ source "$(dirname "$0")/lib.sh"
 
 testbed=${1:-testbed.yaml}
 explicit_config=${2:-}
+config_dir=$(effective_config_dir "$testbed" "$explicit_config")
+webconsole_enabled=$(config_webconsole_enabled "$config_dir")
 dataset_args=(--testbed "$testbed")
 if [ -n "$explicit_config" ]; then
   dataset_args+=(--config-dir "$explicit_config")
 fi
 services_started=false
+webconsole_started=false
 ml_started=false
 subscriptions_attempted=false
 
@@ -59,6 +62,9 @@ rollback() {
   if $ml_started; then
     "$HOST_ROOT/scripts/host/ml-stop.sh" || true
   fi
+  if $webconsole_started; then
+    "$HOST_ROOT/scripts/host/webconsole-stop.sh" || true
+  fi
   if $services_started; then
     "$HOST_ROOT/scripts/host/services-stop.sh" || true
   fi
@@ -72,6 +78,10 @@ python3 "$HOST_ROOT/scripts/host/dataset.py" "${dataset_args[@]}" generate
 trap rollback EXIT
 "$HOST_ROOT/scripts/host/services-start.sh" "$testbed" "$explicit_config"
 services_started=true
+if [ "$webconsole_enabled" = true ]; then
+  "$HOST_ROOT/scripts/host/webconsole-start.sh" "$testbed" "$explicit_config"
+  webconsole_started=true
+fi
 "$HOST_ROOT/scripts/host/ml-start.sh" "$testbed" "$explicit_config"
 ml_started=true
 subscriptions_attempted=true

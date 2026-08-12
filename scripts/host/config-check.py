@@ -21,7 +21,7 @@ REQUIRED = {
     "nrfcfg.yaml", "amfcfg.yaml", "ausfcfg.yaml", "nssfcfg.yaml", "pcfcfg.yaml",
     "smfcfg.yaml", "udmcfg.yaml", "udrcfg.yaml", "uerouting.yaml", "upfcfg-a.yaml",
     "upfcfg-b.yaml", "nwdafcfg-a.yaml", "nwdafcfg-b.yaml", "nwdafcfg-c.yaml",
-    "adrfcfg.yaml", "pyanlf-a.yaml", "pyanlf-b.yaml", "pymtlf-a.yaml",
+    "adrfcfg.yaml", "webuicfg.yaml", "pyanlf-a.yaml", "pyanlf-b.yaml", "pymtlf-a.yaml",
     "pymtlf-b.yaml", "pymtlf-c.yaml", "consumer.yaml", "manifest.yaml",
     "ueransim/gnb-a.yaml", "ueransim/gnb-b.yaml", "ueransim/ue1.yaml",
     "ueransim/ue2.yaml", "ueransim/ue3.yaml", "ueransim/ue4.yaml",
@@ -302,6 +302,13 @@ def main():
         "manifest runtime.mlDevicePolicy must be cpu or gpu",
         ml_device_policy in ("cpu", "gpu"),
     )
+    webconsole_enabled = manifest.get("optionalServices", {}).get(
+        "webconsole", {}
+    ).get("enabled")
+    check.true(
+        "manifest optionalServices.webconsole.enabled must be boolean",
+        isinstance(webconsole_enabled, bool),
+    )
 
     try:
         _scenario_path, scenario = resolve_config_scenario(config_dir)
@@ -400,6 +407,57 @@ def main():
     mongo = testbed["coreServices"]["mongodb"]
     mongo_uri = "mongodb://{}:{}".format(
         mongo["endpoint"]["address"], mongo["endpoint"]["port"]
+    )
+    webconsole_definition = testbed.get("optionalServices", {}).get(
+        "webconsole", {}
+    )
+    webconsole_endpoint = webconsole_definition.get("endpoint", {})
+    check.equal("WebConsole machine", webconsole_definition.get("machine"), "core")
+    check.equal(
+        "WebConsole endpoint network",
+        webconsole_endpoint.get("network"),
+        "management",
+    )
+    check.equal(
+        "WebConsole management address",
+        webconsole_endpoint.get("address"),
+        testbed["machines"]["core"]["interfaces"]["management"],
+    )
+    check.true(
+        "WebConsole port must be valid",
+        isinstance(webconsole_endpoint.get("port"), int)
+        and not isinstance(webconsole_endpoint.get("port"), bool)
+        and 0 < webconsole_endpoint["port"] < 65536,
+    )
+    webui = load_yaml(config_dir / "webuicfg.yaml")
+    webui_config = webui.get("configuration", {})
+    check.equal("WebConsole MongoDB URL", webui_config.get("mongodb", {}).get("url"), mongo_uri)
+    check.equal(
+        "WebConsole MongoDB database",
+        webui_config.get("mongodb", {}).get("name"),
+        mongo["database"],
+    )
+    check.equal("WebConsole NRF URI", webui_config.get("nrfUri"), nrf_uri)
+    check.equal(
+        "WebConsole HTTP endpoint",
+        webui_config.get("webServer"),
+        {
+            "scheme": "http",
+            "ipv4Address": webconsole_endpoint.get("address"),
+            "port": webconsole_endpoint.get("port"),
+        },
+    )
+    check.equal(
+        "WebConsole billing compatibility settings",
+        webui_config.get("billingServer"),
+        {
+            "enable": True,
+            "hostIPv4": "127.0.0.1",
+            "listenPort": 2121,
+            "portRange": {"start": 2123, "end": 2130},
+            "basePath": "/tmp/webconsole",
+            "port": 2122,
+        },
     )
     for name, filename in core_files.items():
         cfg = load_yaml(config_dir / filename)

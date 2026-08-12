@@ -36,6 +36,22 @@ def render(testbed, baseline, output, scenario):
     mongo_uri = "mongodb://{}:{}".format(
         core["mongodb"]["endpoint"]["address"], core["mongodb"]["endpoint"]["port"]
     )
+    webconsole_definition = testbed["optionalServices"]["webconsole"]
+    webconsole_endpoint = webconsole_definition["endpoint"]
+    webconsole = read(output, "webuicfg.yaml")
+    webconsole_config = webconsole["configuration"]
+    webconsole_config["mongodb"] = {
+        "name": core["mongodb"]["database"],
+        "url": mongo_uri,
+    }
+    webconsole_config["nrfUri"] = nrf_uri
+    webconsole_config["webServer"] = {
+        "scheme": "http",
+        "ipv4Address": webconsole_endpoint["address"],
+        "port": webconsole_endpoint["port"],
+    }
+    webconsole_config["billingServer"]["enable"] = True
+    write(output, "webuicfg.yaml", webconsole)
     files = {
         "nrf": "nrfcfg.yaml", "nssf": "nssfcfg.yaml", "udr": "udrcfg.yaml",
         "udm": "udmcfg.yaml", "ausf": "ausfcfg.yaml", "pcf": "pcfcfg.yaml",
@@ -304,6 +320,7 @@ def main():
     )
     parser.add_argument("--output-root", default="config/generated")
     parser.add_argument("--ml-device", choices=("cpu", "gpu"))
+    parser.add_argument("--webconsole", choices=("false", "true"))
     parser.add_argument("--force", action="store_true")
     args = parser.parse_args()
     if not args.name.replace("-", "").replace("_", "").isalnum():
@@ -354,6 +371,17 @@ def main():
             )
             else "cpu"
         ),
+    }
+    manifest["optionalServices"] = {
+        "webconsole": {
+            "enabled": args.webconsole == "true"
+            if args.webconsole is not None
+            else bool(
+                manifest.get("optionalServices", {})
+                .get("webconsole", {})
+                .get("enabled", False)
+            ),
+        },
     }
     manifest["datasets"] = {}
     profiles = scenario["trafficProfiles"]

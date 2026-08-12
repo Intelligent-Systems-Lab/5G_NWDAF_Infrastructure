@@ -37,7 +37,7 @@ def run_check(testbed, config_dir):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--testbed", default="testbed.yaml")
-    parser.add_argument("--config-dir", default="config/generated/fl-closure-smoke")
+    parser.add_argument("--config-dir", default="config/default")
     args = parser.parse_args()
 
     testbed = resolve_path(args.testbed).resolve()
@@ -135,7 +135,13 @@ def main():
         (
             "ml-device-policy",
             "manifest.yaml",
-            lambda value: value["runtime"].update({"mlDevicePolicy": "cpu"}),
+            lambda value: value["runtime"].update(
+                {
+                    "mlDevicePolicy": "gpu"
+                    if value["runtime"]["mlDevicePolicy"] == "cpu"
+                    else "cpu"
+                }
+            ),
             "pymtlf-a device",
         ),
         (
@@ -199,9 +205,25 @@ def main():
             "consumer native validation failed",
         ),
         (
+            "webconsole-endpoint",
+            "webuicfg.yaml",
+            lambda value: value["configuration"]["webServer"].update(
+                {"ipv4Address": "0.0.0.0"}
+            ),
+            "WebConsole HTTP endpoint",
+        ),
+        (
+            "webconsole-billing",
+            "webuicfg.yaml",
+            lambda value: value["configuration"]["billingServer"].update(
+                {"enable": False}
+            ),
+            "WebConsole billing compatibility settings",
+        ),
+        (
             "manifest-baseline",
             "manifest.yaml",
-            lambda value: value["generated"].update(
+            lambda value: value.setdefault("generated", {}).update(
                 {"baselineHash": "0" * 64}
             ),
             "manifest baseline hash",
@@ -209,7 +231,7 @@ def main():
         (
             "manifest-generator",
             "manifest.yaml",
-            lambda value: value["generated"].update(
+            lambda value: value.setdefault("generated", {}).update(
                 {"generatorSourceHash": "0" * 64}
             ),
             "manifest config generator hash",
