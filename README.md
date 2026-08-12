@@ -166,8 +166,9 @@ ADRF publication, A/B reprovision, generation cutover, and a post-cutover
 accuracy report. Existing VMs receive a hash-verified runtime helper bundle
 before config activation, so this lifecycle no longer depends on provision-time
 helper copies. Continuous degradation is expected to trigger later FL processes
-while the experiment remains active. ML teardown stops PyMTLF-C before A/B so
-its Model Monitor cleanup retains the required downstream availability.
+while the experiment remains active. Model Monitor cleanup remains asynchronous;
+an active-runtime regression showed that merely stopping PyMTLF-C before A/B
+does not guarantee cleanup before NWDAF-C marks that backend unavailable.
 
 The initial implementation intentionally does not support TLS/certificates,
 automatic experiment history, or 5g-viz.
