@@ -4,6 +4,10 @@
 import argparse
 import shutil
 import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT / "scripts" / "host"))
 
 from configlib import ROOT, dump_yaml, load_yaml, resolve_path, sha256_tree
 
@@ -11,7 +15,7 @@ from configlib import ROOT, dump_yaml, load_yaml, resolve_path, sha256_tree
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--source", default="config/default")
-    parser.add_argument("--output", default="config/generated/ml-cpu-smoke")
+    parser.add_argument("--output", default="config/generated/ml-container-test")
     parser.add_argument("--force", action="store_true")
     args = parser.parse_args()
 

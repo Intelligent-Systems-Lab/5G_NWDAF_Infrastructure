@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
-source "$(dirname "$0")/lib.sh"
+source "$(cd "$(dirname "$0")/.." && pwd)/scripts/host/lib.sh"
 
 testbed=${1:-testbed.yaml}
 explicit_config=${2:-}

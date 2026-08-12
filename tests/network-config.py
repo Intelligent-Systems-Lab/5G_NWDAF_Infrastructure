@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Focused smoke tests for the Guest persistent Netplan renderer."""
+"""Focused tests for the Guest persistent Netplan renderer."""
 
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ from pathlib import Path
 import yaml
 
 
-ROOT = Path(__file__).resolve().parents[2]
+ROOT = Path(__file__).resolve().parents[1]
 RENDERER = ROOT / "scripts/guest/network-config.py"
 CORE_CONFIG = ROOT / "config/default/network/core.yaml"
 PATH_A_CONFIG = ROOT / "config/default/network/path-a.yaml"
@@ -88,7 +88,7 @@ def invoke(
 
 
 def main() -> int:
-    with tempfile.TemporaryDirectory(prefix="5g-network-config-smoke-") as raw:
+    with tempfile.TemporaryDirectory(prefix="5g-network-config-test-") as raw:
         directory = Path(raw)
         fragment, plan, _ = invoke(directory)
         ethernets = fragment["network"]["ethernets"]
@@ -198,7 +198,7 @@ def main() -> int:
             "enp0s9",
         ]
 
-    print("NETWORK_CONFIG_SMOKE cases=7 status=passed")
+    print("NETWORK_CONFIG_TEST cases=7 status=passed")
     return 0
 
 

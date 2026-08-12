@@ -5,19 +5,15 @@ NAME ?= local
 FROM ?= full-core-cat-transition
 DEVICE ?= gpu
 WEBCONSOLE ?= false
-SCENARIO ?= fixtures/full-core/scenarios/full-core-cat-transition.yaml
 
 .PHONY: help help-advanced help-dev help-all experiment-validate experiment-start experiment-status experiment-stop \
 	config-create config-validate dataset-validate dataset-load reset-show reset test test-containers \
-	preflight config-check config-render config-contract-smoke network-config-smoke dataset-generate dataset-check dataset-show \
-	dataset-smoke dataset-stage-plan dataset-stage ml-compose-check ml-cpu-smoke ml-lifecycle-smoke \
+	dataset-generate dataset-show \
 	ml-start ml-status ml-stop vm-up vm-status vm-halt \
 	webconsole-start webconsole-status webconsole-stop \
 	services-start services-status services-stop subscriptions-start \
-	subscriptions-status subscriptions-stop subscriber-data-validate \
-	subscriber-data-plan subscriber-data-apply subscriber-data-show \
-	subscriber-data-clear experiment-reset-plan experiment-reset \
-	experiment-reset-verify observe logs
+	subscriptions-status subscriptions-stop subscriber-data-apply \
+	subscriber-data-show subscriber-data-clear observe logs
 
 help:
 	@echo "5G NWDAF Infrastructure"
@@ -46,6 +42,7 @@ help-advanced:
 	@echo "  make ml-start CONFIG_DIR=... | ml-status | ml-stop"
 	@echo "  make webconsole-start CONFIG_DIR=... | webconsole-status | webconsole-stop"
 	@echo "  make subscriptions-start | subscriptions-status | subscriptions-stop"
+	@echo "  make observe | logs"
 	@echo ""
 	@echo "Subscriber and retained experiment state"
 	@echo "  make subscriber-data-show | subscriber-data-apply | subscriber-data-clear CONFIG_DIR=..."
@@ -83,66 +80,33 @@ config-create:
 		--scenario "fixtures/full-core/scenarios/$(FROM).yaml" --output-root config/local --ml-device "$(DEVICE)" \
 		--webconsole "$(WEBCONSOLE)"
 
-config-validate: config-check
+config-validate:
+	@python3 scripts/host/config-check.py --testbed "$(TESTBED)" $(if $(CONFIG_DIR),--config-dir "$(CONFIG_DIR)")
 
-dataset-validate: dataset-check
+dataset-validate:
+	@python3 scripts/host/dataset.py --testbed "$(TESTBED)" $(if $(CONFIG_DIR),--config-dir "$(CONFIG_DIR)") check
 
-dataset-load: dataset-stage
+dataset-load:
+	@scripts/host/dataset-stage.sh apply "$(TESTBED)" "$(CONFIG_DIR)"
 
-reset-show: experiment-reset-plan
+reset-show:
+	@scripts/host/experiment-reset.sh plan "$(TESTBED)" "$(CONFIG_DIR)"
 
 reset:
 	@RESET_CONFIRM="$(RESET_CONFIRM)" scripts/host/experiment-reset.sh apply "$(TESTBED)" "$(CONFIG_DIR)"
 	@scripts/host/experiment-reset.sh verify "$(TESTBED)" "$(CONFIG_DIR)"
 
 test:
-	@scripts/host/repository-test.sh "$(TESTBED)" "$(CONFIG_DIR)"
+	@tests/repository.sh "$(TESTBED)" "$(CONFIG_DIR)"
 
 test-containers:
-	@scripts/host/ml-lifecycle-smoke.sh
-
-preflight:
-	@scripts/host/preflight.sh "$(TESTBED)" "$(CONFIG_DIR)"
-
-config-check:
-	@python3 scripts/host/config-check.py --testbed "$(TESTBED)" $(if $(CONFIG_DIR),--config-dir "$(CONFIG_DIR)")
-
-config-render:
-	@python3 scripts/host/config-render.py --testbed "$(TESTBED)" --name "$(NAME)" --scenario "$(SCENARIO)"
-
-config-contract-smoke:
-	@python3 scripts/host/config-contract-smoke.py --testbed "$(TESTBED)" $(if $(CONFIG_DIR),--config-dir "$(CONFIG_DIR)")
-
-network-config-smoke:
-	@python3 scripts/host/network-config-smoke.py
+	@tests/ml-container-lifecycle.sh
 
 dataset-generate:
 	@python3 scripts/host/dataset.py --testbed "$(TESTBED)" $(if $(CONFIG_DIR),--config-dir "$(CONFIG_DIR)") generate
 
-dataset-check:
-	@python3 scripts/host/dataset.py --testbed "$(TESTBED)" $(if $(CONFIG_DIR),--config-dir "$(CONFIG_DIR)") check
-
 dataset-show:
 	@python3 scripts/host/dataset.py --testbed "$(TESTBED)" $(if $(CONFIG_DIR),--config-dir "$(CONFIG_DIR)") show
-
-dataset-smoke:
-	@scripts/host/dataset-smoke.sh "$(TESTBED)" "$(CONFIG_DIR)"
-
-dataset-stage-plan:
-	@scripts/host/dataset-stage.sh plan "$(TESTBED)" "$(CONFIG_DIR)"
-
-dataset-stage:
-	@scripts/host/dataset-stage.sh apply "$(TESTBED)" "$(CONFIG_DIR)"
-
-ml-compose-check:
-	@python3 scripts/host/ml-compose-check.py --testbed "$(TESTBED)" $(if $(CONFIG_DIR),--config-dir "$(CONFIG_DIR)")
-	@python3 scripts/host/ml-compose-check.py --testbed "$(TESTBED)" $(if $(CONFIG_DIR),--config-dir "$(CONFIG_DIR)") --mode cpu-smoke
-
-ml-cpu-smoke:
-	@scripts/host/ml-lifecycle-smoke.sh
-
-ml-lifecycle-smoke:
-	@scripts/host/ml-lifecycle-smoke.sh
 
 ml-start:
 	@scripts/host/ml-start.sh "$(TESTBED)" "$(CONFIG_DIR)"
@@ -180,12 +144,6 @@ services-status:
 services-stop:
 	@scripts/host/services-stop.sh
 
-subscriber-data-validate:
-	@scripts/host/subscriber-data.sh validate "$(TESTBED)" "$(CONFIG_DIR)"
-
-subscriber-data-plan:
-	@scripts/host/subscriber-data.sh plan "$(TESTBED)" "$(CONFIG_DIR)"
-
 subscriber-data-apply:
 	@scripts/host/subscriber-data.sh apply "$(TESTBED)" "$(CONFIG_DIR)"
 
@@ -203,15 +161,6 @@ subscriptions-status:
 
 subscriptions-stop:
 	@scripts/host/subscriptions-stop.sh
-
-experiment-reset-plan:
-	@scripts/host/experiment-reset.sh plan "$(TESTBED)" "$(CONFIG_DIR)"
-
-experiment-reset:
-	@RESET_CONFIRM="$(RESET_CONFIRM)" scripts/host/experiment-reset.sh apply "$(TESTBED)" "$(CONFIG_DIR)"
-
-experiment-reset-verify:
-	@scripts/host/experiment-reset.sh verify "$(TESTBED)" "$(CONFIG_DIR)"
 
 observe:
 	@scripts/host/observe.sh

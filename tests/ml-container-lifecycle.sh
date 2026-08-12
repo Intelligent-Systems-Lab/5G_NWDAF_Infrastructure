@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
-source "$(dirname "$0")/lib.sh"
+source "$(cd "$(dirname "$0")/.." && pwd)/scripts/host/lib.sh"
 
 export ML_RUNTIME_MODE=cpu-smoke
 export ML_DEVICE_POLICY=cpu
-export ML_PROJECT_NAME=5g-nwdaf-infrastructure-lifecycle-smoke
-config_dir="$HOST_ROOT/config/generated/ml-lifecycle-smoke"
+export ML_PROJECT_NAME=5g-nwdaf-infrastructure-container-test
+config_dir="$HOST_ROOT/config/generated/ml-container-test"
 
 cleanup() {
   ml_compose down --volumes --remove-orphans >/dev/null 2>&1 || true
@@ -14,7 +14,7 @@ cleanup() {
 
 on_error() {
   status=$?
-  echo "ML lifecycle smoke failed; recent project logs follow" >&2
+  echo "ML container test failed; recent project logs follow" >&2
   "$HOST_ROOT/scripts/host/logs.sh" --source ml --since "10 minutes ago" \
     --tail 80 --no-follow >&2 || true
   cleanup
@@ -23,7 +23,7 @@ on_error() {
 
 trap on_error ERR INT TERM
 cleanup
-python3 "$HOST_ROOT/scripts/host/ml-smoke-config.py" --output "$config_dir"
+python3 "$HOST_ROOT/tests/support/ml-cpu-config.py" --output "$config_dir"
 "$HOST_ROOT/scripts/host/ml-start.sh" "$HOST_ROOT/testbed.yaml" "$config_dir"
 "$HOST_ROOT/scripts/host/ml-status.sh"
 "$HOST_ROOT/scripts/host/logs.sh" --source ml --service pyanlf-a \
@@ -46,7 +46,7 @@ done
 
 mapfile -t running_containers < <(ml_compose ps -q)
 if [ "${#running_containers[@]}" -ne 5 ]; then
-  echo "expected five smoke containers, got ${#running_containers[@]}" >&2
+  echo "expected five test containers, got ${#running_containers[@]}" >&2
   false
 fi
 docker stats --no-stream --format \
@@ -56,7 +56,7 @@ docker stats --no-stream --format \
 "$HOST_ROOT/scripts/host/ml-stop.sh"
 
 if docker ps -q --filter "label=com.docker.compose.project=$ML_PROJECT_NAME" | read -r _; then
-  echo "lifecycle smoke containers are still running after ml-stop" >&2
+  echo "test containers are still running after ml-stop" >&2
   false
 fi
 mapfile -t retained_containers < <(

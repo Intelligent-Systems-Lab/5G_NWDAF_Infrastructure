@@ -10,7 +10,7 @@ from unittest import mock
 import yaml
 
 
-ROOT = Path(__file__).resolve().parents[2]
+ROOT = Path(__file__).resolve().parents[1]
 TOOL = ROOT / "scripts" / "guest" / "provisioning-lock.py"
 SPEC = importlib.util.spec_from_file_location("provisioning_lock", TOOL)
 MODULE = importlib.util.module_from_spec(SPEC)
