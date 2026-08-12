@@ -23,13 +23,53 @@ apt-get install -y --no-install-recommends \
   libsctp-dev linux-headers-"$(uname -r)" ninja-build python3 \
   python3-yaml rsync socat util-linux
 
-go_version=1.26.2
-if ! command -v go >/dev/null || [ "$(go version | awk '{print $3}')" != "go${go_version}" ]; then
-  archive="/tmp/go${go_version}.linux-amd64.tar.gz"
-  curl -fsSL "https://go.dev/dl/go${go_version}.linux-amd64.tar.gz" -o "$archive"
-  rm -rf /usr/local/go
-  tar -C /usr/local -xzf "$archive"
-  rm -f "$archive"
+source_root=/opt/5g-nwdaf-infrastructure/source
+provision_lock=$source_root/provisioning.lock.yaml
+provision_tool=$source_root/scripts/guest/provisioning-lock.py
+python3 "$provision_tool" validate "$provision_lock"
+
+. /etc/os-release
+expected_os=$(python3 "$provision_tool" get "$provision_lock" platform.os)
+expected_release=$(python3 "$provision_tool" get "$provision_lock" platform.release)
+expected_arch=$(python3 "$provision_tool" get "$provision_lock" platform.architecture)
+test "$ID" = "$expected_os" -a "$VERSION_ID" = "$expected_release" || {
+  echo "unsupported Guest platform: expected $expected_os $expected_release, got $ID $VERSION_ID" >&2
+  exit 1
+}
+test "$(dpkg --print-architecture)" = "$expected_arch" || {
+  echo "unsupported Guest architecture: expected $expected_arch" >&2
+  exit 1
+}
+
+go_version=$(python3 "$provision_tool" get "$provision_lock" go.version)
+go_archive=$(python3 "$provision_tool" get "$provision_lock" go.archive)
+go_url=$(python3 "$provision_tool" get "$provision_lock" go.url)
+go_sha256=$(python3 "$provision_tool" get "$provision_lock" go.sha256)
+if ! test -x /usr/local/go/bin/go || \
+   [ "$(/usr/local/go/bin/go version | awk '{print $3, $4}')" != "go${go_version} linux/amd64" ]; then
+  archive=$(mktemp "/tmp/${go_archive}.XXXXXX")
+  stage=$(mktemp -d /usr/local/.go-stage.XXXXXX)
+  cleanup_go_stage() { rm -rf "$stage" "$archive"; }
+  trap cleanup_go_stage EXIT
+  curl -fsSL "$go_url" -o "$archive"
+  printf '%s  %s\n' "$go_sha256" "$archive" | sha256sum --check --status || {
+    echo "Go archive SHA-256 mismatch: $go_archive" >&2
+    exit 1
+  }
+  tar -C "$stage" -xzf "$archive"
+  test "$($stage/go/bin/go version | awk '{print $3, $4}')" = "go${go_version} linux/amd64" || {
+    echo "Go archive binary identity mismatch" >&2
+    exit 1
+  }
+  target="/usr/local/go-${go_version}"
+  rm -rf "$target"
+  mv "$stage/go" "$target"
+  if [ -e /usr/local/go ] && [ ! -L /usr/local/go ]; then
+    mv /usr/local/go "/usr/local/go.previous-$(date -u +%Y%m%dT%H%M%SZ)"
+  fi
+  ln -sfn "$target" /usr/local/go
+  trap - EXIT
+  cleanup_go_stage
 fi
 ln -sfn /usr/local/go/bin/go /usr/local/bin/go
 
@@ -38,6 +78,10 @@ install -d -o 5g-nwdaf -g 5g-nwdaf /var/lib/5g-nwdaf-infrastructure
 install -d -o 5g-nwdaf -g 5g-nwdaf /var/lib/5g-nwdaf-infrastructure/datasets /var/lib/5g-nwdaf-infrastructure/datasets/sets
 install -d /etc/5g-nwdaf-infrastructure/config-sets /opt/5g-nwdaf-infrastructure/work /usr/local/libexec/5g-nwdaf-infrastructure/bin
 printf '%s\n' "$machine" >/etc/5g-nwdaf-infrastructure/machine
+
+python3 "$provision_tool" write-manifest "$provision_lock" \
+  --machine "$machine" \
+  --output /etc/5g-nwdaf-infrastructure/provisioning-manifest.yaml
 
 /opt/5g-nwdaf-infrastructure/source/scripts/guest/runtime-tools-install.sh \
   "$machine" /opt/5g-nwdaf-infrastructure/source

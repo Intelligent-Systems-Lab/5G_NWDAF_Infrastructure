@@ -12,6 +12,13 @@ ok() { echo "OK   $*"; }
 fail() { echo "FAIL $*" >&2; failures=$((failures + 1)); }
 warn() { echo "WARN $*" >&2; warnings=$((warnings + 1)); }
 
+if python3 "$HOST_ROOT/scripts/guest/provisioning-lock.py" validate \
+  "$HOST_ROOT/provisioning.lock.yaml" >/dev/null; then
+  ok "Guest provisioning dependency lock"
+else
+  fail "invalid Guest provisioning dependency lock"
+fi
+
 for command in git go python3 sha256sum tar vagrant docker ip ss; do
   command -v "$command" >/dev/null && ok "$command=$(command -v "$command")" || fail "missing command: $command"
 done

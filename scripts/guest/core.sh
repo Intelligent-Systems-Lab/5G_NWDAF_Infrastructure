@@ -6,6 +6,8 @@ root=/opt/5g-nwdaf-infrastructure
 source_root=$root/source
 work_root=$root/work
 bin_root=/usr/local/libexec/5g-nwdaf-infrastructure/bin
+provision_lock=$source_root/provisioning.lock.yaml
+provision_tool=$source_root/scripts/guest/provisioning-lock.py
 test "$(id -u)" -eq 0 || { echo "core setup requires root" >&2; exit 1; }
 
 stage() {
@@ -23,12 +25,57 @@ build_go() {
 }
 
 setup_mongodb() {
-  if ! command -v mongod >/dev/null; then
-    curl -fsSL https://www.mongodb.org/static/pgp/server-8.0.asc | gpg --dearmor -o /usr/share/keyrings/mongodb-server-8.0.gpg
-    echo "deb [arch=amd64 signed-by=/usr/share/keyrings/mongodb-server-8.0.gpg] https://repo.mongodb.org/apt/ubuntu jammy/mongodb-org/8.0 multiverse" >/etc/apt/sources.list.d/mongodb-org-8.0.list
-    apt-get update
-    apt-get install -y mongodb-org
+  local repository distribution series key_url expected_fingerprint key_file
+  local key_stage actual_fingerprint installed_fingerprint repo_file plan source drift
+  local -a packages install_specs
+  python3 "$provision_tool" validate "$provision_lock"
+  repository=$(python3 "$provision_tool" get "$provision_lock" mongodb.repository.url)
+  distribution=$(python3 "$provision_tool" get "$provision_lock" mongodb.repository.distribution)
+  series=$(python3 "$provision_tool" get "$provision_lock" mongodb.repository.series)
+  key_url=$(python3 "$provision_tool" get "$provision_lock" mongodb.repository.signingKeyUrl)
+  expected_fingerprint=$(python3 "$provision_tool" get "$provision_lock" mongodb.repository.signingKeyFingerprint)
+  key_file="/usr/share/keyrings/mongodb-server-${series}.gpg"
+  key_stage=$(mktemp)
+  curl -fsSL "$key_url" -o "$key_stage"
+  actual_fingerprint=$(gpg --show-keys --with-colons "$key_stage" 2>/dev/null | awk -F: '$1 == "fpr" {print $10; exit}')
+  if [ "$actual_fingerprint" != "$expected_fingerprint" ]; then
+    rm -f "$key_stage"
+    echo "MongoDB signing-key fingerprint mismatch" >&2
+    exit 1
   fi
+  if [ -f "$key_file" ]; then
+    installed_fingerprint=$(gpg --show-keys --with-colons "$key_file" 2>/dev/null | awk -F: '$1 == "fpr" {print $10; exit}')
+    if [ "$installed_fingerprint" != "$expected_fingerprint" ]; then
+      rm -f "$key_stage"
+      echo "installed MongoDB signing key differs from provisioning lock" >&2
+      exit 1
+    fi
+  else
+    gpg --dearmor --batch --yes -o "$key_file" "$key_stage"
+  fi
+  rm -f "$key_stage"
+
+  repo_file="/etc/apt/sources.list.d/mongodb-org-${series}.list"
+  printf 'deb [arch=amd64 signed-by=%s] %s %s/mongodb-org/%s multiverse\n' \
+    "$key_file" "$repository" "$distribution" "$series" >"$repo_file"
+  apt-get update
+
+  plan=$(python3 "$provision_tool" resolve-mongodb "$provision_lock")
+  source=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["source"])' <<<"$plan")
+  drift=$(python3 -c 'import json,sys; print(str(json.load(sys.stdin)["drift"]).lower())' <<<"$plan")
+  mapfile -t packages < <(python3 -c 'import json,sys; print(*json.load(sys.stdin)["packages"], sep="\n")' <<<"$plan")
+  if [ "$drift" = true ]; then
+    python3 -c 'import json,sys; [print("WARN MongoDB version drift: " + reason, file=sys.stderr) for reason in json.load(sys.stdin)["reasons"]]' <<<"$plan"
+  fi
+  if [ "$source" = repository ]; then
+    mapfile -t install_specs < <(python3 -c 'import json,sys; data=json.load(sys.stdin); print(*(name + "=" + version for name,version in data["packages"].items()), sep="\n")' <<<"$plan")
+    apt-get install -y --no-install-recommends "${install_specs[@]}"
+    plan=$(python3 "$provision_tool" resolve-mongodb "$provision_lock")
+  fi
+  apt-mark hold "${packages[@]}" >/dev/null
+  python3 "$provision_tool" write-manifest "$provision_lock" \
+    --machine core --include-mongodb \
+    --output /etc/5g-nwdaf-infrastructure/provisioning-manifest.yaml
   systemctl disable --now mongod >/dev/null 2>&1 || true
   install -d -o 5g-nwdaf -g 5g-nwdaf /var/lib/5g-nwdaf-infrastructure/mongodb
 }

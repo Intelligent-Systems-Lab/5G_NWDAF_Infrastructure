@@ -41,6 +41,14 @@ still require GitHub credentials while those repositories remain private;
 making this parent repository public alone would not make a recursive clone
 anonymous. URL changes never replace the pinned gitlink revisions.
 
+Guest provisioning resolves Go and MongoDB from `provisioning.lock.yaml`.
+Go version, archive URL, and SHA-256 are strict. MongoDB prefers the package
+versions that passed the reference E2E; an existing or repository-resolved
+patch within each declared compatible family is retained with a visible drift
+warning and manifest evidence, while cross-series or integrity mismatches stop
+provisioning. The resolved Guest identity is written to
+`/etc/5g-nwdaf-infrastructure/provisioning-manifest.yaml`.
+
 ## Command surface
 
 No VM or service is created merely by cloning this repository. The intended

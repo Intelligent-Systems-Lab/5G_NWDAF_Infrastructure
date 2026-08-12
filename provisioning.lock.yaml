@@ -1,0 +1,41 @@
+schemaVersion: 1
+
+platform:
+  os: ubuntu
+  release: "22.04"
+  architecture: amd64
+
+go:
+  version: 1.26.2
+  archive: go1.26.2.linux-amd64.tar.gz
+  url: https://go.dev/dl/go1.26.2.linux-amd64.tar.gz
+  sha256: 990e6b4bbba816dc3ee129eaeaf4b42f17c2800b88a2166c265ac1a200262282
+
+mongodb:
+  driftPolicy: warn-compatible
+  repository:
+    url: https://repo.mongodb.org/apt/ubuntu
+    distribution: jammy
+    series: "8.0"
+    signingKeyUrl: https://www.mongodb.org/static/pgp/server-8.0.asc
+    signingKeyFingerprint: 4B0752C1BCA238C0B4EE14DC41DE058A4E7DCA05
+  families:
+    server:
+      preferredVersion: 8.0.28
+      compatiblePrefix: "8.0."
+    shell:
+      preferredVersion: 2.9.2
+      compatiblePrefix: "2."
+    tools:
+      preferredVersion: 100.17.0
+      compatiblePrefix: "100."
+  packages:
+    mongodb-org: server
+    mongodb-org-database: server
+    mongodb-org-server: server
+    mongodb-org-shell: server
+    mongodb-org-mongos: server
+    mongodb-org-tools: server
+    mongodb-org-database-tools-extra: server
+    mongodb-mongosh: shell
+    mongodb-database-tools: tools

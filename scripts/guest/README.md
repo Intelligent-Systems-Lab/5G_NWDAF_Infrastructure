@@ -5,6 +5,15 @@ default systemd units live here. Guests never clone component branches.
 Core provisioning creates the absolute ADRF model-storage directory owned by
 the unprivileged `5g-nwdaf` runtime account before services can start.
 
+`provisioning-lock.py` validates the repository-owned
+`provisioning.lock.yaml`, resolves exact or compatible MongoDB package
+versions, and records each Guest's effective Go/MongoDB identity. Go archive
+checksum and binary identity are fail-closed. MongoDB keeps a complete
+compatible installed set without automatic upgrade/downgrade; a clean Guest
+prefers the recorded versions and falls forward only within the declared
+package-family prefix with a warning. Partial installs, mixed server versions,
+cross-series drift, and signing-key mismatch remain hard failures.
+
 `subscriber-data.js` runs under Core's installed `mongosh`. It projects the
 committed compact full-core fixtures into the free5GC collections and limits
 apply/show/clear operations to the six declared SUPIs and one Internal Group.
