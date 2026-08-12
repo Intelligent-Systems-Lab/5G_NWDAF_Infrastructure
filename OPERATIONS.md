@@ -37,6 +37,12 @@ and Docker storage paths, physical ML bind address, and selected complete config
 directory. It must not redefine the advertised topology, TAI, UE, NWDAF, or
 experiment semantics.
 
+`provider.expectedVmStorage` is an optional drift guard for VirtualBox's default
+machine folder. Preflight always checks the actual folder's filesystem against
+the free-space threshold; when the expected path is set, a mismatch is a hard
+failure. The old `bridgeInterface` placeholder was removed because the reference
+deployment uses isolated VirtualBox host-only networks and no code consumed it.
+
 `make experiment-validate CONFIG_DIR=...` is read-only. It runs the Host
 preflight plus Compose wiring and Vagrant definition validation. It checks:
 

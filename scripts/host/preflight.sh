@@ -6,6 +6,7 @@ testbed=${1:-testbed.yaml}
 explicit_config=${2:-}
 failures=0
 warnings=0
+virtualbox_storage=
 
 ok() { echo "OK   $*"; }
 fail() { echo "FAIL $*" >&2; failures=$((failures + 1)); }
@@ -24,6 +25,12 @@ if command -v vagrant >/dev/null; then
     virtualbox)
       if command -v VBoxManage >/dev/null && VBoxManage list vms >/dev/null 2>&1; then
         ok "VirtualBox CLI and host driver available"
+        virtualbox_storage=$(VBoxManage list systemproperties | sed -n 's/^Default machine folder:[[:space:]]*//p')
+        if [ -n "$virtualbox_storage" ] && [ -d "$virtualbox_storage" ]; then
+          ok "VirtualBox machine folder available: $virtualbox_storage"
+        else
+          fail "VirtualBox default machine folder is missing or unavailable: ${virtualbox_storage:-unknown}"
+        fi
       else
         fail "VirtualBox selected but VBoxManage cannot initialize the host driver"
       fi
@@ -107,6 +114,33 @@ else
   fail "free swap ${swap_free_mib}MiB < ${minimum_swap_mib}MiB"
 fi
 [ "$free_gib" -ge "$minimum_free_storage_gib" ] && ok "workspace filesystem free ${free_gib}GiB (VM logical disk ceilings total ${disk_gib}GiB)" || fail "workspace filesystem free ${free_gib}GiB < ${minimum_free_storage_gib}GiB safety threshold"
+if [ -n "$virtualbox_storage" ] && [ -d "$virtualbox_storage" ]; then
+  vm_storage_free_gib=$(df -Pk "$virtualbox_storage" | awk 'NR==2 {print int($4/1024/1024)}')
+  [ "$vm_storage_free_gib" -ge "$minimum_free_storage_gib" ] && ok "VirtualBox storage filesystem free ${vm_storage_free_gib}GiB" || fail "VirtualBox storage filesystem free ${vm_storage_free_gib}GiB < ${minimum_free_storage_gib}GiB safety threshold"
+  expected_vm_storage=$(PYTHONPATH="$HOST_ROOT/scripts/host" python3 - <<'PY'
+from configlib import load_local_settings
+print(load_local_settings().get("provider", {}).get("expectedVmStorage") or "")
+PY
+  )
+  if [ -n "$expected_vm_storage" ]; then
+    mapfile -t storage_paths < <(python3 - "$virtualbox_storage" "$expected_vm_storage" <<'PY'
+import sys
+from pathlib import Path
+print(Path(sys.argv[1]).resolve())
+print(Path(sys.argv[2]).expanduser().resolve())
+PY
+    )
+    actual_storage=${storage_paths[0]}
+    expected_storage=${storage_paths[1]}
+    if [ "$actual_storage" = "$expected_storage" ]; then
+      ok "VirtualBox machine folder matches local expectation"
+    else
+      fail "VirtualBox machine folder $actual_storage does not match local expectation $expected_storage"
+    fi
+  else
+    warn "provider.expectedVmStorage is not pinned; actual folder is $virtualbox_storage"
+  fi
+fi
 if [ -n "$docker_root" ]; then
   if [ "$expected_docker_root" != "-" ] && [ "$docker_root" != "$expected_docker_root" ]; then
     fail "Docker data-root $docker_root does not match local expectation $expected_docker_root"
