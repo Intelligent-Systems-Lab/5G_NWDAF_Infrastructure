@@ -9,13 +9,27 @@ case "$action" in validate|plan|apply|show|clear) ;; *) echo "usage: subscriber-
 
 config_dir=$(effective_config_dir "$testbed" "$explicit_config")
 python3 "$HOST_ROOT/scripts/host/config-check.py" --testbed "$testbed" --config-dir "$config_dir"
-subscriber_fixture="$HOST_ROOT/fixtures/full-core/ue-subscribers.json"
-group_fixture="$HOST_ROOT/fixtures/full-core/group-memberships.json"
+mapfile -t fixture_paths < <(
+  PYTHONPATH="$HOST_ROOT/scripts/host" python3 - "$config_dir" <<'PY'
+import sys
+from configlib import load_yaml, resolve_path
+
+directory = resolve_path(sys.argv[1]).resolve()
+metadata = load_yaml(directory / "manifest.yaml")["subscriberData"]
+for name in ("subscribers", "groups"):
+    path = (directory / metadata[name]).resolve()
+    if directory not in path.parents or not path.is_file():
+        raise SystemExit("invalid config subscriber fixture: " + str(path))
+    print(path)
+PY
+)
+subscriber_fixture=${fixture_paths[0]}
+group_fixture=${fixture_paths[1]}
 fixture_hash=$(
-  cd "$HOST_ROOT"
-  sha256sum \
-    fixtures/full-core/ue-subscribers.json \
-    fixtures/full-core/group-memberships.json |
+  {
+    sha256sum "$subscriber_fixture" | awk '{print $1}'
+    sha256sum "$group_fixture" | awk '{print $1}'
+  } |
     sha256sum |
     awk '{print $1}'
 )
@@ -28,12 +42,27 @@ print("mongodb://{}:{}".format(endpoint["address"], endpoint["port"]), definitio
 PY
 )
 
-guest_root=/opt/5g-nwdaf-infrastructure/source
 echo "SUBSCRIBER DATA action=$action database=$mongo_database hash=$fixture_hash"
+remote_suffix="${fixture_hash:0:16}-$$"
+remote_subscriber="/tmp/5g-nwdaf-subscribers-${remote_suffix}.json"
+remote_group="/tmp/5g-nwdaf-groups-${remote_suffix}.json"
+uploaded=false
+cleanup() {
+  if $uploaded; then
+    vssh core "rm -f '$remote_subscriber' '$remote_group'" >/dev/null 2>&1 || true
+  fi
+}
+trap cleanup EXIT
+(cd "$HOST_ROOT" && vagrant upload "$subscriber_fixture" "$remote_subscriber" core)
+uploaded=true
+(cd "$HOST_ROOT" && vagrant upload "$group_fixture" "$remote_group" core)
+vssh core "chmod 600 '$remote_subscriber' '$remote_group'"
 printf -v command 'ACTION=%q SUBSCRIBER_FIXTURE=%q GROUP_FIXTURE=%q mongosh --quiet %q --file %q' \
   "$action" \
-  "$guest_root/fixtures/full-core/ue-subscribers.json" \
-  "$guest_root/fixtures/full-core/group-memberships.json" \
+  "$remote_subscriber" \
+  "$remote_group" \
   "$mongo_uri/$mongo_database" \
-  "$guest_root/scripts/guest/subscriber-data.js"
+  "/opt/5g-nwdaf-infrastructure/source/scripts/guest/subscriber-data.js"
 vssh core "$command"
+trap - EXIT
+cleanup

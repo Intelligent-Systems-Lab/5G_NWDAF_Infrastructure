@@ -370,7 +370,11 @@ def main():
         "definitionHash": canonical_sha256(topology_definition),
         "generatorSourceHash": config_generator_source_hash(),
         "generatorRevision": revision,
-        "files": sorted(path.relative_to(output).as_posix() for path in output.rglob("*.yaml") if path.name != "manifest.yaml"),
+        "files": sorted(
+            path.relative_to(output).as_posix()
+            for path in output.rglob("*")
+            if path.is_file() and path.name != "manifest.yaml"
+        ),
     }
     dump_yaml(output / "manifest.yaml", manifest)
     print(output)

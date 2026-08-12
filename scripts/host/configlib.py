@@ -95,7 +95,7 @@ def sha256_file(path):
 
 def sha256_tree(directory):
     digest = hashlib.sha256()
-    for path in sorted(Path(directory).rglob("*.yaml")):
+    for path in sorted(path for path in Path(directory).rglob("*") if path.is_file()):
         relative = path.relative_to(directory).as_posix()
         digest.update(relative.encode("utf-8"))
         digest.update(b"\0")

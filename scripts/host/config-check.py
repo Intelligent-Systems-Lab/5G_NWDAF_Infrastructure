@@ -104,13 +104,31 @@ def check_consumer_native(check, config_path):
 
 
 def check_subscriber_fixtures(check, testbed, config_dir):
-    subscriber_path = ROOT / "fixtures" / "full-core" / "ue-subscribers.json"
-    group_path = ROOT / "fixtures" / "full-core" / "group-memberships.json"
+    manifest = load_yaml(config_dir / "manifest.yaml")
+    metadata = manifest.get("subscriberData", {})
+    config_root = config_dir.resolve()
+    paths = {}
+    for name in ("subscribers", "groups"):
+        relative = metadata.get(name)
+        candidate = (config_root / relative).resolve() if isinstance(relative, str) else None
+        valid = (
+            candidate is not None
+            and candidate != config_root
+            and config_root in candidate.parents
+            and candidate.is_file()
+        )
+        check.true("subscriberData.{} must select a file inside the config set".format(name), valid)
+        if valid:
+            paths[name] = candidate
+    if len(paths) != 2:
+        return
+    subscriber_path = paths["subscribers"]
+    group_path = paths["groups"]
     try:
         subscribers = json.loads(subscriber_path.read_text(encoding="utf-8"))
         groups = json.loads(group_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
-        check.true("cannot load full-core subscriber fixtures: {}".format(exc), False)
+        check.true("cannot load config subscriber fixtures: {}".format(exc), False)
         return
 
     expected_supis = testbed["paths"]["a"]["ues"] + testbed["paths"]["b"]["ues"]
@@ -834,8 +852,8 @@ def main():
             generated.get("files"),
             sorted(
                 path.relative_to(config_dir).as_posix()
-                for path in config_dir.rglob("*.yaml")
-                if path.name != "manifest.yaml"
+                for path in config_dir.rglob("*")
+                if path.is_file() and path.name != "manifest.yaml"
             ),
         )
 

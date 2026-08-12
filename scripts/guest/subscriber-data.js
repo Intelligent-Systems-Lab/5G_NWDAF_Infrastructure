@@ -7,11 +7,28 @@ const fs = require("fs");
 const action = process.env.ACTION || "show";
 const subscriberPath = process.env.SUBSCRIBER_FIXTURE;
 const groupPath = process.env.GROUP_FIXTURE;
+const database = globalThis.SUBSCRIBER_DATA_DB || db;
 
 function requireValue(condition, message) {
   if (!condition) {
     throw new Error(message);
   }
+}
+
+function canonical(value) {
+  if (Array.isArray(value)) {
+    return value.map(canonical);
+  }
+  if (value !== null && typeof value === "object") {
+    return Object.fromEntries(
+      Object.keys(value).sort().map(key => [key, canonical(value[key])])
+    );
+  }
+  return value;
+}
+
+function documentsEqual(actual, expected) {
+  return JSON.stringify(canonical(actual)) === JSON.stringify(canonical(expected));
 }
 
 requireValue(["validate", "plan", "apply", "show", "clear"].includes(action), "invalid action");
@@ -128,29 +145,89 @@ if (action === "validate") {
   for (const collection of subscriberCollections) {
     counts[collection] = documents.filter(item => item[0] === collection).length;
   }
-  print(JSON.stringify({database: db.getName(), collections: counts, groupIds: groupIds}, null, 2));
+  print(JSON.stringify({database: database.getName(), collections: counts, groupIds: groupIds}, null, 2));
 } else if (action === "apply") {
   for (const [collection, key, document] of documents) {
-    db.getCollection(collection).replaceOne(key, document, {upsert: true});
+    database.getCollection(collection).replaceOne(key, document, {upsert: true});
   }
   for (const group of groups) {
-    db.getCollection(groupCollection).replaceOne({intGroupId: group.intGroupId}, group, {upsert: true});
+    database.getCollection(groupCollection).replaceOne({intGroupId: group.intGroupId}, group, {upsert: true});
   }
   print(JSON.stringify({appliedSubscriberDocuments: documents.length, appliedGroups: groups.length}));
 } else if (action === "show") {
-  const counts = {};
+  const collections = {};
+  const totals = {expected: 0, actual: 0, matching: 0, missing: 0, different: 0, extra: 0};
   for (const collection of subscriberCollections) {
-    counts[collection] = db.getCollection(collection).countDocuments({ueId: {$in: supis}});
+    const expectedEntries = documents.filter(item => item[0] === collection);
+    const result = {
+      expected: expectedEntries.length,
+      actual: database.getCollection(collection).countDocuments({ueId: {$in: supis}}),
+      matching: 0,
+      missing: 0,
+      different: 0,
+      extra: 0
+    };
+    for (const [, key, expected] of expectedEntries) {
+      const actual = database.getCollection(collection).findOne(key, {_id: 0});
+      if (actual === null) {
+        result.missing += 1;
+      } else if (documentsEqual(actual, expected)) {
+        result.matching += 1;
+      } else {
+        result.different += 1;
+      }
+    }
+    result.extra = Math.max(0, result.actual - result.matching - result.different);
+    collections[collection] = result;
+    for (const key of Object.keys(totals)) {
+      totals[key] += result[key];
+    }
   }
-  const storedGroups = db.getCollection(groupCollection)
-    .find({intGroupId: {$in: groupIds}}, {_id: 0}).toArray();
-  print(JSON.stringify({database: db.getName(), collections: counts, groups: storedGroups}, null, 2));
+  const groupResult = {
+    expected: groups.length,
+    actual: database.getCollection(groupCollection).countDocuments({intGroupId: {$in: groupIds}}),
+    matching: 0,
+    missing: 0,
+    different: 0,
+    extra: 0
+  };
+  for (const expected of groups) {
+    const actual = database.getCollection(groupCollection)
+      .findOne({intGroupId: expected.intGroupId}, {_id: 0});
+    if (actual === null) {
+      groupResult.missing += 1;
+    } else if (documentsEqual(actual, expected)) {
+      groupResult.matching += 1;
+    } else {
+      groupResult.different += 1;
+    }
+  }
+  groupResult.extra = Math.max(0, groupResult.actual - groupResult.matching - groupResult.different);
+  print(JSON.stringify({
+    database: database.getName(),
+    scope: {supis: supis, groupIds: groupIds},
+    collections: collections,
+    groups: groupResult,
+    totals: totals,
+    impact: {
+      apply: {
+        subscriberDocumentWrites: documents.length,
+        subscriberChangesNeeded: totals.missing + totals.different,
+        groupWrites: groups.length,
+        groupChangesNeeded: groupResult.missing + groupResult.different
+      },
+      clear: {
+        subscriberDocumentsToDelete: totals.actual,
+        groupsToDelete: groupResult.actual
+      }
+    }
+  }, null, 2));
 } else if (action === "clear") {
   let removedSubscriberDocuments = 0;
   for (const collection of subscriberCollections) {
-    removedSubscriberDocuments += db.getCollection(collection).deleteMany({ueId: {$in: supis}}).deletedCount;
+    removedSubscriberDocuments += database.getCollection(collection).deleteMany({ueId: {$in: supis}}).deletedCount;
   }
-  const removedGroups = db.getCollection(groupCollection)
+  const removedGroups = database.getCollection(groupCollection)
     .deleteMany({intGroupId: {$in: groupIds}}).deletedCount;
   print(JSON.stringify({removedSubscriberDocuments: removedSubscriberDocuments, removedGroups: removedGroups}));
 }

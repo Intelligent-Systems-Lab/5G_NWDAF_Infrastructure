@@ -220,22 +220,23 @@ It does not start ML containers. Failure triggers reverse-order rollback.
 `make services-stop` performs the same reverse order without halting VMs; it
 also defensively stops any retained legacy guest ML units.
 
-Subscriber data is experiment input rather than process state, so it persists
-across `services-stop` and VM restart. Inspect or manage only the committed
-scope with:
+Subscriber data is config-owned experiment input rather than process state, so
+it persists across `services-stop` and VM restart. Each complete config selects
+its own subscriber and Internal Group JSON below `subscriber/`; those files are
+included in the config hash. Inspect or manage only that selected scope with:
 
 ```sh
-make subscriber-data-validate
-make subscriber-data-plan
-make subscriber-data-show
-make subscriber-data-apply
-make subscriber-data-clear
+make subscriber-data-show CONFIG_DIR=config/local/my-experiment
+make subscriber-data-apply CONFIG_DIR=config/local/my-experiment
+make subscriber-data-clear CONFIG_DIR=config/local/my-experiment
 ```
 
+`show` compares the selected expected documents with scoped MongoDB records and
+reports matching, missing, different, extra, and the exact apply/clear impact.
 `apply` uses MongoDB `replaceOne(..., upsert=true)` for 48 documents belonging
 to the six named SUPIs and one named Internal Group. `clear` deletes only those
-SUPIs and that group; it never drops a database or collection. The fixtures in
-`fixtures/full-core/` were selected from
+SUPIs and that group; it never drops a database or collection. The committed
+default inputs were selected from
 `nwdaf-resources@d2634b84e8790a6b696e5b21ec1a0f660b683948`, but the runtime
 uses Core's installed `mongosh` and does not depend on that repository or a
 Host Python environment. `config-check` rejects fixture PLMN, SUPI, group,

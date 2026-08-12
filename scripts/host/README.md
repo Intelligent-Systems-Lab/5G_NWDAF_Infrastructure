@@ -15,10 +15,12 @@ does not require NVIDIA. It does not configure or restart the shared daemon. `ml
 reports the configured application device, OCI runtime, CDI selector, and
 in-container CUDA visibility separately.
 
-`subscriber-data.sh` validates the selected config and invokes the committed
-guest `mongosh` projection for scoped `validate`, `plan`, `apply`, `show`, or
-`clear`. `services-start.sh` uses only idempotent `apply`; stopping services
-does not delete subscriber or Internal Group data.
+`subscriber-data.sh` validates the selected config, uploads only its selected
+subscriber/group inputs to temporary Core paths, and invokes the committed guest
+`mongosh` projection for scoped `validate`, `plan`, `apply`, `show`, or `clear`.
+`show` performs expected-vs-actual comparison. `services-start.sh` uses only
+idempotent `apply`; stopping services does not delete subscriber or Internal
+Group data.
 
 `experiment-reset.sh` has separate `plan`, confirmation-gated `apply`, and
 `verify` actions. It retains the Compose project containers and named volumes,

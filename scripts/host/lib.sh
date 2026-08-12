@@ -53,7 +53,7 @@ stop_unit() {
 config_hash() {
   (
     cd "$1"
-    find . -type f -name '*.yaml' -print0 |
+    find . -type f -print0 |
       LC_ALL=C sort -z |
       xargs -0 sha256sum |
       sha256sum |

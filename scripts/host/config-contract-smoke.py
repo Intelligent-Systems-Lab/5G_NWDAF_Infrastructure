@@ -139,6 +139,14 @@ def main():
             "pymtlf-a device",
         ),
         (
+            "subscriber-fixture-path",
+            "manifest.yaml",
+            lambda value: value["subscriberData"].update(
+                {"subscribers": "../fixtures/full-core/ue-subscribers.json"}
+            ),
+            "subscriberData.subscribers must select a file inside the config set",
+        ),
+        (
             "pyanlf-accuracy-timeout",
             "pyanlf-a.yaml",
             lambda value: value["accuracy_monitor"]["report_delivery"].update(
