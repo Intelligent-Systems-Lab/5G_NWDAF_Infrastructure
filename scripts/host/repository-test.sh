@@ -32,6 +32,7 @@ print("PASS Python syntax")
 PY
 
 python3 "$HOST_ROOT/scripts/host/config-contract-smoke.py" "${check_args[@]}"
+python3 "$HOST_ROOT/scripts/host/mobile-identity-smoke.py"
 "$HOST_ROOT/scripts/host/webconsole-prepare.sh" "$testbed" "config/default" |
   grep -F "no toolchain or artifact was changed"
 "$HOST_ROOT/scripts/host/webconsole-start.sh" "$testbed" "config/default" |

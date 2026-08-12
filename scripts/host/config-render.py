@@ -3,6 +3,7 @@
 
 import argparse
 import copy
+import json
 import shutil
 import subprocess
 import sys
@@ -10,7 +11,7 @@ import sys
 from configlib import (
     ROOT, canonical_sha256, config_generator_source_hash, dump_yaml,
     guest_network_configs, load_yaml, load_scenario_definition, resolve_path,
-    set_path, sha256_tree,
+    resolve_mobile_identities, set_path, sha256_tree,
 )
 
 
@@ -26,8 +27,25 @@ def write(directory, name, value):
     dump_yaml(directory / name, value)
 
 
+def read_json(directory, name):
+    with (directory / name).open(encoding="utf-8") as stream:
+        return json.load(stream)
+
+
+def write_json(directory, name, value):
+    path = directory / name
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(value, indent=2) + "\n", encoding="utf-8")
+
+
 def render(testbed, baseline, output, scenario):
+    identities = resolve_mobile_identities(testbed)
     shutil.copytree(str(baseline), str(output))
+    plmn = identities["plmn"]
+    group_id = identities["internalGroupId"]
+    path_supis = identities["pathSupis"]
+    supis = identities["supis"]
+    paths = testbed["paths"]
     core = testbed["coreServices"]
     sampling = scenario["samplingIntervalSeconds"]
     monitoring = scenario["monitoring"]
@@ -52,6 +70,26 @@ def render(testbed, baseline, output, scenario):
     }
     webconsole_config["billingServer"]["enable"] = True
     write(output, "webuicfg.yaml", webconsole)
+
+    subscribers = read_json(output, "subscriber/ue-subscribers.json")
+    subscriber_records = subscribers.get("subscribers", [])
+    if len(subscriber_records) != len(supis):
+        raise ValueError("baseline subscriber fixture count must match topology")
+    subscribers["servingPlmnId"] = identities["plmnDigits"]
+    subscribers["defaults"]["snssai"] = dict(testbed["mobileNetwork"]["snssai"])
+    subscribers["defaults"]["dnn"] = testbed["mobileNetwork"]["dnn"]
+    for record, supi in zip(subscriber_records, supis):
+        record["supi"] = supi
+    write_json(output, "subscriber/ue-subscribers.json", subscribers)
+
+    groups = read_json(output, "subscriber/group-memberships.json")
+    group_records = groups.get("groups", [])
+    if len(group_records) != 1:
+        raise ValueError("baseline group fixture must contain exactly one group")
+    group_records[0]["intGroupId"] = group_id
+    group_records[0]["ueIdList"] = [{"supi": supi} for supi in supis]
+    write_json(output, "subscriber/group-memberships.json", groups)
+
     files = {
         "nrf": "nrfcfg.yaml", "nssf": "nssfcfg.yaml", "udr": "udrcfg.yaml",
         "udm": "udmcfg.yaml", "ausf": "ausfcfg.yaml", "pcf": "pcfcfg.yaml",
@@ -93,21 +131,41 @@ def render(testbed, baseline, output, scenario):
         ["configuration", "mlModelStorage", "localDirectory"],
         adrf_definition["modelStorage"]["localDirectory"],
     )
+    adrf["configuration"]["plmnSupportList"] = [{
+        "plmnId": dict(plmn),
+        "snssaiList": [dict(testbed["mobileNetwork"]["snssai"])],
+    }]
     write(output, "adrfcfg.yaml", adrf)
 
     udm = read(output, "udmcfg.yaml")
-    group_id = testbed["mobileNetwork"]["internalGroupId"]
     udm["configuration"]["internalGroupIdentifiersRanges"] = [
         {"start": group_id, "end": group_id}
     ]
     write(output, "udmcfg.yaml", udm)
 
-    plmn = testbed["mobileNetwork"]["plmn"]
     snssai = testbed["mobileNetwork"]["snssai"]
     ueransim_snssai = dict(snssai)
     sd = str(snssai["sd"])
     ueransim_snssai["sd"] = sd if sd.startswith("0x") else "0x" + sd
-    paths = testbed["paths"]
+    ausf = read(output, "ausfcfg.yaml")
+    ausf["configuration"]["plmnSupportList"] = [dict(plmn)]
+    write(output, "ausfcfg.yaml", ausf)
+
+    nssf = read(output, "nssfcfg.yaml")
+    nssf_config = nssf["configuration"]
+    nssf_config["supportedPlmnList"] = [dict(plmn)]
+    nssf_config["supportedNssaiInPlmnList"] = [{
+        "plmnId": dict(plmn),
+        "supportedSnssaiList": [dict(snssai)],
+    }]
+    nssf_config["nsiList"][0]["snssai"] = dict(snssai)
+    nssf_config["taList"] = [{
+        "tai": {"plmnId": dict(plmn), "tac": paths[name]["tai"]["tac"]},
+        "accessType": "3GPP_ACCESS",
+        "supportedSnssaiList": [dict(snssai)],
+    } for name in ("a", "b")]
+    write(output, "nssfcfg.yaml", nssf)
+
     amf = read(output, "amfcfg.yaml")
     amf_cfg = amf["configuration"]
     amf_cfg["ngapIpList"] = [core["amf"]["n2"]["address"]]
@@ -169,10 +227,15 @@ def render(testbed, baseline, output, scenario):
                     "slices": [dict(ueransim_snssai)], "cellAccessType": "nr"})
         write(output, "ueransim/gnb-{}.yaml".format(name), gnb)
 
-    for index in range(1, 7):
+    uerouting = read(output, "uerouting.yaml")
+    for name in ("a", "b"):
+        uerouting["ueRoutingInfo"]["path-" + name]["members"] = path_supis[name]
+    write(output, "uerouting.yaml", uerouting)
+
+    for index, supi in enumerate(supis, 1):
         name = "a" if index <= 3 else "b"
         ue = read(output, "ueransim/ue{}.yaml".format(index))
-        ue["supi"] = paths[name]["ues"][index - 1 if index <= 3 else index - 4]
+        ue["supi"] = supi
         ue["mcc"], ue["mnc"] = plmn["mcc"], plmn["mnc"]
         ue["gnbSearchList"] = [paths[name]["gnb"]["n2"]["address"]]
         ue["sessions"][0]["apn"] = testbed["mobileNetwork"]["dnn"]
@@ -297,7 +360,7 @@ def render(testbed, baseline, output, scenario):
     consumer["discovery"]["serviceName"] = testbed["consumer"]["discovery"]["serviceName"]
     consumer["discovery"]["event"] = testbed["consumer"]["discovery"]["event"]
     consumer["target"]["plmn"] = dict(plmn)
-    consumer["target"]["internalGroupId"] = testbed["mobileNetwork"]["internalGroupId"]
+    consumer["target"]["internalGroupId"] = group_id
     consumer["target"]["paths"] = [{"name": name, "tac": paths[name]["tai"]["tac"]} for name in ("a", "b")]
     callback = testbed["consumer"]["callback"]
     consumer["callback"]["bindAddress"] = callback["bindAddress"]
@@ -328,6 +391,7 @@ def main():
     testbed_path = resolve_path(args.testbed)
     topology_definition = load_yaml(testbed_path)
     testbed = copy.deepcopy(topology_definition)
+    resolve_mobile_identities(testbed)
     if args.ml_device:
         training_device = "cpu" if args.ml_device == "cpu" else "cuda:0"
         for service_name in ("pymtlf-a", "pymtlf-b"):

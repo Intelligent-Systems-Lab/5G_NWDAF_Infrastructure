@@ -7,7 +7,9 @@ import json
 import math
 from pathlib import Path
 
-from configlib import ROOT, load_yaml, resolve_config_scenario
+from configlib import (
+    ROOT, load_yaml, resolve_config_scenario, resolve_mobile_identities,
+)
 
 
 DATASET_SCHEMA = 2
@@ -82,6 +84,7 @@ def _tool_source_hash(tool_dir):
 def resolve_dataset_spec(testbed, config_dir):
     """Return a canonical, fully resolved dataset set specification."""
     config_dir = Path(config_dir)
+    path_supis = resolve_mobile_identities(testbed)["pathSupis"]
     scenario_path, scenario = resolve_config_scenario(config_dir)
     if scenario.get("schemaVersion") != 1:
         raise ValueError("unsupported scenario schema")
@@ -287,7 +290,7 @@ def resolve_dataset_spec(testbed, config_dir):
             "profileHash": canonical_hash(profile),
             "ueIps": _expected_ue_ips(
                 testbed["paths"][path_name]["upf"]["uePool"],
-                len(testbed["paths"][path_name]["ues"]),
+                len(path_supis[path_name]),
             ),
             "artifactFile": pseudo["dataset"]["file"],
             "guestDirectory": pseudo["dataset"]["guestDirectory"],

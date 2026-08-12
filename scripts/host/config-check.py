@@ -12,7 +12,8 @@ from pathlib import Path
 from configlib import (
     ROOT, canonical_sha256, config_generator_source_hash, get_path,
     guest_network_configs, load_yaml, resolve_config_dir,
-    resolve_config_scenario, resolve_ml_bind_address, resolve_path, sha256_tree,
+    resolve_config_scenario, resolve_ml_bind_address, resolve_mobile_identities,
+    resolve_path, sha256_tree,
 )
 from datasetlib import resolve_dataset_spec
 
@@ -103,7 +104,7 @@ def check_consumer_native(check, config_path):
     return valid
 
 
-def check_subscriber_fixtures(check, testbed, config_dir):
+def check_subscriber_fixtures(check, testbed, config_dir, identities):
     manifest = load_yaml(config_dir / "manifest.yaml")
     metadata = manifest.get("subscriberData", {})
     config_root = config_dir.resolve()
@@ -131,13 +132,13 @@ def check_subscriber_fixtures(check, testbed, config_dir):
         check.true("cannot load config subscriber fixtures: {}".format(exc), False)
         return
 
-    expected_supis = testbed["paths"]["a"]["ues"] + testbed["paths"]["b"]["ues"]
+    expected_supis = identities["supis"]
     records = subscribers.get("subscribers", [])
     fixture_supis = [record.get("supi") for record in records if isinstance(record, dict)]
     fixture_gpsis = [record.get("gpsi") for record in records if isinstance(record, dict)]
     defaults = subscribers.get("defaults", {})
     authentication = defaults.get("authentication", {})
-    expected_plmn = testbed["mobileNetwork"]["plmn"]["mcc"] + testbed["mobileNetwork"]["plmn"]["mnc"]
+    expected_plmn = identities["plmnDigits"]
 
     check.equal("subscriber fixture schema", subscribers.get("schemaVersion"), 1)
     check.equal("subscriber fixture PLMN", subscribers.get("servingPlmnId"), expected_plmn)
@@ -152,7 +153,7 @@ def check_subscriber_fixtures(check, testbed, config_dir):
     if len(group_records) == 1:
         check.equal(
             "group fixture ID", group_records[0].get("intGroupId"),
-            testbed["mobileNetwork"]["internalGroupId"],
+            identities["internalGroupId"],
         )
         check.equal(
             "group fixture SUPIs",
@@ -184,6 +185,37 @@ def main():
     testbed = load_yaml(testbed_path)
     config_dir = resolve_config_dir(testbed, args.config_dir)
     check = Check()
+
+    try:
+        identities = resolve_mobile_identities(testbed)
+    except (KeyError, TypeError, ValueError) as exc:
+        check.true("invalid mobile identity contract: {}".format(exc), False)
+        return finish(check, testbed_path, config_dir)
+    plmn = identities["plmn"]
+    group_id = identities["internalGroupId"]
+    path_supis = identities["pathSupis"]
+    expected_supis = identities["supis"]
+
+    check.true(
+        "mobileNetwork.internalGroupId is redundant; use mobileNetwork.internalGroup",
+        "internalGroupId" not in testbed.get("mobileNetwork", {}),
+    )
+    check.true(
+        "consumer.target.internalGroupId is redundant; it is derived from mobileNetwork",
+        "internalGroupId" not in testbed.get("consumer", {}).get("target", {}),
+    )
+    for path_name in ("a", "b"):
+        path = testbed.get("paths", {}).get(path_name, {})
+        check.true(
+            "paths.{}.tai.plmn is redundant; it is derived from mobileNetwork.plmn".format(
+                path_name
+            ),
+            "plmn" not in path.get("tai", {}),
+        )
+        check.true(
+            "paths.{}.ues is redundant; use subscriberNumbers".format(path_name),
+            "ues" not in path,
+        )
 
     check.equal("schemaVersion", testbed.get("schemaVersion"), 1)
     check.equal("machine set", sorted(testbed.get("machines", {})), ["core", "path-a", "path-b"])
@@ -370,7 +402,7 @@ def main():
     seed_model = seed["model"]
     seed_inference = seed["inference"]
 
-    check_subscriber_fixtures(check, testbed, config_dir)
+    check_subscriber_fixtures(check, testbed, config_dir, identities)
     try:
         dataset_spec = resolve_dataset_spec(testbed, config_dir)
     except (KeyError, OSError, ValueError, json.JSONDecodeError) as exc:
@@ -472,6 +504,7 @@ def main():
     nrf_config = load_yaml(config_dir / "nrfcfg.yaml")["configuration"]
     check.equal("NRF MongoDB URL", nrf_config["MongoDBUrl"], mongo_uri)
     check.equal("NRF MongoDB database", nrf_config["MongoDBName"], mongo["database"])
+    check.equal("NRF default PLMN", nrf_config.get("DefaultPlmnId"), plmn)
     for filename in ("udrcfg.yaml", "pcfcfg.yaml"):
         mongodb = load_yaml(config_dir / filename)["configuration"]["mongodb"]
         check.equal(filename + " MongoDB URL", mongodb["url"], mongo_uri)
@@ -495,7 +528,7 @@ def main():
         "ADRF PLMN and S-NSSAI",
         adrf.get("plmnSupportList"),
         [{
-            "plmnId": dict(testbed["mobileNetwork"]["plmn"]),
+            "plmnId": dict(plmn),
             "snssaiList": [dict(testbed["mobileNetwork"]["snssai"])],
         }],
     )
@@ -521,23 +554,62 @@ def main():
     )
 
     udm = load_yaml(config_dir / "udmcfg.yaml")["configuration"]
-    group_id = testbed["mobileNetwork"]["internalGroupId"]
     check.equal(
         "UDM Internal Group range",
         udm.get("internalGroupIdentifiersRanges"),
         [{"start": group_id, "end": group_id}],
     )
 
+    ausf = load_yaml(config_dir / "ausfcfg.yaml")["configuration"]
+    check.equal("AUSF supported PLMN", ausf.get("plmnSupportList"), [plmn])
+
+    snssai = testbed["mobileNetwork"]["snssai"]
+    nssf = load_yaml(config_dir / "nssfcfg.yaml")["configuration"]
+    check.equal("NSSF supported PLMN", nssf.get("supportedPlmnList"), [plmn])
+    check.equal(
+        "NSSF supported S-NSSAI in PLMN",
+        nssf.get("supportedNssaiInPlmnList"),
+        [{"plmnId": dict(plmn), "supportedSnssaiList": [dict(snssai)]}],
+    )
+    check.equal(
+        "NSSF NSI S-NSSAI",
+        [item.get("snssai") for item in nssf.get("nsiList", [])],
+        [snssai],
+    )
+    expected_tais = [
+        {"plmnId": dict(plmn), "tac": testbed["paths"][name]["tai"]["tac"]}
+        for name in ("a", "b")
+    ]
+    check.equal(
+        "NSSF TAIs",
+        nssf.get("taList"),
+        [
+            {
+                "tai": tai,
+                "accessType": "3GPP_ACCESS",
+                "supportedSnssaiList": [dict(snssai)],
+            }
+            for tai in expected_tais
+        ],
+    )
+
     amf = load_yaml(config_dir / "amfcfg.yaml")["configuration"]
     check.equal("AMF N2", amf["ngapIpList"], [testbed["coreServices"]["amf"]["n2"]["address"]])
     expected_tacs = [testbed["paths"][name]["tai"]["tac"] for name in ("a", "b")]
-    check.equal("AMF TAIs", [str(item["tac"]).zfill(6) for item in amf["supportTaiList"]], expected_tacs)
+    check.equal("AMF TAIs", amf.get("supportTaiList"), expected_tais)
+    check.equal("AMF served GUAMI PLMN", amf["servedGuamiList"][0].get("plmnId"), plmn)
+    check.equal(
+        "AMF supported PLMN and S-NSSAI",
+        amf.get("plmnSupportList"),
+        [{"plmnId": dict(plmn), "snssaiList": [dict(snssai)]}],
+    )
 
     smf = load_yaml(config_dir / "smfcfg.yaml")["configuration"]
     check.equal("SMF N4", smf["pfcp"]["listenAddr"], testbed["coreServices"]["smf"]["n4"]["address"])
     check.equal("SMF NRF registration", smf.get("nrfRegistrationEnabled"), True)
     check.equal("SMF URR period", smf.get("urrPeriod"), sampling)
-    ueransim_snssai = dict(testbed["mobileNetwork"]["snssai"])
+    check.equal("SMF PLMN list", smf.get("plmnList"), [plmn])
+    ueransim_snssai = dict(snssai)
     sd = str(ueransim_snssai["sd"])
     ueransim_snssai["sd"] = sd if sd.startswith("0x") else "0x" + sd
     for name in ("a", "b"):
@@ -551,7 +623,11 @@ def main():
         check.equal("UPF {} N3".format(name), upf["gtpu"]["ifList"][0]["addr"], path["upf"]["n3"]["address"])
         check.equal("UPF {} GTP interface".format(name), upf["gtpu"]["ifList"][0].get("ifname"), path["upf"]["gtpInterface"])
         check.equal("UPF {} pool".format(name), upf["dnnList"][0]["cidr"], path["upf"]["uePool"])
-        check.equal("SMF UPF {} TAI".format(name), node["tais"][0]["tac"], path["tai"]["tac"])
+        check.equal(
+            "SMF UPF {} TAI".format(name),
+            node.get("tais"),
+            [{"plmnId": dict(plmn), "tac": path["tai"]["tac"]}],
+        )
         check.equal("SMF UPF {} EES".format(name), node["nupfEeApiRoot"], uri(path["upf"]["eventExposure"]["address"], path["upf"]["eventExposure"]["port"]))
         check.true("UPF {} pseudo driver disabled".format(name), upf["ees"]["enabled"])
         check.equal(
@@ -578,16 +654,28 @@ def main():
         )
 
         gnb = load_yaml(config_dir / "ueransim" / ("gnb-{}.yaml".format(name)))
+        check.equal("gNB {} MCC".format(name), gnb.get("mcc"), plmn["mcc"])
+        check.equal("gNB {} MNC".format(name), gnb.get("mnc"), plmn["mnc"])
         check.equal("gNB {} TAC".format(name), str(gnb["tac"]).zfill(6), path["tai"]["tac"])
         check.equal("gNB {} N2".format(name), gnb["ngapIp"], path["gnb"]["n2"]["address"])
         check.equal("gNB {} N3".format(name), gnb["gtpIp"], path["gnb"]["n3"]["address"])
         check.equal("gNB {} S-NSSAI".format(name), gnb["slices"], [ueransim_snssai])
         check.equal("gNB {} cell access type".format(name), gnb.get("cellAccessType"), "nr")
 
-    for index in range(1, 7):
+    uerouting = load_yaml(config_dir / "uerouting.yaml")
+    for path_name in ("a", "b"):
+        check.equal(
+            "UE routing Path {} members".format(path_name),
+            uerouting["ueRoutingInfo"]["path-" + path_name].get("members"),
+            path_supis[path_name],
+        )
+
+    for index, expected_supi in enumerate(expected_supis, 1):
         ue = load_yaml(config_dir / "ueransim" / ("ue{}.yaml".format(index)))
         path_name = "a" if index <= 3 else "b"
-        check.equal("UE{} SUPI".format(index), ue["supi"], testbed["paths"][path_name]["ues"][index - 1 if index <= 3 else index - 4])
+        check.equal("UE{} SUPI".format(index), ue["supi"], expected_supi)
+        check.equal("UE{} MCC".format(index), ue.get("mcc"), plmn["mcc"])
+        check.equal("UE{} MNC".format(index), ue.get("mnc"), plmn["mnc"])
         check.equal("UE{} gNB".format(index), ue["gnbSearchList"], [testbed["paths"][path_name]["gnb"]["n2"]["address"]])
         check.equal("UE{} session S-NSSAI".format(index), ue["sessions"][0]["slice"], ueransim_snssai)
         check.equal("UE{} configured S-NSSAI".format(index), ue["configured-nssai"], [ueransim_snssai])
@@ -629,6 +717,13 @@ def main():
                 "NWDAF {} {} port".format(name, service), internal["port"], port,
             )
         if name in ("a", "b"):
+            check.equal(
+                "NWDAF {} tracking TAI".format(name),
+                native["nwdafInfo"]["mlAnalyticsList"][0].get(
+                    "trackingAreaList"
+                ),
+                [{"plmnId": dict(plmn), "tac": expected["tai"]}],
+            )
             check.equal(
                 "NWDAF {} AnLF backend".format(name), native["anlfBackend"]["endpoint"],
                 uri(testbed["analytics"]["backends"]["pyanlf-" + name]["address"], testbed["analytics"]["backends"]["pyanlf-" + name]["port"]),
@@ -935,8 +1030,8 @@ def main():
         consumer["discovery"]["event"],
         testbed["consumer"]["discovery"]["event"],
     )
-    check.equal("consumer PLMN", consumer["target"]["plmn"], testbed["mobileNetwork"]["plmn"])
-    check.equal("consumer group", consumer["target"]["internalGroupId"], testbed["mobileNetwork"]["internalGroupId"])
+    check.equal("consumer PLMN", consumer["target"]["plmn"], plmn)
+    check.equal("consumer group", consumer["target"]["internalGroupId"], group_id)
     check.equal("consumer paths", [p["tac"] for p in consumer["target"]["paths"]], expected_tacs)
     check.equal(
         "consumer reporting method",

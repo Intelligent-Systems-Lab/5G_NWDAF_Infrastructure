@@ -96,6 +96,25 @@ make config-render NAME=my-lab TESTBED=testbed.my-lab.yaml
 make config-check TESTBED=testbed.my-lab.yaml CONFIG_DIR=config/generated/my-lab
 ```
 
+For a different PLMN, copy `testbed.yaml` to an ignored local topology and
+change only the canonical MCC/MNC fields:
+
+```yaml
+mobileNetwork:
+  # MCC is exactly 3 digits; MNC is exactly 2 or 3 digits.
+  plmn: {mcc: "001", mnc: "01"}
+  # Rendered as 00000001-001-01-01 for this PLMN.
+  internalGroup: {serviceId: "00000001", localId: "01"}
+```
+
+Keep each Path's `tai.tac` and `subscriberNumbers` as the local portions of
+those identities. `config-render` then updates every NF/RAN PLMN, TAI, SUPI,
+Internal Group, UE-routing entry, Consumer target, and subscriber/group
+fixture in the complete output. `config-check` compares those outputs with the
+same derivation and rejects a partially edited set. GPSI/MSISDN remains an
+explicit fixture value and does not change with PLMN. Do not manually copy one
+generated native config into another set.
+
 Scenario selection is independent of VM topology. `config/default` is the
 `full-core-cat-transition` business example. Create the shorter FL closure
 scenario as another complete ignored set:

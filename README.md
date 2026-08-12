@@ -73,6 +73,11 @@ make dataset-show CONFIG_DIR=config/local/my-smoke
 Use the same explicit `CONFIG_DIR` throughout one lifecycle. The
 activated config manifest fixes the scenario definition and traffic-profile
 paths; the generated dataset manifest fixes their content hashes.
+For an alternate mobile network, change the single
+`testbed.yaml:mobileNetwork.plmn` MCC/MNC source in a local topology and render
+a complete set. NF/RAN PLMNs, TAIs, 15-digit IMSI SUPIs, Internal Group IDs,
+Consumer targets, and subscriber fixtures are derived together; GPSI/MSISDN
+remains an independent fixture identity. See [OPERATIONS.md](OPERATIONS.md).
 The advanced `services-*`, `ml-*`, and `subscriptions-*` targets remain
 available when an execution domain must be operated independently. Run
 `make help`, `make help-advanced`, or `make help-dev` for the layered command

@@ -127,6 +127,38 @@ def main():
             "UE1 network namespace",
         ),
         (
+            "ue-derived-supi",
+            "ueransim/ue1.yaml",
+            lambda value: value.update({"supi": "imsi-001010000000001"}),
+            "UE1 SUPI",
+        ),
+        (
+            "ue-routing-derived-members",
+            "uerouting.yaml",
+            lambda value: value["ueRoutingInfo"]["path-a"].update(
+                {"members": ["imsi-001010000000001"]}
+            ),
+            "UE routing Path a members",
+        ),
+        (
+            "nssf-derived-plmn",
+            "nssfcfg.yaml",
+            lambda value: value["configuration"].update(
+                {"supportedPlmnList": [{"mcc": "001", "mnc": "01"}]}
+            ),
+            "NSSF supported PLMN",
+        ),
+        (
+            "smf-derived-tai",
+            "smfcfg.yaml",
+            lambda value: value["configuration"]["userplaneInformation"][
+                "upNodes"
+            ]["UPF-A"]["tais"][0].update(
+                {"plmnId": {"mcc": "001", "mnc": "01"}}
+            ),
+            "SMF UPF a TAI",
+        ),
+        (
             "pyanlf-device",
             "pyanlf-a.yaml",
             lambda value: value["model"].update({"device": "cuda:0"}),
@@ -191,6 +223,14 @@ def main():
                 {"advertisedUri": "http://192.168.57.32:9090/wrong"}
             ),
             "consumer callback URI",
+        ),
+        (
+            "consumer-derived-group",
+            "consumer.yaml",
+            lambda value: value["target"].update(
+                {"internalGroupId": "00000001-001-01-01"}
+            ),
+            "consumer group",
         ),
         (
             "consumer-unknown-field",

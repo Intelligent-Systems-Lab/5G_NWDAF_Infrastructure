@@ -4,12 +4,80 @@
 import hashlib
 import ipaddress
 import json
+import re
 from pathlib import Path
 
 import yaml
 
 
 ROOT = Path(__file__).resolve().parents[2]
+
+
+def resolve_mobile_identities(testbed):
+    """Resolve PLMN-derived identities from one non-redundant topology contract."""
+    mobile = testbed.get("mobileNetwork", {})
+    plmn = mobile.get("plmn", {})
+    mcc = plmn.get("mcc")
+    mnc = plmn.get("mnc")
+    if not isinstance(mcc, str) or re.fullmatch(r"[0-9]{3}", mcc) is None:
+        raise ValueError("mobileNetwork.plmn.mcc must contain exactly 3 digits")
+    if not isinstance(mnc, str) or re.fullmatch(r"[0-9]{2,3}", mnc) is None:
+        raise ValueError("mobileNetwork.plmn.mnc must contain 2 or 3 digits")
+
+    group = mobile.get("internalGroup", {})
+    service_id = group.get("serviceId")
+    local_id = group.get("localId")
+    if not isinstance(service_id, str) or re.fullmatch(r"[A-Fa-f0-9]{8}", service_id) is None:
+        raise ValueError("mobileNetwork.internalGroup.serviceId must contain 8 hex digits")
+    if (
+        not isinstance(local_id, str)
+        or re.fullmatch(r"(?:[A-Fa-f0-9]{2}){1,10}", local_id) is None
+    ):
+        raise ValueError(
+            "mobileNetwork.internalGroup.localId must contain 2 to 20 hex digits in octets"
+        )
+
+    msin_width = 15 - len(mcc) - len(mnc)
+    path_supis = {}
+    all_numbers = []
+    for path_name in ("a", "b"):
+        numbers = testbed.get("paths", {}).get(path_name, {}).get(
+            "subscriberNumbers"
+        )
+        if not isinstance(numbers, list) or len(numbers) != 3:
+            raise ValueError(
+                "paths.{}.subscriberNumbers must contain exactly 3 integers".format(
+                    path_name
+                )
+            )
+        resolved = []
+        for number in numbers:
+            if (
+                not isinstance(number, int)
+                or isinstance(number, bool)
+                or number <= 0
+                or number >= 10 ** msin_width
+            ):
+                raise ValueError(
+                    "paths.{}.subscriberNumbers values must fit the {}-digit MSIN".format(
+                        path_name, msin_width
+                    )
+                )
+            resolved.append("imsi-{}{}{:0{}d}".format(mcc, mnc, number, msin_width))
+            all_numbers.append(number)
+        path_supis[path_name] = resolved
+    if len(all_numbers) != len(set(all_numbers)):
+        raise ValueError("subscriberNumbers must be unique across both Paths")
+
+    return {
+        "plmn": {"mcc": mcc, "mnc": mnc},
+        "plmnDigits": mcc + mnc,
+        "internalGroupId": "{}-{}-{}-{}".format(
+            service_id, mcc, mnc, local_id
+        ),
+        "pathSupis": path_supis,
+        "supis": path_supis["a"] + path_supis["b"],
+    }
 
 
 def load_yaml(path):

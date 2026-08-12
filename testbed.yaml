@@ -54,10 +54,14 @@ networks:
   n6-b: {cidr: 192.168.63.0/24, mode: private, egress: nat}
 
 mobileNetwork:
+  # Canonical MCC/MNC source. config-create derives every NF/RAN PLMN, TAI,
+  # 15-digit IMSI SUPI, Internal Group ID, Consumer target, and fixture from it.
   plmn: {mcc: "466", mnc: "92"}
   snssai: {sst: 1, sd: "010203"}
   dnn: internet
-  internalGroupId: "00000001-466-92-01"
+  # TS 23.003/29.571 Group ID = serviceId-MCC-MNC-localId. GPSI/MSISDN is a
+  # separate subscriber identity and is deliberately not derived from PLMN.
+  internalGroup: {serviceId: "00000001", localId: "01"}
 
 placement:
   core:
@@ -126,7 +130,7 @@ coreServices:
 paths:
   a:
     machine: path-a
-    tai: {plmn: "46692", tac: "000001"}
+    tai: {tac: "000001"}
     gnb:
       n2: {network: n2, address: 192.168.58.20}
       n3: {network: n3-a, address: 192.168.59.20}
@@ -144,13 +148,12 @@ paths:
           file: traffic.parquet
           guestDirectory: /var/lib/5g-nwdaf-infrastructure/datasets/active
           minimumReplayHeadroomMiB: 512
-    ues:
-      - imsi-466920000000001
-      - imsi-466920000000002
-      - imsi-466920000000003
+    # Stable local ordinals; renderer zero-pads the MSIN so MCC+MNC+MSIN is
+    # always a 15-digit IMSI for either a 2- or 3-digit MNC.
+    subscriberNumbers: [1, 2, 3]
   b:
     machine: path-b
-    tai: {plmn: "46692", tac: "000002"}
+    tai: {tac: "000002"}
     gnb:
       n2: {network: n2, address: 192.168.58.30}
       n3: {network: n3-b, address: 192.168.60.20}
@@ -168,10 +171,7 @@ paths:
           file: traffic.parquet
           guestDirectory: /var/lib/5g-nwdaf-infrastructure/datasets/active
           minimumReplayHeadroomMiB: 512
-    ues:
-      - imsi-466920000000004
-      - imsi-466920000000005
-      - imsi-466920000000006
+    subscriberNumbers: [4, 5, 6]
 
 analytics:
   nwdaf-a:
@@ -206,7 +206,7 @@ consumer:
     serviceName: nnwdaf-eventssubscription
     event: UE_COMMUNICATION
   target:
-    internalGroupId: "00000001-466-92-01"
+    # Internal Group ID is derived from mobileNetwork.internalGroup and PLMN.
     paths: [a, b]
   callback:
     network: sbi
