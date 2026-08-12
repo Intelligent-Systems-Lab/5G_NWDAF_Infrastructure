@@ -165,10 +165,9 @@ A-only degradation detection, two rounds of A/B local training and C FedAvg,
 ADRF publication, A/B reprovision, generation cutover, and a post-cutover
 accuracy report. Existing VMs receive a hash-verified runtime helper bundle
 before config activation, so this lifecycle no longer depends on provision-time
-helper copies. Continuous degradation can trigger another FL process after the
-first closure, and teardown still needs monitor-delete convergence before the
-ML backends stop; these are lifecycle follow-ups rather than missing closure
-paths.
+helper copies. Continuous degradation is expected to trigger later FL processes
+while the experiment remains active. ML teardown stops PyMTLF-C before A/B so
+its Model Monitor cleanup retains the required downstream availability.
 
 The initial implementation intentionally does not support TLS/certificates,
 automatic experiment history, or 5g-viz.

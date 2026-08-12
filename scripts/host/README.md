@@ -12,6 +12,8 @@ The sync reloads unit definitions but does not start or restart processes.
 
 `ml-start.sh`, `ml-status.sh`, and `ml-stop.sh` own only the Compose project
 `5g-nwdaf-infrastructure`. Stop retains containers, named volumes, and images.
+It synchronously stops PyMTLF-C first so its remote Model Monitor cleanup can
+still reach A/B, then stops the remaining project containers in parallel.
 `ml-lifecycle-smoke.sh` uses a separate disposable project and CPU-only config.
 Production `ml-start.sh` reads `runtime.mlDevicePolicy` from the selected
 complete config. GPU policy requires the Host CDI inventory to contain

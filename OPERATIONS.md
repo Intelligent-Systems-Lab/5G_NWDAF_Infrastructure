@@ -399,7 +399,11 @@ volumes.
 actual CUDA visibility, live memory, image ID, component revision, config-set
 name, and config hash. `ml-stop` stops only running containers labeled as the
 `5g-nwdaf-infrastructure` project; stopped containers, named volumes, images,
-VMs, guest processes, and subscriptions remain intact.
+VMs, guest processes, and subscriptions remain intact. It first waits for
+PyMTLF-C to finish its graceful shutdown while the A/B ML backends remain
+available for Model Monitor deletion, then stops all remaining project
+containers together. It does not use a fixed sleep or affect another Compose
+project.
 
 Run the bounded CPU-only image/config/health/lifecycle test:
 
