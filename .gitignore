@@ -4,9 +4,6 @@
 __pycache__/
 *.py[cod]
 
-# Host-specific topology/provider settings.
-testbed.local.yaml
-
 # Complete config sets generated or maintained locally.
 config/generated/*
 !config/generated/.gitkeep

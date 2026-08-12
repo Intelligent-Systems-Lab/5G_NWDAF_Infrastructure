@@ -11,10 +11,11 @@ abort "testbed definition not found: #{definition_path}" unless File.file?(defin
 testbed = YAML.safe_load(File.read(definition_path), aliases: false)
 abort "unsupported testbed schema" unless testbed["schemaVersion"] == 1
 
-local_path = File.join(ROOT, "testbed.local.yaml")
-local = File.file?(local_path) ? YAML.safe_load(File.read(local_path), aliases: false) : {}
-provider_name = ENV["VAGRANT_DEFAULT_PROVIDER"] || local.dig("provider", "name")
-abort "unsupported provider #{provider_name}; expected virtualbox" if provider_name && provider_name != "virtualbox"
+legacy_local_path = File.join(ROOT, "testbed.local.yaml")
+abort "testbed.local.yaml is no longer supported; move topology settings into #{definition_path}" if File.exist?(legacy_local_path)
+requested_provider = ENV["VAGRANT_DEFAULT_PROVIDER"]
+abort "unsupported provider #{requested_provider}; expected virtualbox" if requested_provider && requested_provider != "virtualbox"
+provider_name = "virtualbox"
 
 machines = testbed.fetch("machines")
 networks = testbed.fetch("networks")

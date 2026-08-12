@@ -56,8 +56,6 @@ complete sequence is:
 
 ```sh
 git submodule update --init --recursive
-cp testbed.local.example.yaml testbed.local.yaml
-# Select VirtualBox in testbed.local.yaml.
 make config-create NAME=my-experiment DEVICE=gpu
 make dataset-generate CONFIG_DIR=config/local/my-experiment
 make experiment-validate CONFIG_DIR=config/local/my-experiment
@@ -66,6 +64,11 @@ make experiment-start CONFIG_DIR=config/local/my-experiment
 make experiment-status CONFIG_DIR=config/local/my-experiment
 make logs
 ```
+
+The reference implementation uses VirtualBox directly; no provider-selection
+file is required. `TESTBED` selects one complete topology definition and
+defaults to `testbed.yaml`. `CONFIG_DIR` selects one complete rendered/native
+config set and otherwise falls back only to that testbed's `config.directory`.
 
 `experiment-validate` is deliberately read-only and rejects a missing dataset;
 `experiment-start` regenerates and revalidates that dataset before activating

@@ -29,20 +29,13 @@ Initialize every pinned component before preflight:
 
 ```sh
 git submodule update --init --recursive
-cp testbed.local.example.yaml testbed.local.yaml
 ```
 
-Select `virtualbox` after its host driver is known to work.
-`testbed.local.yaml` is ignored and may contain the provider name, expected VM
-and Docker storage paths, physical ML bind address, and selected complete config
-directory. It must not redefine the advertised topology, TAI, UE, NWDAF, or
-experiment semantics.
-
-`provider.expectedVmStorage` is an optional drift guard for VirtualBox's default
-machine folder. Preflight always checks the actual folder's filesystem against
-the free-space threshold; when the expected path is set, a mismatch is a hard
-failure. The old `bridgeInterface` placeholder was removed because the reference
-deployment uses isolated VirtualBox host-only networks and no code consumed it.
+The reference runtime supports VirtualBox directly; no provider-selection or
+partial local override file is required. Preflight queries VirtualBox and
+Docker for their actual storage roots and checks those filesystems against the
+selected testbed's free-space threshold. `TESTBED` selects one complete
+definition and defaults to `testbed.yaml`.
 
 `make experiment-validate CONFIG_DIR=...` is read-only. It runs the Host
 preflight plus Compose wiring and Vagrant definition validation. It checks:
@@ -80,13 +73,9 @@ never changes it based on Host hardware.
 Add `WEBCONSOLE=true` to record that the optional Core WebConsole should be
 built and started. Its default is `false`; a disabled config performs no
 WebConsole toolchain installation, build, or process mutation.
-Select that complete set explicitly or through the ignored local settings:
-
-```yaml
-# testbed.local.yaml
-config:
-  directory: config/local/my-lab
-```
+Select that complete set explicitly with
+`CONFIG_DIR=config/local/my-lab`. When omitted, commands use only the selected
+testbed's `config.directory`.
 
 The lower-level renderer remains available for an explicit alternate topology
 definition:
@@ -96,8 +85,8 @@ make config-render NAME=my-lab TESTBED=testbed.my-lab.yaml
 make config-check TESTBED=testbed.my-lab.yaml CONFIG_DIR=config/generated/my-lab
 ```
 
-For a different PLMN, copy `testbed.yaml` to an ignored local topology and
-change only the canonical MCC/MNC fields:
+For a different PLMN, copy `testbed.yaml` to a separately named complete
+topology and change only the canonical MCC/MNC fields:
 
 ```yaml
 mobileNetwork:
@@ -426,9 +415,10 @@ baseline advertises `192.168.57.1` with these fixed mappings:
 | PyMTLF-B | 9091 | 9092 |
 | PyMTLF-C | 9292 | 9292 |
 
-The physical bind address may be overridden in `testbed.local.yaml`, but all
-three VMs must still route to the advertised address. Container-native configs
-listen on `0.0.0.0`; public URLs and callbacks use the advertised Host endpoint.
+The physical bind address comes from the selected testbed's
+`mlRuntime.bindAddress`, and all three VMs must route to its
+`advertisedAddress`. Container-native configs listen on `0.0.0.0`; public URLs
+and callbacks use the advertised Host endpoint.
 `compose.yaml` defines the five production services. Under the recommended GPU
 policy, PyMTLF-A/B request the NVIDIA runtime and keep `cuda:0` in native
 config. Under the CPU policy, `compose.cpu.yaml` returns both to `runc` and their

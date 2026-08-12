@@ -99,14 +99,12 @@ def resolve_path(value):
 
 
 def resolve_config_dir(testbed, explicit=None):
+    configured = testbed.get("config", {}).get("directory")
+    if not isinstance(configured, str) or not configured:
+        raise ValueError("selected testbed config.directory is required")
     if explicit:
         return resolve_path(explicit)
-    local_path = ROOT / "testbed.local.yaml"
-    if local_path.exists():
-        configured = load_yaml(local_path).get("config", {}).get("directory")
-        if configured:
-            return resolve_path(configured)
-    return resolve_path(testbed.get("config", {}).get("directory", "config/default"))
+    return resolve_path(configured)
 
 
 def load_scenario_definition(value):
@@ -133,16 +131,11 @@ def resolve_config_scenario(config_dir):
     return path, scenario
 
 
-def load_local_settings():
-    local_path = ROOT / "testbed.local.yaml"
-    return load_yaml(local_path) if local_path.exists() else {}
-
-
 def resolve_ml_bind_address(testbed):
-    local = load_local_settings()
-    return local.get("host", {}).get(
-        "mlBindAddress", testbed.get("mlRuntime", {}).get("bindAddress")
-    )
+    address = testbed.get("mlRuntime", {}).get("bindAddress")
+    if not isinstance(address, str) or not address:
+        raise ValueError("selected testbed mlRuntime.bindAddress is required")
+    return address
 
 
 def resolve_ml_device_policy(config_dir):

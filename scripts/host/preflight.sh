@@ -12,6 +12,10 @@ ok() { echo "OK   $*"; }
 fail() { echo "FAIL $*" >&2; failures=$((failures + 1)); }
 warn() { echo "WARN $*" >&2; warnings=$((warnings + 1)); }
 
+if [ -e "$HOST_ROOT/testbed.local.yaml" ]; then
+  fail "testbed.local.yaml is no longer supported; move required settings into the selected TESTBED and remove the legacy file"
+fi
+
 if python3 "$HOST_ROOT/scripts/guest/provisioning-lock.py" validate \
   "$HOST_ROOT/provisioning.lock.yaml" >/dev/null; then
   ok "Guest provisioning dependency lock"
@@ -24,10 +28,7 @@ for command in git go python3 sha256sum tar vagrant docker ip ss; do
 done
 
 if command -v vagrant >/dev/null; then
-  provider=${VAGRANT_DEFAULT_PROVIDER:-}
-  if [ -z "$provider" ] && [ -f "$HOST_ROOT/testbed.local.yaml" ]; then
-    provider=$(python3 -c 'import sys,yaml; print((yaml.safe_load(open(sys.argv[1])) or {}).get("provider",{}).get("name", ""))' "$HOST_ROOT/testbed.local.yaml")
-  fi
+  provider=${VAGRANT_DEFAULT_PROVIDER:-virtualbox}
   case "$provider" in
     virtualbox)
       if command -v VBoxManage >/dev/null && VBoxManage list vms >/dev/null 2>&1; then
@@ -75,7 +76,6 @@ PY
         warn "VirtualBox host-only allowlist /etc/vbox/networks.conf is not readable"
       fi
       ;;
-    "") fail "provider not selected; set provider.name=virtualbox in testbed.local.yaml or VAGRANT_DEFAULT_PROVIDER=virtualbox" ;;
     *) fail "unsupported provider '$provider'; the reference deployment supports virtualbox only" ;;
   esac
 fi
@@ -90,12 +90,11 @@ else
   docker_free_gib=0
 fi
 
-read -r required_mib disk_gib host_reserve_mib swap_policy minimum_swap_mib minimum_free_storage_gib ml_bind_address expected_docker_root < <(PYTHONPATH="$HOST_ROOT/scripts/host" python3 - "$testbed" <<'PY'
+read -r required_mib disk_gib host_reserve_mib swap_policy minimum_swap_mib minimum_free_storage_gib ml_bind_address < <(PYTHONPATH="$HOST_ROOT/scripts/host" python3 - "$testbed" <<'PY'
 import sys
-from configlib import load_local_settings, load_yaml, resolve_ml_bind_address, resolve_path
+from configlib import load_yaml, resolve_ml_bind_address, resolve_path
 d = load_yaml(resolve_path(sys.argv[1]))
 safety = d["hostSafety"]
-local = load_local_settings()
 print(
     sum(m["resources"]["memoryMiB"] for m in d["machines"].values()),
     sum(m["resources"]["diskGiB"] for m in d["machines"].values()),
@@ -104,7 +103,6 @@ print(
     safety["minimumFreeSwapMiB"],
     safety["minimumFreeStorageGiB"],
     resolve_ml_bind_address(d),
-    local.get("host", {}).get("dockerDataRoot", "-"),
 )
 PY
 )
@@ -124,34 +122,8 @@ fi
 if [ -n "$virtualbox_storage" ] && [ -d "$virtualbox_storage" ]; then
   vm_storage_free_gib=$(df -Pk "$virtualbox_storage" | awk 'NR==2 {print int($4/1024/1024)}')
   [ "$vm_storage_free_gib" -ge "$minimum_free_storage_gib" ] && ok "VirtualBox storage filesystem free ${vm_storage_free_gib}GiB" || fail "VirtualBox storage filesystem free ${vm_storage_free_gib}GiB < ${minimum_free_storage_gib}GiB safety threshold"
-  expected_vm_storage=$(PYTHONPATH="$HOST_ROOT/scripts/host" python3 - <<'PY'
-from configlib import load_local_settings
-print(load_local_settings().get("provider", {}).get("expectedVmStorage") or "")
-PY
-  )
-  if [ -n "$expected_vm_storage" ]; then
-    mapfile -t storage_paths < <(python3 - "$virtualbox_storage" "$expected_vm_storage" <<'PY'
-import sys
-from pathlib import Path
-print(Path(sys.argv[1]).resolve())
-print(Path(sys.argv[2]).expanduser().resolve())
-PY
-    )
-    actual_storage=${storage_paths[0]}
-    expected_storage=${storage_paths[1]}
-    if [ "$actual_storage" = "$expected_storage" ]; then
-      ok "VirtualBox machine folder matches local expectation"
-    else
-      fail "VirtualBox machine folder $actual_storage does not match local expectation $expected_storage"
-    fi
-  else
-    warn "provider.expectedVmStorage is not pinned; actual folder is $virtualbox_storage"
-  fi
 fi
 if [ -n "$docker_root" ]; then
-  if [ "$expected_docker_root" != "-" ] && [ "$docker_root" != "$expected_docker_root" ]; then
-    fail "Docker data-root $docker_root does not match local expectation $expected_docker_root"
-  fi
   [ "$docker_free_gib" -ge "$minimum_free_storage_gib" ] && ok "Docker data-root filesystem free ${docker_free_gib}GiB" || fail "Docker data-root filesystem free ${docker_free_gib}GiB < ${minimum_free_storage_gib}GiB safety threshold"
 fi
 
