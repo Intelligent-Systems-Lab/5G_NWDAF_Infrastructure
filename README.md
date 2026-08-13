@@ -73,7 +73,6 @@ described in [Operations](docs/operations.md).
 - [Operations](docs/operations.md)
 - [Command reference](docs/commands.md)
 - [Components and source locks](docs/components.md)
-- [Validated behavior](docs/validation.md)
 - [Troubleshooting](docs/troubleshooting.md)
 
 Run `make help`, `make help-advanced`, or `make help-dev` for the layered command
