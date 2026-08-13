@@ -7,16 +7,7 @@ explicit_config=${2:-}
 cpu_config="$HOST_ROOT/config/generated/ml-repository-test"
 webconsole_root=$(mktemp -d)
 legacy_testbed_root=$(mktemp -d)
-cleanup_wait_log=""
-cleanup_wait_writer=""
 cleanup() {
-  if [ -n "$cleanup_wait_writer" ]; then
-    kill "$cleanup_wait_writer" >/dev/null 2>&1 || true
-    wait "$cleanup_wait_writer" 2>/dev/null || true
-  fi
-  if [ -n "$cleanup_wait_log" ]; then
-    rm -f "$cleanup_wait_log"
-  fi
   rm -rf "$cpu_config"
   rm -rf "$webconsole_root"
   rm -rf "$legacy_testbed_root"
@@ -186,42 +177,28 @@ echo "PASS current-invocation UE readiness parsing"
 )
 echo "PASS aggregate status failure and poweroff semantics"
 
-monitor_log_fixture=$'ML Model Monitor subscription active subscription_id=old-a registration_id=reg-a\nML Model Monitor subscription active subscription_id=current-b registration_id=reg-b\nML Model Monitor subscription removed subscription_id=old-a registration_id=reg-a\nML Model Monitor subscription active subscription_id=current-a registration_id=reg-c'
-mapfile -t active_monitor_ids < <(
-  ml_monitor_active_subscription_ids_from_log <<<"$monitor_log_fixture"
-)
-if [ "${active_monitor_ids[*]}" != "current-a current-b" ]; then
-  echo "unexpected active Model Monitor subscriptions: ${active_monitor_ids[*]}" >&2
-  exit 1
-fi
-echo "PASS Model Monitor cleanup log reconstruction"
-
-removed_monitor_log_fixture=$'ML Model Monitor subscription removed subscription_id=done-b registration_id=reg-b\nunrelated log\nML Model Monitor subscription removed subscription_id=done-a registration_id=reg-a'
-mapfile -t removed_monitor_ids < <(
-  ml_monitor_removed_subscription_ids_from_log <<<"$removed_monitor_log_fixture"
-)
-if [ "${removed_monitor_ids[*]}" != "done-a done-b" ]; then
-  echo "unexpected removed Model Monitor subscriptions: ${removed_monitor_ids[*]}" >&2
-  exit 1
-fi
-echo "PASS Model Monitor cleanup completion parsing"
-
-cleanup_wait_log=$(mktemp)
 (
-  sleep 0.2
-  printf '%s\n' 'ML Model Monitor subscription removed subscription_id=done-a registration_id=reg-a'
-  sleep 0.2
-  printf '%s\n' 'ML Model Monitor subscription removed subscription_id=done-b registration_id=reg-b'
-  sleep 2
-) >"$cleanup_wait_log" &
-cleanup_wait_writer=$!
-wait_for_ml_monitor_cleanup "$cleanup_wait_log" "$cleanup_wait_writer" 3 1 done-a done-b
-kill "$cleanup_wait_writer" >/dev/null 2>&1 || true
-wait "$cleanup_wait_writer" 2>/dev/null || true
-rm -f "$cleanup_wait_log"
-cleanup_wait_writer=""
-cleanup_wait_log=""
-echo "PASS Model Monitor cleanup convergence wait"
+  vm_state_for() { printf '%s\n' poweroff; }
+  vssh() {
+    echo "consumer unit query unexpectedly reached a powered-off VM" >&2
+    return 99
+  }
+  if consumer_unit_active; then
+    echo "powered-off Core VM reported an active Consumer" >&2
+    exit 1
+  fi
+
+  vm_state_for() { printf '%s\n' running; }
+  vssh() { return 0; }
+  consumer_unit_active
+
+  vssh() { return 3; }
+  if consumer_unit_active; then
+    echo "inactive Consumer unit reported active" >&2
+    exit 1
+  fi
+)
+echo "PASS Consumer lifecycle state detection"
 
 python3 - "$HOST_ROOT" <<'PY'
 from pathlib import Path

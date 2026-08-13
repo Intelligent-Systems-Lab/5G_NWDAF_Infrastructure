@@ -82,9 +82,11 @@ scenario, a bounded run completed:
 - model generation cutover; and
 - a post-cutover accuracy report.
 
-An active-runtime teardown regression also established both Model Monitor
-paths and verified that the default 40-second grace allowed their asynchronous
-DELETE operations to return `204` before the first ML container stopped.
+An active-runtime teardown with NWDAF `c53f058` established both Model Monitor
+paths and completed both asynchronous DELETE operations with `204` about 124 ms
+after the first Consumer DELETE began. No cleanup `503` or reconciler failure
+was observed. The fixed 40-second grace therefore retains substantial shutdown
+margin without coupling orchestration to application log wording.
 
 ## Interpreting results
 

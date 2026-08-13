@@ -124,17 +124,13 @@ make experiment-stop
 make vm-halt
 ```
 
-`experiment-stop` snapshots the active PyMTLF-C Model Monitor subscription IDs,
-deletes the two saved Consumer subscription locations, and keeps the backends
-available until those same IDs are logged as removed. It polls every two seconds
-and stops waiting as soon as cleanup converges. The default maximum is 210
-seconds; timeout emits a warning and teardown continues so a persistent `503`
-cannot block shutdown indefinitely. Override the non-negative maximum only for
-focused diagnosis:
-
-```sh
-ML_CLEANUP_TIMEOUT_SECONDS=300 make experiment-stop
-```
+`experiment-stop` deletes the two saved Consumer subscription locations, then
+keeps the NWDAFs and ML backends available for a fixed 40-second grace before
+stopping containers and Guest services. PyAnLF and PyMTLF perform the dependent
+Model Provision and Model Monitor cleanup asynchronously, so immediate shutdown
+would still be unsafe even though cross-node NWDAF deletion no longer holds a
+route mutex during network I/O. The grace is deliberately not inferred from
+application log wording; use `make logs` when teardown diagnostics are needed.
 
 The stop retains VMs, stopped containers, images, named volumes, generated
 datasets, active config, subscriber/Internal Group records, and ADRF/model

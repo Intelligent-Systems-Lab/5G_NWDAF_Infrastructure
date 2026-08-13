@@ -2,7 +2,12 @@
 set -euo pipefail
 source "$(dirname "$0")/lib.sh"
 
-state=$(vssh core "systemctl is-active 5g-nwdaf@webconsole.service 2>/dev/null || true" 2>/dev/null | tr -d '\r' | tail -n 1)
+core_state=$(vm_state_for core)
+if [ "$core_state" = running ]; then
+  state=$(vssh core "systemctl is-active 5g-nwdaf@webconsole.service 2>/dev/null || true" 2>/dev/null | tr -d '\r' | tail -n 1)
+else
+  state=not-running
+fi
 if [ "$state" = active ] || [ "$state" = activating ] || [ "$state" = failed ]; then
   stop_unit core webconsole
 else
