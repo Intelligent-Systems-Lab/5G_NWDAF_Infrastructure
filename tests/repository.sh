@@ -4,7 +4,7 @@ source "$(cd "$(dirname "$0")/.." && pwd)/scripts/host/lib.sh"
 
 testbed=${1:-testbed.yaml}
 explicit_config=${2:-}
-cpu_config="$HOST_ROOT/config/generated/ml-repository-test"
+cpu_config="$HOST_ROOT/.generated/tests/config/ml-repository-test"
 webconsole_root=$(mktemp -d)
 legacy_testbed_root=$(mktemp -d)
 cleanup() {

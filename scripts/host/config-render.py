@@ -381,7 +381,7 @@ def main():
         "--scenario",
         default="fixtures/full-core/scenarios/full-core-cat-transition.yaml",
     )
-    parser.add_argument("--output-root", default="config/generated")
+    parser.add_argument("--output-root", default="config/local")
     parser.add_argument("--ml-device", choices=("cpu", "gpu"))
     parser.add_argument("--webconsole", choices=("false", "true"))
     parser.add_argument("--force", action="store_true")

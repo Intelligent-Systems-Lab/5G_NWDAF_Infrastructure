@@ -15,15 +15,19 @@ from configlib import ROOT, dump_yaml, load_yaml, resolve_path, sha256_tree
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--source", default="config/default")
-    parser.add_argument("--output", default="config/generated/ml-container-test")
+    parser.add_argument(
+        "--output", default=".generated/tests/config/ml-container-test"
+    )
     parser.add_argument("--force", action="store_true")
     args = parser.parse_args()
 
     source = resolve_path(args.source)
     output = resolve_path(args.output)
-    generated_root = (ROOT / "config" / "generated").resolve()
+    generated_root = (ROOT / ".generated" / "tests" / "config").resolve()
     if output.resolve().parent != generated_root:
-        raise SystemExit("output must be a direct child of config/generated")
+        raise SystemExit(
+            "output must be a direct child of .generated/tests/config"
+        )
     if output.exists():
         if not args.force:
             raise SystemExit("output exists; pass --force to replace it: {}".format(output))

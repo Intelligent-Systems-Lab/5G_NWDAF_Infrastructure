@@ -47,8 +47,10 @@ scenario, runtime policy, referenced inputs, and config identity. Always pass
 the directory as a unit; copying individual YAML files between sets defeats
 the consistency checks.
 
-`config/default` is the committed full-core baseline. `config/local` is for
-user-managed generated sets. `config/generated` is used by repository tests.
+`config/default` is the committed full-core baseline. `config/local` is the
+only user-managed output area and contains the complete sets created by
+`make config-create`. Repository tests keep their disposable config under
+`.generated/tests/config/`, outside the user-facing config tree.
 
 ## Ownership of values
 

@@ -5,7 +5,7 @@ source "$(cd "$(dirname "$0")/.." && pwd)/scripts/host/lib.sh"
 export ML_RUNTIME_MODE=cpu-smoke
 export ML_DEVICE_POLICY=cpu
 export ML_PROJECT_NAME=5g-nwdaf-infrastructure-container-test
-config_dir="$HOST_ROOT/config/generated/ml-container-test"
+config_dir="$HOST_ROOT/.generated/tests/config/ml-container-test"
 
 cleanup() {
   ml_compose down --volumes --remove-orphans >/dev/null 2>&1 || true

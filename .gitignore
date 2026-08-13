@@ -5,8 +5,6 @@ __pycache__/
 *.py[cod]
 
 # Complete config sets generated or maintained locally.
-config/generated/*
-!config/generated/.gitkeep
 config/local/*
 !config/local/.gitkeep
 
