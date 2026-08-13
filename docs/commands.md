@@ -42,7 +42,7 @@ while advanced and developer commands remain available. `TESTBED` defaults to
 | `make services-status` | Show all 23 guest unit states plus current-invocation Registration/PDU readiness for six UEs. Read-only; readiness is `inactive`, `pending`, `successful`, or `failed`. |
 | `make services-stop` | Stop guest experiment units in reverse order without halting VMs or deleting persistent data. |
 | `make ml-start CONFIG_DIR=...` | Validate, build/reuse images, enforce CPU/GPU policy, and start the five production containers. |
-| `make ml-status` | Show container, health, configured device, CUDA visibility, memory, image, revision, and config identity. Read-only. |
+| `make ml-status` | Show container/device/image identity plus a `StartedAt`-scoped FL milestone summary from matching-config PyMTLF-A/B/C logs. Read-only; unseen milestones remain `not-seen`. |
 | `make ml-stop` | Stop only the production Compose project's running containers; retain containers, images, and volumes. |
 | `make webconsole-start CONFIG_DIR=...` | If enabled, prepare/reuse the Core artifact and start WebConsole. MongoDB and NRF must be active. |
 | `make webconsole-status` | Show the WebConsole unit and endpoint state. Read-only. |

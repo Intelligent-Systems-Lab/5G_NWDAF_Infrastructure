@@ -25,6 +25,8 @@ checks:
   rejection, recovery, and inactive service cases;
 - aggregate snapshot failure propagation and valid powered-off `not-running`
   behavior for Guest, WebConsole, and Subscription domains;
+- current-container FL milestone parsing, post-cutover ordering, `StartedAt`
+  log scoping, and cross-container config identity rejection;
 - Vagrant definition validation.
 
 `make experiment-validate CONFIG_DIR=...` adds checks against the current Host:

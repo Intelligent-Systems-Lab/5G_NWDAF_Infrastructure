@@ -86,6 +86,15 @@ data is different: `experiment-status` and the single snapshot return non-zero
 and preserve the backend error. Continuous `observe` labels the failed section
 `unavailable` and continues with the next interval so recovery remains visible.
 
+The ML section also provides a current-container FL milestone table. It scopes
+Docker logs with each PyMTLF container's current `StartedAt`, requires matching
+config-set/hash labels, and reports monitor lifecycle, degradation, process,
+preparation, A/B local rounds, aggregation, validation, publication, adoption,
+cutover, and post-cutover evaluated accuracy. `not-seen` means the current
+container logs do not yet contain that evidence; it is not inferred to be a
+component failure. The separate failure row only changes when an explicit FL
+failure signature is observed.
+
 For focused output, call the log script directly:
 
 ```sh
