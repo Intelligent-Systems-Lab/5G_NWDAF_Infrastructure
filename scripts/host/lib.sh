@@ -59,6 +59,45 @@ journal_log_since() {
   printf '%s UTC\n' "${canonical_utc%Z}"
 }
 
+ue_readiness_states() {
+  local service_state=$1 journal=${2:-}
+  local registration pdu_session
+  case "$service_state" in
+    inactive|unknown|'')
+      printf 'inactive|inactive\n'
+      return
+      ;;
+    failed)
+      printf 'failed|failed\n'
+      return
+      ;;
+    active)
+      registration=pending
+      pdu_session=pending
+      ;;
+    *)
+      printf 'pending|pending\n'
+      return
+      ;;
+  esac
+
+  if [[ "$journal" == *'Initial Registration is successful'* ]]; then
+    registration=successful
+  elif [[ "$journal" == *'Initial Registration failed ['* ]]; then
+    registration=failed
+  fi
+
+  if [[ "$journal" == *'PDU Session establishment is successful PSI['* ]]; then
+    pdu_session=successful
+  elif [[ "$journal" == *'PDU Session Establishment Reject received ['* ||
+          "$journal" == *'PDU Session Establishment procedure failure'* ||
+          "$journal" == *'PDU session allocation failed'* ]]; then
+    pdu_session=failed
+  fi
+
+  printf '%s|%s\n' "$registration" "$pdu_session"
+}
+
 vssh() {
   local machine=$1 command=$2
   (cd "$HOST_ROOT" && vagrant ssh "$machine" -c "$command")

@@ -92,6 +92,60 @@ if [ "$invalid_since_output" != 'invalid --since value: not-a-time' ]; then
 fi
 echo "PASS owned log sources and UTC time normalization"
 
+assert_ue_readiness() {
+  local expected=$1 service_state=$2 journal=$3 label=$4 actual
+  actual=$(ue_readiness_states "$service_state" "$journal")
+  if [ "$actual" != "$expected" ]; then
+    echo "unexpected UE readiness for $label: expected=$expected actual=$actual" >&2
+    exit 1
+  fi
+}
+assert_ue_readiness 'inactive|inactive' inactive '' inactive
+assert_ue_readiness 'failed|failed' failed \
+  'Initial Registration is successful' failed-service
+assert_ue_readiness 'pending|pending' activating '' activating
+assert_ue_readiness 'pending|pending' active '' fresh-invocation
+assert_ue_readiness 'successful|pending' active \
+  'Initial Registration is successful' registration-only
+assert_ue_readiness 'successful|successful' active \
+  $'Initial Registration is successful\nPDU Session establishment is successful PSI[1]' complete
+assert_ue_readiness 'failed|failed' active \
+  $'Initial Registration failed [PLMN_NOT_ALLOWED]\nPDU Session Establishment Reject received [INSUFFICIENT_RESOURCES]' rejected
+assert_ue_readiness 'successful|successful' active \
+  $'Initial Registration failed [TEMPORARY]\nPDU Session Establishment procedure failure\nInitial Registration is successful\nPDU Session establishment is successful PSI[1]' recovered
+(
+  source "$HOST_ROOT/scripts/host/services-status.sh"
+  vssh() {
+    local machine=$1 remote_script=$2
+    [ "$machine" = path-a ]
+    [[ "$remote_script" == *'_SYSTEMD_INVOCATION_ID=$invocation'* ]]
+    bash -n <<<"$remote_script"
+  }
+  machine_snapshot path-a ue1 ue2 ue3
+  machine_snapshot() {
+    local machine=$1 encoded
+    case "$machine" in
+      core)
+        printf '%s\n' 'SERVICE|core|nrf|active'
+        ;;
+      path-a)
+        encoded=$(printf '%s' $'Initial Registration is successful\nPDU Session establishment is successful PSI[1]' | base64 -w0)
+        printf '%s\n' 'SERVICE|path-a|ue1|active'
+        printf 'UE|path-a|ue1|active|current-a|%s\n' "$encoded"
+        ;;
+      path-b)
+        printf '%s\n' 'SERVICE|path-b|ue4|inactive'
+        printf '%s\n' 'UE|path-b|ue4|inactive||'
+        ;;
+    esac
+  }
+  status_output=$(services_status_main)
+  compact_status=$(sed -E 's/[[:space:]]+/ /g' <<<"$status_output")
+  [[ "$compact_status" == *'path-a ue1 active successful successful'* ]]
+  [[ "$compact_status" == *'path-b ue4 inactive inactive inactive'* ]]
+)
+echo "PASS current-invocation UE readiness parsing"
+
 monitor_log_fixture=$'ML Model Monitor subscription active subscription_id=old-a registration_id=reg-a\nML Model Monitor subscription active subscription_id=current-b registration_id=reg-b\nML Model Monitor subscription removed subscription_id=old-a registration_id=reg-a\nML Model Monitor subscription active subscription_id=current-a registration_id=reg-c'
 mapfile -t active_monitor_ids < <(
   ml_monitor_active_subscription_ids_from_log <<<"$monitor_log_fixture"

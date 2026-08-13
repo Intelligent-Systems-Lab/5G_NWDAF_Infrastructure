@@ -39,7 +39,7 @@ while advanced and developer commands remain available. `TESTBED` defaults to
 | `make vm-status` | Show Vagrant VM power state. Read-only. |
 | `make vm-halt` | Gracefully power off all three VMs without deleting them. |
 | `make services-start CONFIG_DIR=...` | Sync helpers, stage config/data, apply subscriber fixtures, and start guest units in dependency order. Does not start ML or subscriptions. |
-| `make services-status` | Show guest unit and registration/session state. Read-only. |
+| `make services-status` | Show all 23 guest unit states plus current-invocation Registration/PDU readiness for six UEs. Read-only; readiness is `inactive`, `pending`, `successful`, or `failed`. |
 | `make services-stop` | Stop guest experiment units in reverse order without halting VMs or deleting persistent data. |
 | `make ml-start CONFIG_DIR=...` | Validate, build/reuse images, enforce CPU/GPU policy, and start the five production containers. |
 | `make ml-status` | Show container, health, configured device, CUDA visibility, memory, image, revision, and config identity. Read-only. |

@@ -64,11 +64,17 @@ observe logs as well as the compact state view.
 
 ```sh
 make experiment-status CONFIG_DIR=config/local/my-experiment
+make services-status
 make logs
 ```
 
 `experiment-status` is a snapshot covering config identity, Host headroom, VM
-power, guest units, container health/device state, and subscriptions. `make
+power, guest units, container health/device state, and subscriptions.
+`services-status` keeps the 23-unit process table and adds a six-UE readiness
+table. Each UE row distinguishes service state, Registration, and PDU Session;
+only journal records carrying the service's current systemd invocation ID are
+considered. An active UE without the corresponding success evidence is
+`pending`, so a previous run cannot make a fresh process appear ready. `make
 logs` follows all owned VM journals and project ML container logs. This includes
 the template Guest units, the Core-only Consumer, and the Network unit on each
 VM; stopping the log follower does not stop the experiment.

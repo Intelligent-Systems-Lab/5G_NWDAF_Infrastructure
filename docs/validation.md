@@ -19,6 +19,8 @@ checks:
 - deterministic PseudoDriver generation and tamper rejection;
 - production and CPU-smoke Compose contracts;
 - Consumer schema and discovery/subscription behavior in controlled tests;
+- current-invocation UE Registration/PDU readiness parsing, including pending,
+  rejection, recovery, and inactive service cases;
 - Vagrant definition validation.
 
 `make experiment-validate CONFIG_DIR=...` adds checks against the current Host:
