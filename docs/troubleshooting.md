@@ -23,10 +23,6 @@ leading `-` means it has not been initialized. Compare an unexpected revision
 with `components.lock.yaml`. Do not repair it with `--remote`; first determine
 whether the parent pin or local checkout is intended.
 
-HTTPS initialization of private team repositories requires GitHub credentials.
-`gh auth status` can confirm GitHub CLI authentication, but Git itself must also
-have the credential helper configured by the chosen login flow.
-
 ## Config selection or stale files
 
 There is no local overlay. If an old `testbed.local.yaml` exists from an earlier

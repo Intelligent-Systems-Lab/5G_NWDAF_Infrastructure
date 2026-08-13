@@ -78,9 +78,3 @@ described in [Operations](docs/operations.md).
 
 Run `make help`, `make help-advanced`, or `make help-dev` for the layered command
 surface. Run `make test` for the Host-only repository checks.
-
-## License
-
-The parent repository is currently all rights reserved; see [LICENSE](LICENSE).
-Every submodule remains governed by its own license, recorded in
-[`components.lock.yaml`](components.lock.yaml).

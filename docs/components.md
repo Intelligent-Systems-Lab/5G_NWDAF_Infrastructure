@@ -23,8 +23,8 @@ metadata are kept consistent:
 
 1. `.gitmodules` defines each submodule path, HTTPS clone URL, and branch hint.
 2. The parent Git index records the exact gitlink commit.
-3. `components.lock.yaml` repeats path, URL, branch or tag, commit, and license
-   metadata for readable validation and inventory.
+3. `components.lock.yaml` repeats path, URL, branch or tag, and commit metadata
+   for readable validation and inventory.
 
 Initialize exactly those revisions with:
 
@@ -37,8 +37,8 @@ branch tip may advance while the parent gitlink intentionally remains fixed.
 
 Preflight verifies each installed HEAD against the readable lock and rejects a
 dirty submodule worktree. It does not require a local submodule's `origin` URL
-to match, because a developer may use an equivalent personal credential or
-fetch configuration.
+to match because the checked-out commit, not the local fetch configuration, is
+the executable source identity.
 
 ## Guest build boundary
 
@@ -74,10 +74,3 @@ If a guest kernel changes, rebuild only that dependency:
 vagrant ssh path-a -c 'sudo /opt/5g-nwdaf-infrastructure/source/scripts/guest/path.sh A kernel'
 vagrant ssh path-b -c 'sudo /opt/5g-nwdaf-infrastructure/source/scripts/guest/path.sh B kernel'
 ```
-
-## Licensing
-
-The parent [LICENSE](../LICENSE) currently reserves all rights. Each submodule
-continues under its own license. `components.lock.yaml` records the currently
-known SPDX identity or `UNDECLARED` when the pinned repository has no declared
-license file; the validator ensures the field is never omitted.

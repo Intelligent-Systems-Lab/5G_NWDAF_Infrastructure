@@ -1,44 +1,106 @@
 # Installation
 
+Install only the sections that the Host is missing. Each section begins with
+read-only checks and ends with the condition that must be true for this
+repository. Installing VirtualBox kernel modules, Docker, or NVIDIA support is
+a Host-wide administration task; coordinate it before changing the shared
+laboratory machine.
+
 ## Reference Host
 
-The supported reference path is a Linux Host running VirtualBox and Vagrant.
-The Vagrant project pins Ubuntu 22.04 (`ubuntu/jammy64` `20241002.0.0`) and
-disables automatic box update checks. Docker runs the Host ML services. Python
-repository tools use `python3`; Python project dependencies are managed with
-`uv` where required.
+The current laboratory Host runs Ubuntu 20.04.6 on x86-64. The following
+versions have been used by this repository; they record the existing
+environment and are not minimum-version constraints:
 
-Install these Host tools before cloning:
+| Component | Reference version |
+| --- | --- |
+| VirtualBox | 6.1.50 |
+| Vagrant | 2.4.3 |
+| Docker Engine | 27.4.1 |
+| Docker Compose | 2.32.1 |
+| Python | 3.8.10 |
+| `uv` | 0.9.7 |
+| NVIDIA Container Toolkit | 1.19.1 |
 
-- Git, Git LFS if required by a component, and GitHub credentials for private
-  Intelligent-Systems-Lab repositories
-- VirtualBox and Vagrant
-- Docker Engine with Compose v2
-- Python 3 and `uv`
-- NVIDIA driver, NVIDIA Container Toolkit, and CDI support when using GPU mode
+The Vagrant guests are separate from the Host and remain pinned to Ubuntu
+22.04 (`ubuntu/jammy64` `20241002.0.0`). Automatic box update checks are
+disabled. Do not choose Ubuntu 20.04 for a new Host merely to copy the existing
+machine; use a release supported by the current VirtualBox, Docker, and NVIDIA
+installation guides.
 
-Adding a user to the Docker group takes effect after a fresh login session (or
-`newgrp docker`); it does not by itself require restarting the shared Docker
-daemon. Confirm access with `docker info`.
+## 1. Base command-line tools
 
-## Clone and source initialization
-
-All committed submodule URLs use HTTPS. Configure GitHub authentication before
-initializing private sources, then run:
+Check the tools used directly by repository scripts:
 
 ```sh
-git submodule update --init --recursive
+git --version
+python3 --version
+curl --version
+tar --version
+sha256sum --version
 ```
 
-Preflight confirms that every installed component matches the parent-pinned
-commit in `components.lock.yaml`. Provisioning never clones branches inside a
-VM.
+On Ubuntu, install only missing base packages:
 
-## VirtualBox network allowlist
+```sh
+sudo apt-get update
+sudo apt-get install -y git python3 curl ca-certificates gnupg tar coreutils
+```
 
-On Linux, `/etc/vbox/networks.conf` must allow every declared host-only address.
-The reference Host keeps its existing laboratory range and allows the testbed
-range with:
+Python project dependencies are managed with `uv` where required. If `uv` is
+missing, use its official standalone installer:
+
+```sh
+curl -LsSf https://astral.sh/uv/install.sh | sh
+```
+
+Start a new shell if the installer updated `PATH`, then verify:
+
+```sh
+uv --version
+```
+
+See the [official uv installation guide](https://docs.astral.sh/uv/getting-started/installation/)
+for alternate or version-specific installation methods.
+
+## 2. VirtualBox and Vagrant
+
+Both commands and the VirtualBox Host driver must be usable:
+
+```sh
+VBoxManage --version
+vagrant --version
+test -c /dev/vboxdrv
+```
+
+If VirtualBox or its driver is missing on the reference Ubuntu Host, install
+the distribution packages matching the running kernel:
+
+```sh
+sudo apt-get update
+sudo apt-get install -y virtualbox virtualbox-dkms "linux-headers-$(uname -r)"
+sudo modprobe vboxdrv
+```
+
+If Vagrant is missing, install the HashiCorp package repository and Vagrant:
+
+```sh
+curl -fsSL https://apt.releases.hashicorp.com/gpg |
+  sudo gpg --dearmor --yes -o /usr/share/keyrings/hashicorp-archive-keyring.gpg
+echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/hashicorp-archive-keyring.gpg] https://apt.releases.hashicorp.com $(. /etc/os-release && echo "$VERSION_CODENAME") main" |
+  sudo tee /etc/apt/sources.list.d/hashicorp.list >/dev/null
+sudo apt-get update
+sudo apt-get install -y vagrant
+```
+
+Rerun the three checks above after installation. This repository does not
+require an additional Vagrant plugin.
+
+### VirtualBox network allowlist
+
+On Linux, `/etc/vbox/networks.conf` must allow every declared host-only
+address. The reference Host keeps its existing laboratory range and allows the
+testbed range with:
 
 ```text
 * 192.168.33.0/24
@@ -49,7 +111,87 @@ The `/21` is only a VirtualBox allowlist. The topology still creates separate
 `/24` networks. `experiment-validate` checks the declared interfaces before VM
 mutation.
 
-## Resource budget
+## 3. Docker Engine and Compose
+
+Docker runs the five Host ML services. Check the CLI, Compose plugin, daemon,
+and current-user access separately:
+
+```sh
+docker --version
+docker compose version
+docker info
+```
+
+If Docker is absent on a new Host, use the
+[official Docker Engine installation guide for a supported Ubuntu release](https://docs.docker.com/engine/install/ubuntu/).
+The required package set is Docker Engine, the Docker CLI, containerd, Buildx,
+and the Compose v2 plugin. Do not replace the working shared installation or
+remove conflicting packages merely as part of repository setup.
+
+To grant an existing user non-root access:
+
+```sh
+sudo usermod -aG docker "$USER"
+```
+
+The new group membership takes effect after a fresh login session. You may use
+`newgrp docker` to open a temporary shell instead. This permission change does
+not require restarting Docker. The final `docker info` check must succeed
+without `sudo`.
+
+Do not run global Docker prune commands on this shared Host. PyTorch/CUDA image
+layers are intentionally shared, while stopped project containers and named
+volumes retain experiment state.
+
+## 4. NVIDIA GPU support (optional)
+
+Skip this section when every intended config uses `DEVICE=cpu`. GPU configs
+assign only PyMTLF-A/B to `cuda:0`; PyAnLF-A/B and PyMTLF-C remain on CPU.
+
+Check the driver, toolkit, Docker runtime, and CDI inventory independently:
+
+```sh
+nvidia-smi
+nvidia-ctk --version
+nvidia-ctk cdi list
+docker info --format '{{json .Runtimes}}'
+```
+
+The required CDI selector is `nvidia.com/gpu=all`, and Docker must report an
+`nvidia` runtime. If the driver or toolkit is missing, follow NVIDIA's current
+[Ubuntu driver](https://documentation.ubuntu.com/server/how-to/graphics/install-nvidia-drivers/)
+and [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html)
+guides for the Host OS.
+
+The standard Docker runtime configuration is a Host-wide operation:
+
+```sh
+sudo nvidia-ctk runtime configure --runtime=docker
+sudo systemctl restart docker
+```
+
+Do not run those commands on the shared Host without coordination: they modify
+Docker daemon configuration and restart the daemon. Repository commands never
+perform that configuration, restart Docker, change its default runtime, or
+silently fall back from GPU to CPU. `experiment-validate` performs the final
+CDI and CUDA visibility probe for a selected GPU config.
+
+## 5. Source initialization
+
+After cloning the parent repository, initialize exactly the revisions fixed by
+its gitlinks:
+
+```sh
+git submodule update --init --recursive
+git submodule status --recursive
+```
+
+All committed submodule URLs use HTTPS. A leading `-` in status means a
+submodule is not initialized; a leading `+` means its checkout differs from the
+parent gitlink. Do not use `git submodule update --remote` for an experiment
+checkout. Provisioning never clones or selects branches inside a VM.
+
+## 6. Resource budget
 
 The default VMs use:
 
@@ -66,19 +208,14 @@ RAM outside the guest allocation for the Host and containers. Low swap follows
 the configured warning policy rather than causing memory to be preallocated at
 VM startup.
 
-Do not run global Docker prune commands on this shared Host. PyTorch/CUDA image
-layers are intentionally shared, while stopped project containers and named
-volumes retain experiment state.
+Use the repository preflight rather than estimating readiness from total RAM
+or logical disk ceilings:
 
-## CPU and GPU modes
+```sh
+make experiment-validate CONFIG_DIR=config/local/my-experiment
+```
 
-`DEVICE=cpu` uses the normal OCI runtime. `DEVICE=gpu` assigns PyMTLF-A/B to
-`cuda:0`; the other ML services remain on CPU. GPU startup checks the NVIDIA
-runtime, CDI selector `nvidia.com/gpu=all`, and an actual CUDA visibility probe.
-It does not change the Docker default runtime or restart the daemon. A failed
-GPU prerequisite stops startup rather than changing the requested policy.
-
-## First provisioning
+## 7. First provisioning
 
 Create and validate a config before creating VMs:
 
@@ -89,9 +226,10 @@ make experiment-validate CONFIG_DIR=config/local/my-experiment
 make vm-up
 ```
 
-The first `vm-up` provisions each guest and builds its assigned Go, RAN, and
-kernel components. UERANSIM and gtp5g are built independently inside both Path
-VMs against the guest environment. Go and MongoDB resolution follows
+Use `DEVICE=cpu` if section 4 was intentionally skipped. The first `vm-up`
+provisions each guest and builds its assigned Go, RAN, and kernel components.
+UERANSIM and gtp5g are built independently inside both Path VMs against the
+guest environment. Go and MongoDB resolution follows
 `provisioning.lock.yaml`; the resolved guest identity is recorded in
 `/etc/5g-nwdaf-infrastructure/provisioning-manifest.yaml`.
 
