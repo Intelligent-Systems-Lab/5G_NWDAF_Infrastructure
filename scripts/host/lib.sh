@@ -90,6 +90,106 @@ ml_project_name() {
   printf '%s\n' "$project"
 }
 
+ml_container_id() {
+  local service=$1 project
+  local -a container_ids
+  project=$(ml_project_name)
+  mapfile -t container_ids < <(
+    docker ps -q \
+      --filter "label=com.docker.compose.project=$project" \
+      --filter "label=com.docker.compose.service=$service"
+  )
+  if [ "${#container_ids[@]}" -ne 1 ]; then
+    echo "expected one running ML container for service=$service project=$project; found ${#container_ids[@]}" >&2
+    return 1
+  fi
+  printf '%s\n' "${container_ids[0]}"
+}
+
+ml_monitor_active_subscription_ids_from_log() {
+  local line subscription_id
+  local -A active=()
+  while IFS= read -r line; do
+    if [[ "$line" =~ ML\ Model\ Monitor\ subscription\ active\ subscription_id=([^[:space:]]+) ]]; then
+      active["${BASH_REMATCH[1]}"]=1
+    elif [[ "$line" =~ ML\ Model\ Monitor\ subscription\ removed\ subscription_id=([^[:space:]]+) ]]; then
+      subscription_id=${BASH_REMATCH[1]}
+      unset "active[$subscription_id]"
+    fi
+  done
+  if [ "${#active[@]}" -gt 0 ]; then
+    printf '%s\n' "${!active[@]}" | LC_ALL=C sort
+  fi
+}
+
+ml_monitor_active_subscription_ids() {
+  local container_id=$1 log_output
+  if ! log_output=$(docker logs "$container_id" 2>&1); then
+    echo "failed to read PyMTLF-C container logs: $log_output" >&2
+    return 1
+  fi
+  ml_monitor_active_subscription_ids_from_log <<<"$log_output"
+}
+
+ml_monitor_removed_subscription_ids_from_log() {
+  local line
+  local -A removed=()
+  while IFS= read -r line; do
+    if [[ "$line" =~ ML\ Model\ Monitor\ subscription\ removed\ subscription_id=([^[:space:]]+) ]]; then
+      removed["${BASH_REMATCH[1]}"]=1
+    fi
+  done
+  if [ "${#removed[@]}" -gt 0 ]; then
+    printf '%s\n' "${!removed[@]}" | LC_ALL=C sort
+  fi
+}
+
+wait_for_ml_monitor_cleanup() {
+  local log_file=$1 follower_pid=$2 timeout=$3 poll_interval=$4
+  shift 4
+  local -a expected=("$@") removed pending
+  local -A removed_set=()
+  local subscription_id remaining snapshot
+  local deadline=$((SECONDS + timeout))
+
+  while true; do
+    snapshot=$(ml_monitor_removed_subscription_ids_from_log <"$log_file")
+    removed=()
+    if [ -n "$snapshot" ]; then
+      mapfile -t removed <<<"$snapshot"
+    fi
+    removed_set=()
+    for subscription_id in "${removed[@]}"; do
+      removed_set["$subscription_id"]=1
+    done
+    pending=()
+    for subscription_id in "${expected[@]}"; do
+      if [ -z "${removed_set[$subscription_id]+present}" ]; then
+        pending+=("$subscription_id")
+      fi
+    done
+    if [ "${#pending[@]}" -eq 0 ]; then
+      echo "ML Model Monitor cleanup converged for ${#expected[@]} subscription(s)."
+      return 0
+    fi
+    if ! kill -0 "$follower_pid" 2>/dev/null; then
+      echo "WARN PyMTLF-C log follower exited before cleanup converged; pending subscription IDs: ${pending[*]}" >&2
+      return 1
+    fi
+
+    remaining=$((deadline - SECONDS))
+    if [ "$remaining" -le 0 ]; then
+      echo "WARN ML Model Monitor cleanup did not converge within ${timeout}s; pending subscription IDs: ${pending[*]}" >&2
+      return 1
+    fi
+    if [ "$remaining" -lt "$poll_interval" ]; then
+      sleep "$remaining"
+    else
+      sleep "$poll_interval"
+    fi
+  done
+}
+
 ml_runtime_mode() {
   local mode=${ML_RUNTIME_MODE:-baseline}
   case "$mode" in

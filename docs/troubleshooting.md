@@ -128,9 +128,13 @@ The Consumer stores exact resource `Location` values. If deletion fails,
 do not delete the state file or guess a resource URI. Keep the NWDAFs and ML
 backends running, inspect Core/path logs, and retry `make subscriptions-stop`.
 
-During aggregate stop, the fixed cleanup grace keeps those backends alive for
-asynchronous Model Monitor deletion. A late DELETE failure should be diagnosed
-before setting `ML_CLEANUP_GRACE_SECONDS=0`.
+During aggregate stop, log-correlated cleanup verification keeps those backends
+alive while the PyMTLF-C reconciler retries asynchronous Model Monitor deletion.
+The verification reconstructs active IDs from PyMTLF-C's own `active` and
+`removed` records; it does not correlate PyAnLF's public registration IDs with
+different backend resource IDs. A timeout warning lists any unresolved
+subscription IDs. Diagnose a late DELETE failure before setting
+`ML_CLEANUP_TIMEOUT_SECONDS=0`.
 
 ## Start says a domain is already active
 

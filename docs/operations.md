@@ -90,13 +90,16 @@ make experiment-stop
 make vm-halt
 ```
 
-`experiment-stop` deletes the two saved subscription locations first, keeps
-the backends available for a 40-second asynchronous Model Monitor cleanup
-grace, then stops optional WebConsole, ML, and guest services. Override the
-non-negative grace only for focused diagnosis:
+`experiment-stop` snapshots the active PyMTLF-C Model Monitor subscription IDs,
+deletes the two saved Consumer subscription locations, and keeps the backends
+available until those same IDs are logged as removed. It polls every two seconds
+and stops waiting as soon as cleanup converges. The default maximum is 210
+seconds; timeout emits a warning and teardown continues so a persistent `503`
+cannot block shutdown indefinitely. Override the non-negative maximum only for
+focused diagnosis:
 
 ```sh
-ML_CLEANUP_GRACE_SECONDS=60 make experiment-stop
+ML_CLEANUP_TIMEOUT_SECONDS=300 make experiment-stop
 ```
 
 The stop retains VMs, stopped containers, images, named volumes, generated
