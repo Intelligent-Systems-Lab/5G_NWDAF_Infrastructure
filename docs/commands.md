@@ -15,9 +15,9 @@ while advanced and developer commands remain available. `TESTBED` defaults to
 | `make help-all` | Print all three help layers. Read-only. |
 | `make experiment-validate CONFIG_DIR=...` | Run source, config, dataset, Host resource, Compose, GPU-if-requested, and Vagrant checks without starting runtime state. |
 | `make experiment-start CONFIG_DIR=...` | Generate/validate data, then start Guest services, enabled WebConsole, ML containers, Consumer, and two subscriptions. Requires running VMs and stopped domains. |
-| `make experiment-status CONFIG_DIR=...` | Show config identity, Host headroom, VM, guest service, ML, and subscription state. Read-only. |
+| `make experiment-status CONFIG_DIR=...` | Show config identity, Host headroom, VM, guest service, ML, and subscription state. Read-only; rejects an incomplete running-backend snapshot while powered-off VMs appear as `not-running`. |
 | `make experiment-stop` | Delete exact subscriptions, wait up to 210 seconds for log-correlated PyMTLF-C Model Monitor cleanup, then stop process domains while retaining state and VMs. |
-| `make observe` | Continuously display compact VM/service/container/subscription state. Read-only. |
+| `make observe` | Continuously display VM/service/container/subscription state. Read-only; failed sections retain their error and are marked unavailable while later intervals continue. |
 | `make logs` | Follow all owned VM journals—including dedicated Consumer/Network units—and project ML container logs with UTC timestamps. Read-only; use `scripts/host/logs.sh` for filters. |
 
 ## Configuration and datasets

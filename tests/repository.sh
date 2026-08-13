@@ -101,6 +101,7 @@ assert_ue_readiness() {
   fi
 }
 assert_ue_readiness 'inactive|inactive' inactive '' inactive
+assert_ue_readiness 'not-running|not-running' not-running '' vm-poweroff
 assert_ue_readiness 'failed|failed' failed \
   'Initial Registration is successful' failed-service
 assert_ue_readiness 'pending|pending' activating '' activating
@@ -139,12 +140,51 @@ assert_ue_readiness 'successful|successful' active \
         ;;
     esac
   }
+  vm_state_records() {
+    printf '%s\n' 'core|running' 'path-a|running' 'path-b|running'
+  }
   status_output=$(services_status_main)
   compact_status=$(sed -E 's/[[:space:]]+/ /g' <<<"$status_output")
   [[ "$compact_status" == *'path-a ue1 active successful successful'* ]]
   [[ "$compact_status" == *'path-b ue4 inactive inactive inactive'* ]]
+  vm_state_records() {
+    printf '%s\n' 'core|poweroff' 'path-a|poweroff' 'path-b|poweroff'
+  }
+  machine_snapshot() { return 99; }
+  stopped_output=$(services_status_main)
+  stopped_compact=$(sed -E 's/[[:space:]]+/ /g' <<<"$stopped_output")
+  [[ "$stopped_compact" == *'path-a ue1 not-running not-running not-running'* ]]
 )
 echo "PASS current-invocation UE readiness parsing"
+
+(
+  source "$HOST_ROOT/scripts/host/observe.sh"
+  good_section() { printf '%s\n' 'section-ready'; }
+  bad_section() { printf '%s\n' 'backend refused query' >&2; return 7; }
+  [ "$(observe_section TEST good_section)" = section-ready ]
+  if failed_output=$(observe_section TEST bad_section 2>&1); then
+    echo "observe section accepted a failed status backend" >&2
+    exit 1
+  fi
+  [[ "$failed_output" == *'backend refused query'* ]]
+  [[ "$failed_output" == *'TEST status unavailable'* ]]
+  observe_snapshot() { return 1; }
+  if observe_main --once >/dev/null 2>&1; then
+    echo "observe --once accepted an incomplete snapshot" >&2
+    exit 1
+  fi
+  source "$HOST_ROOT/scripts/host/webconsole-status.sh"
+  vm_state_for() { printf '%s\n' poweroff; }
+  [[ "$(webconsole_status_main)" == *'state=not-running'* ]]
+  source "$HOST_ROOT/scripts/host/subscriptions-status.sh"
+  [[ "$(subscriptions_status_main)" == *'local_resource_state=unavailable reason=core-not-running'* ]]
+  vm_state_records() { return 1; }
+  if vm_state_for core >/dev/null 2>&1; then
+    echo "vm_state_for hid a Vagrant status failure" >&2
+    exit 1
+  fi
+)
+echo "PASS aggregate status failure and poweroff semantics"
 
 monitor_log_fixture=$'ML Model Monitor subscription active subscription_id=old-a registration_id=reg-a\nML Model Monitor subscription active subscription_id=current-b registration_id=reg-b\nML Model Monitor subscription removed subscription_id=old-a registration_id=reg-a\nML Model Monitor subscription active subscription_id=current-a registration_id=reg-c'
 mapfile -t active_monitor_ids < <(
@@ -207,6 +247,7 @@ python3 "$HOST_ROOT/tests/consumer-state.py"
   legacy_fixture='{"status":"active","notificationCount":4,"subscriptions":[{"path":"a","status":"active","nfInstanceId":"provider-a","tac":"000001","correlationId":"legacy-a","location":"http://a/subscriptions/legacy"}]}'
   legacy_rendered=$(render_subscription_status <<<"$legacy_fixture")
   [[ "$legacy_rendered" == *'unknown'* ]]
+  vm_state_for() { printf '%s\n' running; }
   vssh() { printf '%s\n' active; }
   consumer_cli() { printf '%s\n' '{not-json'; }
   if subscriptions_status_main >/dev/null 2>&1; then

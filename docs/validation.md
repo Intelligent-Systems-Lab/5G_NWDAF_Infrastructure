@@ -23,6 +23,8 @@ checks:
   compatibility, create/delete overlap, and independent Path callback accounting;
 - current-invocation UE Registration/PDU readiness parsing, including pending,
   rejection, recovery, and inactive service cases;
+- aggregate snapshot failure propagation and valid powered-off `not-running`
+  behavior for Guest, WebConsole, and Subscription domains;
 - Vagrant definition validation.
 
 `make experiment-validate CONFIG_DIR=...` adds checks against the current Host:

@@ -59,10 +59,43 @@ journal_log_since() {
   printf '%s UTC\n' "${canonical_utc%Z}"
 }
 
+vm_state_records() {
+  local raw machine state
+  if ! raw=$(cd "$HOST_ROOT" && TESTBED="${TESTBED:-testbed.yaml}" vagrant status --machine-readable); then
+    echo "failed to query Vagrant machine states" >&2
+    return 1
+  fi
+  for machine in "${MACHINES[@]}"; do
+    state=$(awk -F, -v wanted="$machine" '$2==wanted && $3=="state" {value=$4} END {print value}' <<<"$raw")
+    if [ -z "$state" ]; then
+      echo "Vagrant status omitted machine: $machine" >&2
+      return 1
+    fi
+    printf '%s|%s\n' "$machine" "$state"
+  done
+}
+
+vm_state_for() {
+  local wanted=$1 machine state records
+  records=$(vm_state_records) || return
+  while IFS='|' read -r machine state; do
+    if [ "$machine" = "$wanted" ]; then
+      printf '%s\n' "$state"
+      return 0
+    fi
+  done <<<"$records"
+  echo "Vagrant status omitted machine: $wanted" >&2
+  return 1
+}
+
 ue_readiness_states() {
   local service_state=$1 journal=${2:-}
   local registration pdu_session
   case "$service_state" in
+    not-running)
+      printf 'not-running|not-running\n'
+      return
+      ;;
     inactive|unknown|'')
       printf 'inactive|inactive\n'
       return

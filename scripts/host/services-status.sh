@@ -38,16 +38,28 @@ machine_snapshot() {
 }
 
 services_status_main() {
-  local machine snapshot line record unit state invocation encoded journal registration pdu_session
+  local machine snapshot line record unit state invocation encoded journal registration pdu_session vm_records
   local -a units=()
   local -a service_records=()
   local -a ue_records=()
+  local -A vm_states=()
+  vm_records=$(vm_state_records) || return
+  while IFS='|' read -r machine state; do
+    vm_states["$machine"]=$state
+  done <<<"$vm_records"
   for machine in core path-a path-b; do
     case "$machine" in
       core) units=("${CORE_UNITS[@]}");;
       path-a) units=("${PATH_A_UNITS[@]}");;
       path-b) units=("${PATH_B_UNITS[@]}");;
     esac
+    if [ "${vm_states[$machine]:-unknown}" != running ]; then
+      for unit in "${units[@]}"; do
+        service_records+=("SERVICE|$machine|$unit|not-running")
+        case "$unit" in ue[0-9]*) ue_records+=("UE|$machine|$unit|not-running||");; esac
+      done
+      continue
+    fi
     snapshot=$(machine_snapshot "$machine" "${units[@]}")
     while IFS= read -r line; do
       line=${line%$'\r'}

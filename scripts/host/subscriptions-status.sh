@@ -58,7 +58,13 @@ if unknown:
 }
 
 subscriptions_status_main() {
-  local service_state state
+  local core_state service_state state
+  core_state=$(vm_state_for core)
+  if [ "$core_state" != running ]; then
+    echo "consumer_service=not-running"
+    echo "local_resource_state=unavailable reason=core-not-running"
+    return 0
+  fi
   if ! service_state=$(vssh core "state=\$(systemctl is-active 5g-nwdaf-consumer.service 2>/dev/null || true); printf '%s\\n' \"\${state:-unknown}\"" | tr -d '\r' | tail -n 1); then
     echo "failed to query Core Consumer service state" >&2
     return 1

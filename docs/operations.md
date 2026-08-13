@@ -79,6 +79,13 @@ logs` follows all owned VM journals and project ML container logs. This includes
 the template Guest units, the Core-only Consumer, and the Network unit on each
 VM; stopping the log follower does not stop the experiment.
 
+Powered-off or not-yet-created VMs are valid observable states: Guest,
+WebConsole, and Subscription sections report `not-running` without attempting
+SSH. A running VM that cannot be queried, a Docker failure, or malformed status
+data is different: `experiment-status` and the single snapshot return non-zero
+and preserve the backend error. Continuous `observe` labels the failed section
+`unavailable` and continues with the next interval so recovery remains visible.
+
 For focused output, call the log script directly:
 
 ```sh

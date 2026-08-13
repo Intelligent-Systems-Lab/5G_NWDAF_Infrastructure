@@ -1,28 +1,59 @@
 #!/usr/bin/env bash
-set -euo pipefail
-source "$(dirname "$0")/lib.sh"
+set -uo pipefail
+source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
-interval=${OBSERVE_INTERVAL:-5}
-once=false
-[ "${1:-}" = "--once" ] && once=true
-
-while :; do
-  if ! $once; then
-    command -v clear >/dev/null && clear || true
+observe_section() {
+  local label=$1; shift
+  local output
+  if output=$("$@" 2>&1); then
+    printf '%s\n' "$output"
+    return 0
   fi
+  [ -z "$output" ] || printf '%s\n' "$output"
+  printf '%s status unavailable\n' "$label" >&2
+  return 1
+}
+
+vm_status_summary() {
+  local machine state records
+  records=$(vm_state_records) || return
+  while IFS='|' read -r machine state; do
+    printf '%-8s vm=%s\n' "$machine" "$state"
+  done <<<"$records"
+}
+
+observe_snapshot() {
+  local failures=0
   date --iso-8601=seconds
   echo
-  (cd "$HOST_ROOT" && vagrant status --machine-readable 2>/dev/null | awk -F, '$3=="state" {printf "%-8s vm=%s\n", $2, $4}') || true
+  observe_section VM vm_status_summary || failures=$((failures + 1))
   echo
-  "$HOST_ROOT/scripts/host/services-status.sh" 2>/dev/null || echo "service status unavailable"
+  observe_section SERVICE "$HOST_ROOT/scripts/host/services-status.sh" || failures=$((failures + 1))
   echo
-  "$HOST_ROOT/scripts/host/webconsole-status.sh" 2>/dev/null || echo "WebConsole status unavailable"
+  observe_section WEBCONSOLE "$HOST_ROOT/scripts/host/webconsole-status.sh" || failures=$((failures + 1))
   echo
-  "$HOST_ROOT/scripts/host/ml-status.sh" 2>/dev/null || echo "ML container status unavailable"
-  if [ -x "$HOST_ROOT/scripts/host/subscriptions-status.sh" ]; then
-    echo
-    "$HOST_ROOT/scripts/host/subscriptions-status.sh" 2>/dev/null || echo "subscription status unavailable"
-  fi
-  $once && break
-  sleep "$interval"
-done
+  observe_section ML "$HOST_ROOT/scripts/host/ml-status.sh" || failures=$((failures + 1))
+  echo
+  observe_section SUBSCRIPTION "$HOST_ROOT/scripts/host/subscriptions-status.sh" || failures=$((failures + 1))
+  [ "$failures" -eq 0 ]
+}
+
+observe_main() {
+  local interval=${OBSERVE_INTERVAL:-5}
+  local once=false
+  [ "${1:-}" = "--once" ] && once=true
+  while :; do
+    if ! $once; then
+      command -v clear >/dev/null && clear || true
+    fi
+    if ! observe_snapshot; then
+      $once && return 1
+    fi
+    $once && return 0
+    sleep "$interval"
+  done
+}
+
+if [ "${BASH_SOURCE[0]}" = "$0" ]; then
+  observe_main "$@"
+fi
