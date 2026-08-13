@@ -32,6 +32,66 @@ while IFS= read -r -d '' script; do
 done < <(find "$HOST_ROOT/scripts" "$HOST_ROOT/tests" -type f -name '*.sh' -print0)
 echo "PASS shell syntax"
 
+expected='consumer|5g-nwdaf-consumer.service'
+actual=$(vm_log_sources core consumer)
+if [ "$actual" != "$expected" ]; then
+  echo "unexpected Core Consumer log source: $actual" >&2
+  exit 1
+fi
+expected='network|5g-nwdaf-network.service'
+actual=$(vm_log_sources path-a network)
+if [ "$actual" != "$expected" ]; then
+  echo "unexpected Path A Network log source: $actual" >&2
+  exit 1
+fi
+expected='webconsole|5g-nwdaf@webconsole.service'
+actual=$(vm_log_sources core webconsole)
+if [ "$actual" != "$expected" ]; then
+  echo "unexpected WebConsole log source: $actual" >&2
+  exit 1
+fi
+expected='nwdaf-c|5g-nwdaf@nwdaf-c.service'
+actual=$(vm_log_sources core 'nwdaf-*')
+if [ "$actual" != "$expected" ]; then
+  echo "unexpected Core NWDAF wildcard log source: $actual" >&2
+  exit 1
+fi
+if [ -n "$(vm_log_sources path-b consumer)" ]; then
+  echo "Path B unexpectedly owns the Consumer log source" >&2
+  exit 1
+fi
+mapfile -t core_log_sources < <(vm_log_sources core '*')
+mapfile -t path_a_log_sources < <(vm_log_sources path-a '*')
+mapfile -t path_b_log_sources < <(vm_log_sources path-b '*')
+if [ "${#core_log_sources[@]}" -ne 14 ] ||
+   [ "${#path_a_log_sources[@]}" -ne 7 ] ||
+   [ "${#path_b_log_sources[@]}" -ne 7 ]; then
+  echo "unexpected owned VM log source counts: core=${#core_log_sources[@]} path-a=${#path_a_log_sources[@]} path-b=${#path_b_log_sources[@]}" >&2
+  exit 1
+fi
+if [ "$(normalize_log_since '1970-01-01 00:00:00 UTC')" != '1970-01-01T00:00:00Z' ]; then
+  echo "log time normalization did not produce canonical UTC" >&2
+  exit 1
+fi
+if [ "$(TZ=Asia/Shanghai normalize_log_since '1970-01-01 08:00:00')" != '1970-01-01T00:00:00Z' ]; then
+  echo "log time normalization did not interpret input in the Host timezone" >&2
+  exit 1
+fi
+if [ "$(journal_log_since '1970-01-01T00:00:00Z')" != '1970-01-01 00:00:00 UTC' ]; then
+  echo "journald time rendering is not compatible with the Guest parser" >&2
+  exit 1
+fi
+if invalid_since_output=$("$HOST_ROOT/scripts/host/logs.sh" --source vm \
+    --since 'not-a-time' --no-follow 2>&1); then
+  echo "logs.sh accepted an invalid --since value" >&2
+  exit 1
+fi
+if [ "$invalid_since_output" != 'invalid --since value: not-a-time' ]; then
+  echo "logs.sh returned an unexpected invalid-time diagnostic: $invalid_since_output" >&2
+  exit 1
+fi
+echo "PASS owned log sources and UTC time normalization"
+
 monitor_log_fixture=$'ML Model Monitor subscription active subscription_id=old-a registration_id=reg-a\nML Model Monitor subscription active subscription_id=current-b registration_id=reg-b\nML Model Monitor subscription removed subscription_id=old-a registration_id=reg-a\nML Model Monitor subscription active subscription_id=current-a registration_id=reg-c'
 mapfile -t active_monitor_ids < <(
   ml_monitor_active_subscription_ids_from_log <<<"$monitor_log_fixture"

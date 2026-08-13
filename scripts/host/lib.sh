@@ -8,6 +8,57 @@ PATH_A_UNITS=(upf-a nwdaf-a gnb-a ue1 ue2 ue3)
 PATH_B_UNITS=(upf-b nwdaf-b gnb-b ue4 ue5 ue6)
 ML_SERVICES=(pyanlf-a pyanlf-b pymtlf-a pymtlf-b pymtlf-c)
 
+vm_log_sources() {
+  local machine=$1 filter=$2 logical unit
+  local -a template_units=()
+  local -a special_sources=()
+  case "$machine" in
+    core)
+      template_units=("${CORE_UNITS[@]}" webconsole)
+      special_sources=(
+        'consumer|5g-nwdaf-consumer.service'
+        'network|5g-nwdaf-network.service'
+      )
+      ;;
+    path-a)
+      template_units=("${PATH_A_UNITS[@]}")
+      special_sources=('network|5g-nwdaf-network.service')
+      ;;
+    path-b)
+      template_units=("${PATH_B_UNITS[@]}")
+      special_sources=('network|5g-nwdaf-network.service')
+      ;;
+    *)
+      echo "unknown VM for log source resolution: $machine" >&2
+      return 2
+      ;;
+  esac
+
+  for logical in "${template_units[@]}"; do
+    if [[ "$logical" == $filter ]]; then
+      printf '%s|5g-nwdaf@%s.service\n' "$logical" "$logical"
+    fi
+  done
+  for unit in "${special_sources[@]}"; do
+    logical=${unit%%|*}
+    if [[ "$logical" == $filter ]]; then
+      printf '%s\n' "$unit"
+    fi
+  done
+}
+
+normalize_log_since() {
+  local value=$1 epoch
+  epoch=$(date --date "$value" '+%s') || return
+  date --utc --date "@$epoch" '+%Y-%m-%dT%H:%M:%SZ'
+}
+
+journal_log_since() {
+  local canonical_utc=$1
+  canonical_utc=${canonical_utc/T/ }
+  printf '%s UTC\n' "${canonical_utc%Z}"
+}
+
 vssh() {
   local machine=$1 command=$2
   (cd "$HOST_ROOT" && vagrant ssh "$machine" -c "$command")

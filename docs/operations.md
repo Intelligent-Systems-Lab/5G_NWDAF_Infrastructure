@@ -69,8 +69,9 @@ make logs
 
 `experiment-status` is a snapshot covering config identity, Host headroom, VM
 power, guest units, container health/device state, and subscriptions. `make
-logs` follows all matching VM journals and ML container logs; stopping the log
-follower does not stop the experiment.
+logs` follows all owned VM journals and project ML container logs. This includes
+the template Guest units, the Core-only Consumer, and the Network unit on each
+VM; stopping the log follower does not stop the experiment.
 
 For focused output, call the log script directly:
 
@@ -78,10 +79,21 @@ For focused output, call the log script directly:
 scripts/host/logs.sh --source vm --vm path-a --service upf-a --since today
 scripts/host/logs.sh --source ml --service pymtlf-a --since '10 minutes ago'
 scripts/host/logs.sh --source vm --vm core --service nwdaf-c --tail 100 --no-follow
+scripts/host/logs.sh --source vm --vm core --service consumer --no-follow
+scripts/host/logs.sh --source vm --service network --no-follow
 ```
 
 Filters accept `--source vm|ml|all`, `--vm core|path-a|path-b|all`, a service
-name or glob, `--since`, `--tail`, and `--no-follow`.
+name or glob, `--since`, `--tail`, and `--no-follow`. Logical service names map
+to their actual systemd units: regular services and WebConsole use
+`5g-nwdaf@<name>.service`, while `consumer` and `network` select their dedicated
+units. A VM that does not own a matching service is skipped.
+
+The Host resolves `--since` once and passes the same absolute instant to Guest
+journald and Docker. VM and container output includes UTC timestamps, so lines
+from different runtime domains can be compared directly. Relative values such
+as `today` are interpreted in the Host timezone before conversion to UTC;
+invalid values fail before any log follower starts.
 
 ### 5. Stop without deleting state
 

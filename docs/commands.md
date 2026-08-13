@@ -18,7 +18,7 @@ while advanced and developer commands remain available. `TESTBED` defaults to
 | `make experiment-status CONFIG_DIR=...` | Show config identity, Host headroom, VM, guest service, ML, and subscription state. Read-only. |
 | `make experiment-stop` | Delete exact subscriptions, wait up to 210 seconds for log-correlated PyMTLF-C Model Monitor cleanup, then stop process domains while retaining state and VMs. |
 | `make observe` | Continuously display compact VM/service/container/subscription state. Read-only. |
-| `make logs` | Follow all current VM journald and project ML container logs. Read-only; use `scripts/host/logs.sh` for filters. |
+| `make logs` | Follow all owned VM journals—including dedicated Consumer/Network units—and project ML container logs with UTC timestamps. Read-only; use `scripts/host/logs.sh` for filters. |
 
 ## Configuration and datasets
 
