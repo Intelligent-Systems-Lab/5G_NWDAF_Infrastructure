@@ -9,7 +9,7 @@ components:
   - {path: NFs/udm, remote: "https://github.com/Intelligent-Systems-Lab/udm.git", branch: feat/r18-federated-learning, commit: b8db49ee8c2fdae8f686562ae6a941a232e80ad3, license: Apache-2.0}
   - {path: NFs/udr, remote: "https://github.com/Intelligent-Systems-Lab/udr.git", branch: feat/r18-federated-learning, commit: bf447744345fe238092588f105a57d2484f5f1b7, license: Apache-2.0}
   - {path: NFs/upf, remote: "https://github.com/Intelligent-Systems-Lab/go-upf.git", branch: fix/r18-nupf-event-exposure-contract, commit: 234bae063ffb6a7c99b361bfcdb2bda9452af1f1, license: Apache-2.0}
-  - {path: NFs/nwdaf, remote: "https://github.com/Intelligent-Systems-Lab/NWDAF.git", branch: feat/r18-federated-learning, commit: 318ac19d8b027373f4468660394da1ec3338268e, license: UNDECLARED}
+  - {path: NFs/nwdaf, remote: "https://github.com/Intelligent-Systems-Lab/NWDAF.git", branch: feat/r18-federated-learning, commit: c53f05804c6533ec4c5fa7e230e90048fb219162, license: UNDECLARED}
   - {path: NFs/adrf, remote: "https://github.com/Intelligent-Systems-Lab/adrf.git", branch: feat/r18-federated-learning, commit: 905f0599f68fe389bba14ed56db0ef9abeab5ccd, license: UNDECLARED}
   - {path: ML/PyAnLF, remote: "https://github.com/Intelligent-Systems-Lab/PyAnLF.git", branch: feat/r18-federated-learning, commit: 08798f15c3693027e00bc60dd53f74ebaa26c3a1, license: UNDECLARED}
   - {path: ML/PyMTLF, remote: "https://github.com/Intelligent-Systems-Lab/PyMTLF.git", branch: feat/r18-federated-learning, commit: 7e8ab7f23bf5d6398eb1cd5f053dd8bda9439a87, license: UNDECLARED}
