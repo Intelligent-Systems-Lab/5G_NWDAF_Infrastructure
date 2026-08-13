@@ -19,6 +19,8 @@ checks:
 - deterministic PseudoDriver generation and tamper rejection;
 - production and CPU-smoke Compose contracts;
 - Consumer schema and discovery/subscription behavior in controlled tests;
+- atomic Consumer state updates across callback threads/processes, retained-state
+  compatibility, create/delete overlap, and independent Path callback accounting;
 - current-invocation UE Registration/PDU readiness parsing, including pending,
   rejection, recovery, and inactive service cases;
 - Vagrant definition validation.

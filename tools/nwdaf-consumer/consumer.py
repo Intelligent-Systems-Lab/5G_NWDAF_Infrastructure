@@ -2,6 +2,7 @@
 """Discover two scoped NWDAFs and own their subscription resources."""
 
 import argparse
+import fcntl
 import ipaddress
 import json
 import os
@@ -179,37 +180,98 @@ def request_json(method, url, body=None, timeout=30):
 class StateStore:
     def __init__(self, path):
         self.path = Path(path)
-        self.lock = threading.Lock()
+        self.lock_path = self.path.with_name(self.path.name + ".lock")
+        self.lock = threading.RLock()
+
+    @staticmethod
+    def empty():
+        return {"status": "empty", "subscriptions": [], "notificationCount": 0}
+
+    def _read_unlocked(self):
+        if not self.path.exists():
+            return self.empty()
+        return json.loads(self.path.read_text(encoding="utf-8"))
+
+    def _write_unlocked(self, value):
+        descriptor, temporary = tempfile.mkstemp(prefix=".subscriptions-", dir=str(self.path.parent))
+        try:
+            with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
+                json.dump(value, stream, indent=2, sort_keys=True)
+                stream.write("\n")
+                stream.flush()
+                os.fsync(stream.fileno())
+            os.replace(temporary, self.path)
+            directory = os.open(str(self.path.parent), os.O_RDONLY)
+            try:
+                os.fsync(directory)
+            finally:
+                os.close(directory)
+        finally:
+            if os.path.exists(temporary):
+                os.unlink(temporary)
+
+    def update(self, mutate):
+        with self.lock:
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            with self.lock_path.open("a+", encoding="utf-8") as lock_stream:
+                fcntl.flock(lock_stream.fileno(), fcntl.LOCK_EX)
+                try:
+                    value = self._read_unlocked()
+                    updated = mutate(value)
+                    if updated is not None:
+                        value = updated
+                    self._write_unlocked(value)
+                    return value
+                finally:
+                    fcntl.flock(lock_stream.fileno(), fcntl.LOCK_UN)
 
     def read(self):
         with self.lock:
-            if not self.path.exists():
-                return {"status": "empty", "subscriptions": [], "notificationCount": 0}
-            return json.loads(self.path.read_text(encoding="utf-8"))
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            with self.lock_path.open("a+", encoding="utf-8") as lock_stream:
+                fcntl.flock(lock_stream.fileno(), fcntl.LOCK_SH)
+                try:
+                    return self._read_unlocked()
+                finally:
+                    fcntl.flock(lock_stream.fileno(), fcntl.LOCK_UN)
 
     def write(self, value):
-        with self.lock:
-            self.path.parent.mkdir(parents=True, exist_ok=True)
-            descriptor, temporary = tempfile.mkstemp(prefix=".subscriptions-", dir=str(self.path.parent))
-            try:
-                with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
-                    json.dump(value, stream, indent=2, sort_keys=True)
-                    stream.write("\n")
-                    stream.flush()
-                    os.fsync(stream.fileno())
-                os.replace(temporary, self.path)
-            finally:
-                if os.path.exists(temporary):
-                    os.unlink(temporary)
+        return self.update(lambda _current: value)
 
     def record_notification(self, body):
-        value = self.read()
         items = body if isinstance(body, list) else [body]
         correlations = sorted({str(item.get("notifCorrId")) for item in items if isinstance(item, dict) and item.get("notifCorrId")})
-        value["notificationCount"] = int(value.get("notificationCount", 0)) + 1
-        value["lastNotificationAt"] = now()
-        value["lastNotificationCorrelations"] = correlations
-        self.write(value)
+        timestamp = now()
+
+        def mutate(value):
+            value["notificationCount"] = int(value.get("notificationCount", 0)) + 1
+            value["lastNotificationAt"] = timestamp
+            value["lastNotificationCorrelations"] = correlations
+            subscriptions = {
+                str(item.get("correlationId")): item
+                for item in value.get("subscriptions", [])
+                if item.get("correlationId") and item.get("path")
+            }
+            callbacks = value.setdefault("callbacksByPath", {})
+            unknown = []
+            for correlation in correlations:
+                subscription = subscriptions.get(correlation)
+                if subscription is None:
+                    unknown.append(correlation)
+                    continue
+                path = str(subscription["path"])
+                summary = callbacks.setdefault(path, {})
+                summary["correlationId"] = correlation
+                summary["requestCount"] = int(summary.get("requestCount", 0)) + 1
+                summary["lastCallbackAt"] = timestamp
+            if not correlations or unknown:
+                summary = value.setdefault("unknownCallbacks", {})
+                summary["requestCount"] = int(summary.get("requestCount", 0)) + 1
+                summary["lastCallbackAt"] = timestamp
+                summary["correlationIds"] = unknown
+            return value
+
+        return self.update(mutate)
 
 
 def tracking_areas(profile):
@@ -321,9 +383,19 @@ def create_all(config, store):
     try:
         for candidate in discover(config):
             created.append(create_one(config, candidate))
-        value = {"status": "active", "createdAt": now(), "subscriptions": created, "notificationCount": 0}
-        store.write(value)
-        return value
+        created_at = now()
+
+        def activate(value):
+            value.update({"status": "active", "createdAt": created_at, "subscriptions": created})
+            value.setdefault("notificationCount", 0)
+            callbacks = value.setdefault("callbacksByPath", {})
+            for item in created:
+                summary = callbacks.setdefault(str(item["path"]), {})
+                summary["correlationId"] = item["correlationId"]
+                summary.setdefault("requestCount", 0)
+            return value
+
+        return store.update(activate)
     except Exception:
         for item in reversed(created):
             try:
@@ -334,20 +406,32 @@ def create_all(config, store):
 
 
 def delete_all(store):
-    value = store.read()
+    snapshot = store.read()
     errors = []
-    for item in value.get("subscriptions", []):
+    outcomes = {}
+    for item in snapshot.get("subscriptions", []):
         if item.get("status") != "active":
             continue
         try:
             delete_location(item["location"])
-            item["status"] = "deleted"
-            item["deletedAt"] = now()
+            outcomes[item["location"]] = ("deleted", now())
         except Exception as error:
             errors.append(str(error))
-    value["status"] = "delete-failed" if errors else "stopped"
-    value["lastError"] = errors or None
-    store.write(value)
+            outcomes[item["location"]] = ("active", None)
+
+    def apply_outcomes(value):
+        for item in value.get("subscriptions", []):
+            outcome = outcomes.get(item.get("location"))
+            if outcome is None:
+                continue
+            item["status"] = outcome[0]
+            if outcome[1] is not None:
+                item["deletedAt"] = outcome[1]
+        value["status"] = "delete-failed" if errors else "stopped"
+        value["lastError"] = errors or None
+        return value
+
+    store.update(apply_outcomes)
     if errors:
         raise RuntimeError("; ".join(errors))
 

@@ -171,6 +171,16 @@ subscription resources should be removed while the NWDAFs and ML backends are
 still available. The aggregate commands encode that order and are preferred
 for normal experiments.
 
+`subscriptions-status` reports the Consumer service separately from its saved
+resource state. The resource state is local ownership evidence, not a remote
+GET verification. Each Path row includes provider, TAC, correlation, exact
+Location, callback HTTP request count, and last callback UTC time. Counts are
+per callback request, not the number of analytics items inside one payload.
+Retained state from an older version remains readable and shows `unknown` until
+a new callback establishes per-Path evidence. Unknown correlation IDs are
+reported separately rather than attributed to Path A or B. An unreachable Core,
+Consumer CLI error, or malformed state makes the command fail explicitly.
+
 ## Subscriber data
 
 Subscriber and Internal Group fixtures belong to the selected config and

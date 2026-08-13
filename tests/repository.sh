@@ -196,6 +196,25 @@ PY
 
 python3 "$HOST_ROOT/tests/config-contract.py" "${check_args[@]}"
 python3 "$HOST_ROOT/tests/mobile-identity.py"
+python3 "$HOST_ROOT/tests/consumer-state.py"
+(
+  source "$HOST_ROOT/scripts/host/subscriptions-status.sh"
+  state_fixture='{"status":"active","notificationCount":3,"subscriptions":[{"path":"a","status":"active","nfInstanceId":"provider-a","tac":"000001","correlationId":"corr-a","location":"http://a/subscriptions/1"},{"path":"b","status":"active","nfInstanceId":"provider-b","tac":"000002","correlationId":"corr-b","location":"http://b/subscriptions/2"}],"callbacksByPath":{"a":{"requestCount":2,"lastCallbackAt":"2026-08-13T00:00:00Z","correlationId":"corr-a"},"b":{"requestCount":1,"lastCallbackAt":"2026-08-13T00:00:01Z","correlationId":"corr-b"}}}'
+  rendered=$(render_subscription_status <<<"$state_fixture")
+  compact=$(sed -E 's/[[:space:]]+/ /g' <<<"$rendered")
+  [[ "$compact" == *'a active provider-a 000001 corr-a 2 2026-08-13T00:00:00Z http://a/subscriptions/1'* ]]
+  [[ "$compact" == *'b active provider-b 000002 corr-b 1 2026-08-13T00:00:01Z http://b/subscriptions/2'* ]]
+  legacy_fixture='{"status":"active","notificationCount":4,"subscriptions":[{"path":"a","status":"active","nfInstanceId":"provider-a","tac":"000001","correlationId":"legacy-a","location":"http://a/subscriptions/legacy"}]}'
+  legacy_rendered=$(render_subscription_status <<<"$legacy_fixture")
+  [[ "$legacy_rendered" == *'unknown'* ]]
+  vssh() { printf '%s\n' active; }
+  consumer_cli() { printf '%s\n' '{not-json'; }
+  if subscriptions_status_main >/dev/null 2>&1; then
+    echo "subscriptions-status accepted invalid Consumer state" >&2
+    exit 1
+  fi
+)
+echo "PASS subscription status rendering and error propagation"
 python3 "$HOST_ROOT/tests/provisioning-lock.py"
 python3 "$HOST_ROOT/tests/testbed-definition.py"
 "$HOST_ROOT/scripts/host/webconsole-prepare.sh" "$testbed" "config/default" |

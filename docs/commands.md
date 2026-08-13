@@ -48,7 +48,7 @@ while advanced and developer commands remain available. `TESTBED` defaults to
 | `make webconsole-status` | Show the WebConsole unit and endpoint state. Read-only. |
 | `make webconsole-stop` | Stop only WebConsole and retain its build artifacts and other services. |
 | `make subscriptions-start` | Start the Core Consumer, discover two distinct path NWDAFs through NRF, and create two subscriptions. |
-| `make subscriptions-status` | Show Consumer state, selected providers, exact resource locations, and callback summaries. Read-only. |
+| `make subscriptions-status` | Show the Consumer service, local saved resource state, selected providers, exact locations, and independent Path A/B callback request counts/times. Read-only; it does not claim remote GET verification. |
 | `make subscriptions-stop` | Delete the exact saved resources and stop the callback only after successful cleanup. |
 
 ## Subscriber and retained state
