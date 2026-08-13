@@ -231,7 +231,41 @@ the config-owned subscriber records.
 
 ## VM destruction
 
-There is deliberately no `vm-destroy` Make target. If VMs must be discarded,
-first verify the exact Vagrant targets and retained data, then invoke the
-explicit Vagrant destroy operation yourself. Ordinary experiment cleanup never
-destroys a VM.
+VM destruction is a separate, destructive maintenance operation. There is
+deliberately no `vm-destroy` Make target, so ordinary experiment cleanup cannot
+discard a VM by mistake. Stop a running experiment first, then verify the exact
+three targets:
+
+```sh
+make experiment-stop
+vagrant status core path-a path-b
+```
+
+When `core`, `path-a`, and `path-b` are the intended environment, permanently
+delete their VMs and virtual disks with:
+
+```sh
+vagrant destroy -f core path-a path-b
+```
+
+This removes Guest-installed components, MongoDB and ADRF/model state, staged
+active config and datasets, system journals, and every other file stored only
+on the three VM disks. It does not remove repository files, local config sets,
+Host-generated datasets, the Vagrant box cache, or Host Docker images,
+containers, volumes, and networks. Use the guarded [Clean-run reset](#clean-run-reset)
+instead when only retained experiment state should be cleared while keeping the
+VMs.
+
+Confirm destruction and rebuild the complete environment from the selected
+testbed definition when needed:
+
+```sh
+vagrant status core path-a path-b
+make vm-up TESTBED=testbed.yaml
+```
+
+The status must report all three machines as `not created`. The next `vm-up`
+creates, provisions, and builds all three Guests from scratch. If a non-default
+testbed definition was used to create the VMs, pass that same file through the
+`TESTBED` environment variable to both direct Vagrant commands as well as the
+Make command.
