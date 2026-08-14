@@ -378,10 +378,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--testbed", default="testbed.yaml")
     parser.add_argument("--name", required=True)
-    parser.add_argument(
-        "--scenario",
-        default="experiments/examples/full-core-cat-transition/scenario.yaml",
-    )
+    parser.add_argument("--scenario", required=True)
     parser.add_argument("--output-root", default="config/local")
     parser.add_argument("--ml-device", choices=("cpu", "gpu"))
     parser.add_argument("--webconsole", choices=("false", "true"))

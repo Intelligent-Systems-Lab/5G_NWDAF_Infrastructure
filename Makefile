@@ -2,7 +2,6 @@ SHELL := /usr/bin/env bash
 TESTBED ?= testbed.yaml
 CONFIG_DIR ?=
 NAME ?= local
-FROM ?= full-core-cat-transition
 DEVICE ?= gpu
 WEBCONSOLE ?= false
 
@@ -33,7 +32,7 @@ help-advanced:
 	@echo "5G NWDAF Infrastructure — advanced operations"
 	@echo ""
 	@echo "Configuration and datasets"
-	@echo "  make config-create NAME=... [FROM=full-core-cat-transition|fl-closure-smoke] [DEVICE=gpu|cpu] [WEBCONSOLE=false|true]"
+	@echo "  make config-create NAME=... FROM=experiments/.../scenario.yaml [DEVICE=gpu|cpu] [WEBCONSOLE=false|true]"
 	@echo "  make config-validate CONFIG_DIR=..."
 	@echo "  make dataset-generate | dataset-validate | dataset-show | dataset-load CONFIG_DIR=..."
 	@echo ""
@@ -75,11 +74,12 @@ experiment-stop:
 	@scripts/host/experiment-stop.sh
 
 config-create:
-	@case "$(FROM)" in full-core-cat-transition|fl-closure-smoke) ;; *) echo "FROM must be full-core-cat-transition or fl-closure-smoke" >&2; exit 2;; esac
+	@test -n "$(FROM)" || { echo "FROM=<repository-relative-scenario.yaml> is required" >&2; exit 2; }
+	@case "$(FROM)" in /*) echo "FROM must be relative to the repository: $(FROM)" >&2; exit 2;; *.yaml) ;; *) echo "FROM must select a scenario.yaml file: $(FROM)" >&2; exit 2;; esac
 	@case "$(DEVICE)" in gpu|cpu) ;; *) echo "DEVICE must be gpu or cpu" >&2; exit 2;; esac
 	@case "$(WEBCONSOLE)" in false|true) ;; *) echo "WEBCONSOLE must be false or true" >&2; exit 2;; esac
 	@python3 scripts/host/config-render.py --testbed "$(TESTBED)" --name "$(NAME)" \
-		--scenario "experiments/examples/$(FROM)/scenario.yaml" --output-root config/local --ml-device "$(DEVICE)" \
+		--scenario "$(FROM)" --output-root config/local --ml-device "$(DEVICE)" \
 		--webconsole "$(WEBCONSOLE)"
 
 config-validate:

@@ -5,10 +5,14 @@ source "$(cd "$(dirname "$0")/.." && pwd)/scripts/host/lib.sh"
 testbed=${1:-testbed.yaml}
 explicit_config=${2:-}
 cpu_config="$HOST_ROOT/.generated/tests/config/ml-repository-test"
+make_config="$HOST_ROOT/config/local/repository-interface-test"
+custom_scenario_root="$HOST_ROOT/.generated/tests/experiments/repository-interface-test"
 webconsole_root=$(mktemp -d)
 legacy_testbed_root=$(mktemp -d)
 cleanup() {
   rm -rf "$cpu_config"
+  rm -rf "$make_config"
+  rm -rf "$custom_scenario_root"
   rm -rf "$webconsole_root"
   rm -rf "$legacy_testbed_root"
 }
@@ -22,6 +26,41 @@ while IFS= read -r -d '' script; do
   bash -n "$script"
 done < <(find "$HOST_ROOT/scripts" "$HOST_ROOT/tests" -type f -name '*.sh' -print0)
 echo "PASS shell syntax"
+
+if make --no-print-directory -C "$HOST_ROOT" config-create \
+  NAME=repository-interface-test FROM= DEVICE=cpu >/dev/null 2>&1; then
+  echo "config-create accepted a missing FROM path" >&2
+  exit 1
+fi
+if make --no-print-directory -C "$HOST_ROOT" config-create \
+  NAME=repository-interface-test \
+  FROM="$HOST_ROOT/experiments/examples/full-core-cat-transition/scenario.yaml" \
+  DEVICE=cpu >/dev/null 2>&1; then
+  echo "config-create accepted an absolute FROM path" >&2
+  exit 1
+fi
+if make --no-print-directory -C "$HOST_ROOT" config-create \
+  NAME=repository-interface-test FROM=../outside/scenario.yaml DEVICE=cpu \
+  >/dev/null 2>&1; then
+  echo "config-create accepted a repository-escaping FROM path" >&2
+  exit 1
+fi
+mkdir -p "$custom_scenario_root"
+cp -R "$HOST_ROOT/experiments/examples/fl-closure-smoke/." "$custom_scenario_root/"
+make --no-print-directory -C "$HOST_ROOT" config-create \
+  NAME=repository-interface-test \
+  FROM=.generated/tests/experiments/repository-interface-test/scenario.yaml \
+  DEVICE=cpu WEBCONSOLE=false >/dev/null
+python3 "$HOST_ROOT/scripts/host/config-check.py" --testbed "$testbed" \
+  --config-dir "$make_config" >/dev/null
+if make --no-print-directory -C "$HOST_ROOT" config-create \
+  NAME=repository-interface-test \
+  FROM=.generated/tests/experiments/repository-interface-test/scenario.yaml \
+  DEVICE=cpu >/dev/null 2>&1; then
+  echo "config-create overwrote an existing output" >&2
+  exit 1
+fi
+echo "PASS explicit scenario path interface"
 
 expected='consumer|5g-nwdaf-consumer.service'
 actual=$(vm_log_sources core consumer)
