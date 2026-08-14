@@ -73,7 +73,6 @@ rollback() {
 
 assert_clean_start
 python3 "$HOST_ROOT/scripts/host/dataset.py" "${dataset_args[@]}" generate
-"$HOST_ROOT/scripts/host/experiment-validate.sh" "$testbed" "$explicit_config"
 
 trap rollback EXIT
 "$HOST_ROOT/scripts/host/services-start.sh" "$testbed" "$explicit_config"

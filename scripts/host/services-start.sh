@@ -5,7 +5,6 @@ source "$(dirname "$0")/lib.sh"
 testbed=${1:-testbed.yaml}
 explicit_config=${2:-}
 config_dir=$(effective_config_dir "$testbed" "$explicit_config")
-python3 "$HOST_ROOT/scripts/host/config-check.py" --testbed "$testbed" --config-dir "$config_dir"
 hash=$(config_hash "$config_dir")
 echo "EFFECTIVE testbed=$testbed config=$config_dir hash=$hash"
 

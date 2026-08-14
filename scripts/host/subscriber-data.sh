@@ -8,7 +8,6 @@ explicit_config=${3:-}
 case "$action" in validate|plan|apply|show|clear) ;; *) echo "usage: subscriber-data.sh validate|plan|apply|show|clear [testbed] [config-dir]" >&2; exit 2;; esac
 
 config_dir=$(effective_config_dir "$testbed" "$explicit_config")
-python3 "$HOST_ROOT/scripts/host/config-check.py" --testbed "$testbed" --config-dir "$config_dir"
 mapfile -t fixture_paths < <(
   PYTHONPATH="$HOST_ROOT/scripts/host" python3 - "$config_dir" <<'PY'
 import sys

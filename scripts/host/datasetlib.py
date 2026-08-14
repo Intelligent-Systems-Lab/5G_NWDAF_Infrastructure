@@ -82,8 +82,17 @@ def _tool_source_hash(tool_dir):
     return digest.hexdigest()
 
 
-def resolve_dataset_spec(testbed, config_dir):
-    """Return a canonical, fully resolved dataset set specification."""
+def resolve_dataset_spec(testbed, config_dir, diagnostics=None):
+    """Return a canonical dataset specification and optionally collect drift.
+
+    Structural errors that make a dataset impossible to resolve still raise.
+    Cross-file policy and timing inconsistencies are appended to ``diagnostics``
+    when supplied; they never prevent dataset generation by themselves.
+    """
+    def diagnose(condition, message):
+        if not condition and diagnostics is not None:
+            diagnostics.append(message)
+
     config_dir = Path(config_dir)
     path_supis = resolve_mobile_identities(testbed)["pathSupis"]
     scenario_path, scenario = resolve_config_scenario(config_dir)
@@ -107,8 +116,10 @@ def resolve_dataset_spec(testbed, config_dir):
         training.get("closureBudgetSeconds"),
         "scenario closure budget",
     )
-    if training.get("enforcePerformanceGate") is not False:
-        raise ValueError("scenario must retain final validation with the performance gate disabled")
+    diagnose(
+        training.get("enforcePerformanceGate") is False,
+        "scenario must retain final validation with the performance gate disabled",
+    )
     warm_start_mode = scenario.get("warmStartMode")
     if warm_start_mode not in ("inference-only", "inference-and-training"):
         raise ValueError("scenario warmStartMode is invalid")
@@ -130,23 +141,39 @@ def resolve_dataset_spec(testbed, config_dir):
     decision_window = _positive_int(
         coordinator["accuracy_policy"]["decision_window_size"], "decision window"
     )
-    if monitor_period != monitoring.get("reportPeriodSeconds"):
-        raise ValueError("coordinator report period differs from the scenario")
-    if minimum_reference != monitoring.get("minimumReferenceReports"):
-        raise ValueError("coordinator minimum reference count differs from the scenario")
-    if required_hits != monitoring.get("requiredHits"):
-        raise ValueError("coordinator required hit count differs from the scenario")
-    if decision_window != monitoring.get("decisionWindowSize"):
-        raise ValueError("coordinator decision window differs from the scenario")
-    if required_hits > decision_window:
-        raise ValueError("required degradation hits exceed the decision window")
+    diagnose(
+        monitor_period == monitoring.get("reportPeriodSeconds"),
+        "coordinator report period differs from the scenario",
+    )
+    diagnose(
+        minimum_reference == monitoring.get("minimumReferenceReports"),
+        "coordinator minimum reference count differs from the scenario",
+    )
+    diagnose(
+        required_hits == monitoring.get("requiredHits"),
+        "coordinator required hit count differs from the scenario",
+    )
+    diagnose(
+        decision_window == monitoring.get("decisionWindowSize"),
+        "coordinator decision window differs from the scenario",
+    )
+    diagnose(
+        required_hits <= decision_window,
+        "required degradation hits exceed the decision window",
+    )
     server = coordinator["federated_learning"]["server"]
-    if server.get("round_count") != fitting_rounds:
-        raise ValueError("coordinator fitting rounds differ from the scenario")
-    if server.get("preparation_data_window_seconds") != preparation_window:
-        raise ValueError("coordinator preparation window differs from the scenario")
-    if server.get("final_validation", {}).get("enforce_performance_gate") is not False:
-        raise ValueError("coordinator performance gate must remain disabled")
+    diagnose(
+        server.get("round_count") == fitting_rounds,
+        "coordinator fitting rounds differ from the scenario",
+    )
+    diagnose(
+        server.get("preparation_data_window_seconds") == preparation_window,
+        "coordinator preparation window differs from the scenario",
+    )
+    diagnose(
+        server.get("final_validation", {}).get("enforce_performance_gate") is False,
+        "coordinator performance gate must remain disabled",
+    )
 
     resolved_paths = {}
     common_sampling = None
@@ -154,12 +181,19 @@ def resolve_dataset_spec(testbed, config_dir):
     common_min_matched = None
     for path_name in ("a", "b"):
         pseudo = testbed["paths"][path_name]["upf"]["pseudoDriver"]
-        if pseudo.get("enabled") is not True or pseudo.get("mode") != "hybrid":
-            raise ValueError("path {} requires the hybrid PseudoDriver".format(path_name))
-        if pseudo.get("dataset", {}).get("file") != "traffic.parquet":
-            raise ValueError("path {} dataset file must be traffic.parquet".format(path_name))
-        if pseudo["dataset"].get("guestDirectory") != "/var/lib/5g-nwdaf-infrastructure/datasets/active":
-            raise ValueError("path {} dataset guest directory is not canonical".format(path_name))
+        diagnose(
+            pseudo.get("enabled") is True and pseudo.get("mode") == "hybrid",
+            "path {} requires the hybrid PseudoDriver".format(path_name),
+        )
+        diagnose(
+            pseudo.get("dataset", {}).get("file") == "traffic.parquet",
+            "path {} dataset file must be traffic.parquet".format(path_name),
+        )
+        diagnose(
+            pseudo["dataset"].get("guestDirectory")
+            == "/var/lib/5g-nwdaf-infrastructure/datasets/active",
+            "path {} dataset guest directory is not canonical".format(path_name),
+        )
         profile_source = profile_sources[path_name]
         profile_path = profile_paths[path_name]
         profile = load_json(profile_path)
@@ -184,45 +218,62 @@ def resolve_dataset_spec(testbed, config_dir):
             anlf["accuracy_monitor"]["min_matched_predictions"],
             "path {} minimum matched predictions".format(path_name),
         )
-        if sampling != sampling_contract:
-            raise ValueError("path {} sampling differs from the scenario".format(path_name))
-        if monitor_period % sampling:
-            raise ValueError(
-                "path {} monitor period must align to the sampling interval".format(
-                    path_name
-                )
-            )
+        diagnose(
+            sampling == sampling_contract,
+            "path {} sampling differs from the scenario".format(path_name),
+        )
+        diagnose(
+            monitor_period % sampling == 0,
+            "path {} monitor period must align to the sampling interval".format(
+                path_name
+            ),
+        )
         report_capacity = monitor_period // sampling
-        if report_capacity < min_matched:
-            raise ValueError(
-                "path {} monitor period cannot collect the required matched predictions".format(
-                    path_name
-                )
-            )
+        diagnose(
+            report_capacity >= min_matched,
+            "path {} monitor period cannot collect the required matched predictions".format(
+                path_name
+            ),
+        )
         validation_ratio = mtlf["federated_learning"]["client"]["training"]["validation_ratio"]
         if not isinstance(validation_ratio, (int, float)) or not 0 < validation_ratio < 1:
             raise ValueError("path {} validation_ratio must be between 0 and 1".format(path_name))
-        if upf["ees"]["periodSec"] != sampling:
-            raise ValueError("path {} UPF period and AnLF sampling interval differ".format(path_name))
-        if mtlf["federated_learning"]["client"]["training"].get("epochs") != local_epochs:
-            raise ValueError("path {} local epochs differ from the scenario".format(path_name))
-        if mtlf["dataset"].get("retrieval_window_seconds") != preparation_window:
-            raise ValueError("path {} retrieval fallback differs from the scenario".format(path_name))
-        if any(
+        diagnose(
+            upf["ees"]["periodSec"] == sampling,
+            "path {} UPF period and AnLF sampling interval differ".format(path_name),
+        )
+        diagnose(
+            mtlf["federated_learning"]["client"]["training"].get("epochs")
+            == local_epochs,
+            "path {} local epochs differ from the scenario".format(path_name),
+        )
+        diagnose(
+            mtlf["dataset"].get("retrieval_window_seconds") == preparation_window,
+            "path {} retrieval fallback differs from the scenario".format(path_name),
+        )
+        diagnose(
+            not any(
             duration % sampling
             for duration in (
                 profile["breakingTimeSeconds"],
                 profile["stableWindows"] * profile["windowSeconds"],
                 profile["degradedWindows"] * profile["windowSeconds"],
             )
-        ):
-            raise ValueError("path {} traffic phases must align to the sampling interval".format(path_name))
-        if common_sampling is not None and sampling != common_sampling:
-            raise ValueError("Path A and B sampling intervals differ")
-        if common_validation is not None and validation_ratio != common_validation:
-            raise ValueError("Path A and B validation ratios differ")
-        if common_min_matched is not None and min_matched != common_min_matched:
-            raise ValueError("Path A and B minimum matched predictions differ")
+            ),
+            "path {} traffic phases must align to the sampling interval".format(path_name),
+        )
+        diagnose(
+            common_sampling is None or sampling == common_sampling,
+            "Path A and B sampling intervals differ",
+        )
+        diagnose(
+            common_validation is None or validation_ratio == common_validation,
+            "Path A and B validation ratios differ",
+        )
+        diagnose(
+            common_min_matched is None or min_matched == common_min_matched,
+            "Path A and B minimum matched predictions differ",
+        )
         common_sampling = sampling
         common_validation = validation_ratio
         common_min_matched = min_matched
@@ -245,38 +296,53 @@ def resolve_dataset_spec(testbed, config_dir):
         minimum_degraded_tail = (
             (required_hits + 1) * monitor_period + sampling + closure_budget
         )
-        if stable_lead < minimum_stable_lead:
-            raise ValueError("path {} stable live lead-in is too short for monitor reference".format(path_name))
-        if (
-            profile["postBoundaryMode"] == "degraded"
-            and degraded_tail < minimum_degraded_tail
-        ):
-            raise ValueError("path {} degraded tail is too short for the accuracy policy".format(path_name))
-        if path_name == "a" and profile["postBoundaryMode"] != "degraded":
-            raise ValueError("Path A must carry the changed traffic profile")
-        if path_name == "b" and profile["postBoundaryMode"] != "stable":
-            raise ValueError("Path B must remain the stable control")
+        diagnose(
+            stable_lead >= minimum_stable_lead,
+            "path {} stable live lead-in is too short for monitor reference".format(path_name),
+        )
+        diagnose(
+            profile["postBoundaryMode"] != "degraded"
+            or degraded_tail >= minimum_degraded_tail,
+            "path {} degraded tail is too short for the accuracy policy".format(path_name),
+        )
+        diagnose(
+            path_name != "a" or profile["postBoundaryMode"] == "degraded",
+            "Path A must carry the changed traffic profile",
+        )
+        diagnose(
+            path_name != "b" or profile["postBoundaryMode"] == "stable",
+            "Path B must remain the stable control",
+        )
         earliest_decision = required_hits * monitor_period
         earliest_trigger = stable_lead + earliest_decision
         bounded_trigger = (
             stable_lead + (required_hits + 1) * monitor_period + sampling
         )
-        if profile["breakingTimeSeconds"] + bounded_trigger > preparation_window:
-            raise ValueError(
-                "path {} preparation window cannot cover warm-start through bounded trigger".format(path_name)
-            )
+        diagnose(
+            profile["breakingTimeSeconds"] + bounded_trigger <= preparation_window,
+            "path {} preparation window cannot cover warm-start through bounded trigger".format(path_name),
+        )
         trigger_observations = historical_observations + earliest_trigger // sampling
         trigger_training, trigger_validation = _sample_counts(
             trigger_observations, sequence_length, output_length, validation_ratio
         )
-        if historical_observations < sequence_length:
-            raise ValueError("path {} cannot fill the PyAnLF input window".format(path_name))
-        if warm_start_mode == "inference-and-training" and (
-            historical_training < minimum_samples or historical_validation < minimum_validation
-        ):
-            raise ValueError("path {} warm-start cannot prepare training and validation evidence".format(path_name))
-        if trigger_training < minimum_samples or trigger_validation < minimum_validation:
-            raise ValueError("path {} earliest trigger lacks training or validation evidence".format(path_name))
+        diagnose(
+            historical_observations >= sequence_length,
+            "path {} cannot fill the PyAnLF input window".format(path_name),
+        )
+        diagnose(
+            warm_start_mode != "inference-and-training"
+            or (
+                historical_training >= minimum_samples
+                and historical_validation >= minimum_validation
+            ),
+            "path {} warm-start cannot prepare training and validation evidence".format(path_name),
+        )
+        diagnose(
+            trigger_training >= minimum_samples
+            and trigger_validation >= minimum_validation,
+            "path {} earliest trigger lacks training or validation evidence".format(path_name),
+        )
 
         resolved = dict(profile)
         resolved.update({

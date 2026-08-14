@@ -404,11 +404,16 @@ def main():
     seed_inference = seed["inference"]
 
     check_subscriber_fixtures(check, testbed, config_dir, identities)
+    dataset_diagnostics = []
     try:
-        dataset_spec = resolve_dataset_spec(testbed, config_dir)
+        dataset_spec = resolve_dataset_spec(
+            testbed, config_dir, diagnostics=dataset_diagnostics
+        )
     except (KeyError, OSError, ValueError, json.JSONDecodeError) as exc:
         check.true("invalid PseudoDriver dataset contract: {}".format(exc), False)
         dataset_spec = None
+    for diagnostic in dataset_diagnostics:
+        check.true("PseudoDriver dataset contract: {}".format(diagnostic), False)
 
     all_addresses = []
     networks = testbed["networks"]

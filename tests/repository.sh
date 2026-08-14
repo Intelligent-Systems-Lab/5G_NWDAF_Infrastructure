@@ -281,6 +281,7 @@ print("PASS Python syntax")
 PY
 
 python3 "$HOST_ROOT/tests/config-contract.py" "${check_args[@]}"
+python3 "$HOST_ROOT/tests/execution-policy.py"
 python3 "$HOST_ROOT/tests/mobile-identity.py"
 python3 "$HOST_ROOT/tests/consumer-state.py"
 python3 "$HOST_ROOT/tests/ml-status.py"

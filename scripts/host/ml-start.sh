@@ -10,25 +10,19 @@ config_dir=$(effective_config_dir "$testbed" "$explicit_config")
 hash=$(config_hash "$config_dir")
 config_name=$(basename "$config_dir")
 
-check_args=(--testbed "$testbed" --config-dir "$config_dir")
 if [ "$mode" = cpu-smoke ]; then
   bind_address=127.0.0.1
 else
   bind_address=$(effective_ml_bind_address "$testbed")
 fi
 
-python3 "$HOST_ROOT/scripts/host/config-check.py" "${check_args[@]}"
 device_policy=$(config_ml_device_policy "$config_dir")
 export ML_DEVICE_POLICY="$device_policy"
-python3 "$HOST_ROOT/scripts/host/ml-compose-check.py" \
-  --testbed "$testbed" --config-dir "$config_dir" --mode "$mode"
 
 if ! host_has_address "$bind_address"; then
   echo "ML bind address is not present on the Host: $bind_address" >&2
   exit 1
 fi
-ml_host_resource_gate "$testbed"
-
 ml_runtime_gate
 
 export CONFIG_DIR="$config_dir"
