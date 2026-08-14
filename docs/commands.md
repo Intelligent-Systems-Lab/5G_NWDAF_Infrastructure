@@ -15,7 +15,7 @@ while advanced and developer commands remain available. `TESTBED` defaults to
 | `make help-all` | Print all three help layers. Read-only. |
 | `make experiment-validate CONFIG_DIR=...` | Run source, config, dataset, Host resource, Compose, GPU-if-requested, and Vagrant checks without starting runtime state. |
 | `make experiment-start CONFIG_DIR=...` | Generate/validate data, then start Guest services, enabled WebConsole, ML containers, Consumer, and two subscriptions. Requires running VMs and stopped domains. |
-| `make experiment-status CONFIG_DIR=...` | Show config identity, Host headroom, VM, guest service, ML, and subscription state. Read-only; rejects an incomplete running-backend snapshot while powered-off VMs appear as `not-running`. |
+| `make experiment-status CONFIG_DIR=...` | Show config identity, Host headroom, VM, guest service, ML, FL result, and subscription state. Read-only; rejects an incomplete running-backend snapshot while powered-off services appear as `not-running` and Core-owned saved state appears as `not-readable`. |
 | `make experiment-stop` | Delete exact subscriptions, leave the NWDAFs and ML backends available for a fixed 40-second asynchronous cleanup grace, then stop process domains while retaining state and VMs. |
 | `make observe` | Continuously display VM/service/container/subscription state. Read-only; failed sections retain their error and are marked unavailable while later intervals continue. |
 | `make logs [SOURCE=...] [VM=...] [SERVICE=...] [SINCE=...] [TAIL=...] [FOLLOW=...]` | Follow filtered owned VM journals and project ML container logs with UTC timestamps. Source selectors default to all components and the time window defaults to the last ten minutes; `FOLLOW=false` prints a bounded snapshot. Read-only. |
@@ -42,8 +42,8 @@ while advanced and developer commands remain available. `TESTBED` defaults to
 | `make services-status` | Show all 23 guest unit states plus current-invocation Registration/PDU readiness for six UEs. Read-only; readiness is `inactive`, `pending`, `successful`, or `failed`. |
 | `make services-stop` | Stop guest experiment units in reverse order without halting VMs or deleting persistent data. |
 | `make ml-start CONFIG_DIR=...` | Validate, build/reuse images, enforce CPU/GPU policy, and start the five production containers. |
-| `make ml-status` | Show container/device/image identity plus a `StartedAt`-scoped FL milestone summary from matching-config PyMTLF-A/B/C logs. Read-only; unseen milestones remain `not-seen`. |
-| `make ml-stop` | Stop only the production Compose project's running containers; retain containers, images, and volumes. |
+| `make ml-status` | Show container/device/image identity plus a `StartedAt`-scoped FL milestone summary and result from matching-config PyMTLF-A/B/C logs. Read-only; unseen milestones remain `not-seen`. |
+| `make ml-stop` | Stop only the production Compose project's running containers and retain containers, images, and volumes. It does not modify VM or subscription state. |
 | `make webconsole-start CONFIG_DIR=...` | If enabled, prepare/reuse the Core artifact and start WebConsole. MongoDB and NRF must be active. |
 | `make webconsole-status` | Show the WebConsole unit and endpoint state. Read-only. |
 | `make webconsole-stop` | Stop only WebConsole and retain its build artifacts and other services. |

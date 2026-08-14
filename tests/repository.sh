@@ -196,7 +196,9 @@ echo "PASS current-invocation UE readiness parsing"
   vm_state_for() { printf '%s\n' poweroff; }
   [[ "$(webconsole_status_main)" == *'state=not-running'* ]]
   source "$HOST_ROOT/scripts/host/subscriptions-status.sh"
-  [[ "$(subscriptions_status_main)" == *'local_resource_state=unavailable reason=core-not-running'* ]]
+  powered_off_subscriptions=$(subscriptions_status_main)
+  [[ "$powered_off_subscriptions" == *'consumer_service=not-running reason=core-not-running'* ]]
+  [[ "$powered_off_subscriptions" == *'local_resource_state=not-readable reason=core-not-running'* ]]
   vm_state_records() { return 1; }
   if vm_state_for core >/dev/null 2>&1; then
     echo "vm_state_for hid a Vagrant status failure" >&2

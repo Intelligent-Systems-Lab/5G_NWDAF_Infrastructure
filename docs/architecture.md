@@ -78,6 +78,11 @@ The full-core example exercises the following closed loop:
 7. C provisions the new model to A/B. Both paths cut over to the new model
    generation and continue reporting post-cutover accuracy.
 
+The reference experiment reaches its business completion criterion only after
+the cutover is followed by an evaluated accuracy report for the new generation
+that does not trigger degradation. Reaching that criterion does not stop any
+process; the operator still chooses when to run `experiment-stop`.
+
 The registration, PDU Session, service discovery, subscriptions, and Event
 Exposure control paths are real. PseudoDriver input is deterministic stimulus,
 not a claim of real application throughput or a user-plane benchmark.

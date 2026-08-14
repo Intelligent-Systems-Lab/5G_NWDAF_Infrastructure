@@ -131,6 +131,11 @@ resource was remotely queried. If cleanup is suspect, inspect the current-run
 PyAnLF, PyMTLF-C, and three NWDAF logs for DELETE status and reconciler errors
 before starting another experiment.
 
+After Core is powered off, `subscriptions-status` reports the Consumer as
+`not-running` and its saved resource state as `not-readable`. This is an
+expected power state, not evidence that resource state was lost. Power Core on
+before inspecting saved locations or retrying an exact deletion.
+
 ## Start says a domain is already active
 
 Aggregate startup deliberately requires a clean process state. Inspect

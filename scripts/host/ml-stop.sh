@@ -13,4 +13,5 @@ else
   docker stop --time 30 "${container_ids[@]}" >/dev/null
 fi
 "$HOST_ROOT/scripts/host/ml-status.sh"
-echo "Host ML services stopped; containers, volumes, images, VMs, and subscriptions were retained."
+echo "Host ML services stopped; containers, volumes, and images were retained."
+echo "ML stop did not modify VM or subscription state."

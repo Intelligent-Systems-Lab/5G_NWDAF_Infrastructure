@@ -2,6 +2,7 @@
 """Report project-scoped ML container, config, image, device, and memory state."""
 
 import argparse
+import datetime
 import json
 import re
 import subprocess
@@ -99,6 +100,28 @@ def milestone(timestamp="not-seen", detail="not-seen"):
     return {"timestamp": timestamp, "detail": detail}
 
 
+def timestamp_order(value):
+    if value in (None, "not-seen", "unknown"):
+        return None
+    normalized = re.sub(r"(\.\d{6})\d+(?=Z|[+-])", r"\1", value)
+    try:
+        return datetime.datetime.fromisoformat(normalized.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+
+def latest_milestone(current, timestamp, detail):
+    current_time = timestamp_order(current["timestamp"])
+    candidate_time = timestamp_order(timestamp)
+    if current["timestamp"] == "not-seen":
+        return milestone(timestamp, detail)
+    if candidate_time is not None and (
+        current_time is None or candidate_time > current_time
+    ):
+        return milestone(timestamp, detail)
+    return current
+
+
 def parse_fl_milestones(logs_by_service):
     result = {
         "monitors": milestone(),
@@ -139,7 +162,9 @@ def parse_fl_milestones(logs_by_service):
                     client_validation[service] = True
                     client_timestamp[service] = timestamp
                 if "FL client round failed" in message or "FL client final validation failed" in message:
-                    result["failure"] = milestone(timestamp, service + ": " + message.strip())
+                    result["failure"] = latest_milestone(
+                        result["failure"], timestamp, service + ": " + message.strip()
+                    )
                 continue
 
             active = re.search(r"ML Model Monitor subscription active subscription_id=([^ ]+)", message)
@@ -208,7 +233,9 @@ def parse_fl_milestones(logs_by_service):
                 result["cutover"] = milestone(timestamp, "model={} family={}".format(*cutover.groups()))
             failed = re.search(r"Federated process failed process_id=([^ ]+)", message)
             if failed:
-                result["failure"] = milestone(timestamp, "process={}".format(failed.group(1)))
+                result["failure"] = latest_milestone(
+                    result["failure"], timestamp, "process={}".format(failed.group(1))
+                )
 
     for service, key in (("pymtlf-a", "client_a"), ("pymtlf-b", "client_b")):
         if client_rounds[service] or client_validation[service]:
@@ -220,6 +247,55 @@ def parse_fl_milestones(logs_by_service):
                 ),
             )
     return result
+
+
+def milestone_value(detail, key):
+    match = re.search(r"(?:^| ){}=([^ ]+)".format(re.escape(key)), detail)
+    return match.group(1) if match else "unknown"
+
+
+def fl_result(summary, coordinator_state):
+    success = summary["post_cutover_accuracy"]
+    failure = summary["failure"]
+    success_time = timestamp_order(success["timestamp"])
+    failure_time = timestamp_order(failure["timestamp"])
+    success_seen = success["timestamp"] != "not-seen"
+    failure_seen = failure["timestamp"] != "not-seen"
+
+    if success_seen and (
+        not failure_seen
+        or (success_time is not None and failure_time is not None and success_time > failure_time)
+    ):
+        model = milestone_value(summary["cutover"]["detail"], "model")
+        return "outcome=complete model={} evidence=post-cutover-accuracy".format(model)
+    if failure_seen:
+        process = milestone_value(failure["detail"], "process")
+        return "outcome=failed process={} evidence={}".format(
+            process, failure["detail"].replace(" ", "_")
+        )
+    if coordinator_state == "absent":
+        return "outcome=not-started reason=coordinator-absent"
+
+    phases = (
+        ("cutover", "post-cutover-validation"),
+        ("adoption", "model-adoption"),
+        ("publication", "model-publication"),
+        ("validation", "federated-validation"),
+        ("rounds", "federated-training"),
+        ("preparation", "federated-preparation"),
+        ("process", "federated-process"),
+        ("degradation", "degradation-detected"),
+        ("monitors", "monitoring"),
+    )
+    phase = next(
+        (name for milestone_name, name in phases if summary[milestone_name]["timestamp"] != "not-seen"),
+        "starting",
+    )
+    if coordinator_state == "running":
+        return "outcome=in-progress phase={}".format(phase)
+    return "outcome=incomplete phase={} coordinator_state={}".format(
+        phase, coordinator_state
+    )
 
 
 def container_logs_since(container):
@@ -246,6 +322,7 @@ def print_fl_summary(by_service):
     coordinator = by_service.get("pymtlf-c")
     if coordinator is None:
         print("FL CURRENT RUN container=absent milestones=not-seen")
+        print("FL RESULT {}".format(fl_result(parse_fl_milestones({}), "absent")))
         return
     labels = coordinator.get("Config", {}).get("Labels", {})
     identity = "{}:{}".format(
@@ -278,6 +355,11 @@ def print_fl_summary(by_service):
     print("{:<24} {:<30} {}".format("MILESTONE", "TIMESTAMP", "EVIDENCE"))
     for name, value in summary.items():
         print("{:<24} {:<30} {}".format(name, value["timestamp"], value["detail"]))
+    coordinator_state = (
+        "running" if coordinator.get("State", {}).get("Running")
+        else coordinator.get("State", {}).get("Status", "stopped")
+    )
+    print("FL RESULT {}".format(fl_result(summary, coordinator_state)))
 
 
 def memory_usage(containers):

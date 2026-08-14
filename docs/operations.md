@@ -82,12 +82,15 @@ detailed component events. A bare `make logs` still follows all owned VM
 journals and project ML container logs, including template Guest units, the
 Core-only Consumer, and each Network unit.
 
-Powered-off or not-yet-created VMs are valid observable states: Guest,
-WebConsole, and Subscription sections report `not-running` without attempting
-SSH. A running VM that cannot be queried, a Docker failure, or malformed status
-data is different: `experiment-status` and the single snapshot return non-zero
-and preserve the backend error. Continuous `observe` labels the failed section
-`unavailable` and continues with the next interval so recovery remains visible.
+Powered-off or not-yet-created VMs are valid observable states. Guest and
+WebConsole services report `not-running` without attempting SSH. For the Core
+Consumer, the service is `not-running` and its saved subscription state is
+`not-readable`: the state may remain on the VM disk, but the Host cannot inspect
+it while Core is off. A running VM that cannot be queried, a Docker failure, or
+malformed status data is different: `experiment-status` and the single snapshot
+return non-zero and preserve the backend error. Continuous `observe` labels the
+failed section `unavailable` and continues with the next interval so recovery
+remains visible.
 
 The ML section also provides a current-container FL milestone table. It scopes
 Docker logs with each PyMTLF container's current `StartedAt`, requires matching
@@ -97,6 +100,21 @@ cutover, and post-cutover evaluated accuracy. `not-seen` means the current
 container logs do not yet contain that evidence; it is not inferred to be a
 component failure. The separate failure row only changes when an explicit FL
 failure signature is observed.
+
+The table ends with one current-run result:
+
+- `not-started` means no coordinator container exists;
+- `in-progress` means the coordinator is running without a terminal outcome;
+- `incomplete` means the coordinator stopped before terminal evidence appeared;
+- `failed` means the newest terminal evidence is an explicit FL failure;
+- `complete` means the newest terminal evidence is an evaluated,
+  non-degrading post-cutover accuracy report.
+
+If a failure is followed by a later successful cutover report, the newer
+success wins; a newer failure supersedes an earlier success. A `complete`
+result is retained after containers stop because it describes the observed
+business outcome, not process state. It never stops the experiment
+automatically; use `make experiment-stop` when observation is complete.
 
 Focused examples are:
 
@@ -186,7 +204,8 @@ make services-stop
 The order matters: Guest NWDAFs must exist before the Consumer subscribes, and
 subscription resources should be removed while the NWDAFs and ML backends are
 still available. The aggregate commands encode that order and are preferred
-for normal experiments.
+for normal experiments. `ml-stop` only changes the ML process domain; it does
+not claim that subscription resources currently exist or change them itself.
 
 `subscriptions-status` reports the Consumer service separately from its saved
 resource state. The resource state is local ownership evidence, not a remote

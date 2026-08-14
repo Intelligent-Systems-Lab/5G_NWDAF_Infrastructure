@@ -61,9 +61,60 @@ def main():
     assert summary["client_a"]["detail"] == "rounds=0,1 final_validation=true", summary
     assert summary["client_b"]["detail"] == "rounds=0,1 final_validation=true", summary
     assert summary["failure"] == {"timestamp": "not-seen", "detail": "not-seen"}, summary
+    assert MODULE.fl_result(summary, "running") == (
+        "outcome=complete model=2 evidence=post-cutover-accuracy"
+    ), summary
+    assert MODULE.fl_result(summary, "exited") == (
+        "outcome=complete model=2 evidence=post-cutover-accuracy"
+    ), summary
 
     empty = MODULE.parse_fl_milestones({"pymtlf-c": "unrelated old output"})
     assert all(value["timestamp"] == "not-seen" for value in empty.values()), empty
+    assert MODULE.fl_result(empty, "absent") == (
+        "outcome=not-started reason=coordinator-absent"
+    ), empty
+    assert MODULE.fl_result(empty, "running") == (
+        "outcome=in-progress phase=starting"
+    ), empty
+    assert MODULE.fl_result(empty, "exited") == (
+        "outcome=incomplete phase=starting coordinator_state=exited"
+    ), empty
+
+    failed = MODULE.parse_fl_milestones({
+        "pymtlf-c": "2026-08-13T00:00:10Z Federated process failed process_id=failed-1"
+    })
+    assert MODULE.fl_result(failed, "running") == (
+        "outcome=failed process=failed-1 evidence=process=failed-1"
+    ), failed
+
+    recovered = MODULE.parse_fl_milestones({
+        "pymtlf-c": "\n".join((
+            "2026-08-13T00:00:10.123456789Z Federated process failed process_id=failed-1",
+            "2026-08-13T00:00:11Z Federated model cutover complete model_id=3 family=f",
+            "2026-08-13T00:00:12Z ML Model accuracy report processed correlation_id=ca model_ids=[3] evaluated=[True] triggered=[False]",
+        ))
+    })
+    assert MODULE.fl_result(recovered, "running") == (
+        "outcome=complete model=3 evidence=post-cutover-accuracy"
+    ), recovered
+
+    later_failure = MODULE.parse_fl_milestones({
+        "pymtlf-c": "\n".join((
+            "2026-08-13T00:00:11Z Federated model cutover complete model_id=3 family=f",
+            "2026-08-13T00:00:12Z ML Model accuracy report processed correlation_id=ca model_ids=[3] evaluated=[True] triggered=[False]",
+            "2026-08-13T00:00:13Z Federated process failed process_id=failed-2",
+        ))
+    })
+    assert MODULE.fl_result(later_failure, "running") == (
+        "outcome=failed process=failed-2 evidence=process=failed-2"
+    ), later_failure
+
+    cross_service_failure = MODULE.parse_fl_milestones({
+        "pymtlf-a": "2026-08-13T00:00:13Z FL client round failed subscription_id=a round=1 error=newer",
+        "pymtlf-c": "2026-08-13T00:00:10Z Federated process failed process_id=older",
+    })
+    assert cross_service_failure["failure"]["timestamp"] == "2026-08-13T00:00:13Z", cross_service_failure
+    assert "pymtlf-a" in cross_service_failure["failure"]["detail"], cross_service_failure
 
     original_run = MODULE.subprocess.run
     captured = {}
