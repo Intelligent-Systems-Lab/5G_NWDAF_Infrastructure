@@ -65,6 +65,11 @@ if [ "$runtime_config_hash" != "$canonical_config_hash" ]; then
   echo "runtime config hash differs from the canonical tree hash" >&2
   exit 1
 fi
+grep -F 'config-hash "$staged"' "$HOST_ROOT/scripts/guest/config-activate.sh" >/dev/null
+grep -F 'scripts/shared/config_hash.py' "$HOST_ROOT/scripts/host/guest-tools-sync.sh" >/dev/null
+grep -F '"$destination/config-hash"' "$HOST_ROOT/scripts/guest/runtime-tools-install.sh" >/dev/null
+grep -F 'ROOT / "scripts" / "shared" / "config_hash.py"' \
+  "$HOST_ROOT/scripts/host/configlib.py" >/dev/null
 if make --no-print-directory -C "$HOST_ROOT" config-create \
   NAME=repository-interface-test \
   FROM=.generated/tests/experiments/repository-interface-test/scenario.yaml \

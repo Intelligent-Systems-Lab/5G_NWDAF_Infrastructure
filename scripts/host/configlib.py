@@ -5,9 +5,17 @@ import hashlib
 import ipaddress
 import json
 import re
+import sys
 from pathlib import Path
 
 import yaml
+
+
+SHARED_ROOT = Path(__file__).resolve().parents[1] / "shared"
+if str(SHARED_ROOT) not in sys.path:
+    sys.path.insert(0, str(SHARED_ROOT))
+
+from config_hash import sha256_tree
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -209,17 +217,6 @@ def sha256_file(path):
     return digest.hexdigest()
 
 
-def sha256_tree(directory):
-    digest = hashlib.sha256()
-    for path in sorted(path for path in Path(directory).rglob("*") if path.is_file()):
-        relative = path.relative_to(directory).as_posix()
-        digest.update(relative.encode("utf-8"))
-        digest.update(b"\0")
-        digest.update(path.read_bytes())
-        digest.update(b"\0")
-    return digest.hexdigest()
-
-
 def canonical_sha256(value):
     payload = json.dumps(value, sort_keys=True, separators=(",", ":")).encode("utf-8")
     return hashlib.sha256(payload).hexdigest()
@@ -227,9 +224,12 @@ def canonical_sha256(value):
 
 def config_generator_source_hash():
     digest = hashlib.sha256()
-    directory = ROOT / "scripts" / "host"
-    for name in ("config-render.py", "configlib.py"):
-        path = directory / name
+    for path in (
+        ROOT / "scripts" / "host" / "config-render.py",
+        ROOT / "scripts" / "host" / "configlib.py",
+        ROOT / "scripts" / "shared" / "config_hash.py",
+    ):
+        name = path.relative_to(ROOT).as_posix()
         digest.update(name.encode("utf-8") + b"\0")
         digest.update(path.read_bytes())
         digest.update(b"\0")

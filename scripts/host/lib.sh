@@ -181,16 +181,7 @@ stop_unit() {
 }
 
 config_hash() {
-  PYTHONPATH="$HOST_ROOT/scripts/host" python3 - "$1" <<'PY'
-import sys
-from pathlib import Path
-from configlib import sha256_tree
-
-directory = Path(sys.argv[1])
-if not directory.is_dir():
-    raise SystemExit("config directory does not exist: {}".format(directory))
-print(sha256_tree(directory))
-PY
+  python3 "$HOST_ROOT/scripts/shared/config_hash.py" "$1"
 }
 
 effective_config_dir() {
