@@ -7,6 +7,12 @@ Run all commands from the repository root and keep the same `TESTBED` and
 
 ### 1. Prepare inputs
 
+The commands below use the committed traffic pattern unchanged. To create a
+different dataset pattern, first follow
+[Customize the dataset pattern](configuration.md#customize-the-dataset-pattern),
+then use that local scenario and its generated `CONFIG_DIR` throughout this
+workflow.
+
 ```sh
 git submodule update --init --recursive
 make config-create \

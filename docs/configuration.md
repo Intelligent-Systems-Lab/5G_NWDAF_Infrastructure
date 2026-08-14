@@ -10,6 +10,8 @@ the scenario and generated Parquet belongs to neither source tree.
 Use the committed `testbed.yaml`, or copy it to an ignored local file when the
 Host topology differs. There is no implicit `testbed.local.yaml` overlay.
 
+### Use a committed example unchanged
+
 ```sh
 cp testbed.yaml testbed.lab.yaml       # only when topology changes are needed
 make config-create \
@@ -25,7 +27,54 @@ make config-create \
 `WEBCONSOLE` is `true` or `false`. The renderer refuses to overwrite an
 existing directory; choose a new name or remove an unwanted local set yourself.
 
-Generate and inspect the dataset described by that complete config:
+### Customize the dataset pattern
+
+Do not edit a committed directory under `experiments/examples/`. Copy the whole
+example, including its scenario and both Path traffic profiles, into ignored
+user space:
+
+```sh
+cp -a \
+  experiments/examples/full-core-cat-transition \
+  experiments/local/my-pattern
+```
+
+The copied inputs are:
+
+```text
+experiments/local/my-pattern/
+├── scenario.yaml
+└── traffic/
+    ├── path-a.json
+    └── path-b.json
+```
+
+Change `name` in `scenario.yaml` to a unique experiment identity. Edit
+`traffic/path-a.json` and `traffic/path-b.json` to change raw stable/degraded
+traffic values, phase lengths, jitter, or the raw window interval. The existing
+`trafficProfiles` paths remain valid because they are relative to
+`scenario.yaml`. Sampling, accuracy-report policy, training rounds, and closure
+timing belong in `scenario.yaml`, not in the traffic JSON files.
+
+Render a new complete config from the copied scenario:
+
+```sh
+make config-create \
+  NAME=my-pattern \
+  FROM=experiments/local/my-pattern/scenario.yaml \
+  DEVICE=gpu \
+  WEBCONSOLE=false
+```
+
+Use `DEVICE=cpu` when CUDA is not wanted. Do not edit generated Parquet files;
+`dataset-generate` derives them from the copied scenario, traffic profiles, and
+the UE pools in the selected testbed.
+
+### Generate and inspect the dataset
+
+Generate and inspect the dataset described by that complete config. The commands
+below continue the unchanged example as `config/local/my-experiment`; use
+`config/local/my-pattern` instead after following the customization workflow.
 
 ```sh
 make config-validate TESTBED=testbed.lab.yaml CONFIG_DIR=config/local/my-experiment

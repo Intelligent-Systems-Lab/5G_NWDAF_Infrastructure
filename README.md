@@ -79,6 +79,11 @@ make dataset-generate CONFIG_DIR=config/local/my-experiment
 make experiment-validate CONFIG_DIR=config/local/my-experiment
 ```
 
+This runs the committed traffic pattern unchanged. To define different stable
+or degraded traffic, phase lengths, or raw window timing, first follow
+[Customize the dataset pattern](docs/configuration.md#customize-the-dataset-pattern)
+and render the copied local scenario instead.
+
 Use `DEVICE=cpu` when CUDA is not wanted. The choice is explicit; the runtime
 does not silently fall back from GPU to CPU. Validation is a recommended,
 read-only diagnostic: review its findings, but startup does not invoke or
