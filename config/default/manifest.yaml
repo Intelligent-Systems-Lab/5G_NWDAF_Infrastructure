@@ -4,8 +4,8 @@ topology: testbed.yaml
 scenario:
   name: full-core-cat-transition
   kind: business-acceptance
-  definition: fixtures/full-core/scenarios/full-core-cat-transition.yaml
-  definitionHash: 8b78cd69c615df6bc6679413948a79351259bb58f745886bf889b160f59c738c
+  definition: experiments/examples/full-core-cat-transition/scenario.yaml
+  definitionHash: 4025e45d81e92cbcd1598063fb9c453198900bf6bb75931cffa55c855084ecf3
 sources:
   free5gcConfig:
     remote: https://github.com/free5gc/free5gc.git
@@ -15,8 +15,8 @@ constraints:
   certificatesSupported: false
   pseudoDriverRequired: true
   pseudoDriverProfiles:
-    a: fixtures/full-core/traffic/profiles/full-core-cat-transition/path-a.json
-    b: fixtures/full-core/traffic/profiles/full-core-cat-transition/path-b.json
+    a: experiments/examples/full-core-cat-transition/traffic/path-a.json
+    b: experiments/examples/full-core-cat-transition/traffic/path-b.json
   gtp5g: ">=0.9.5,<0.10.0"
 runtime:
   guestMachines: [core, path-a, path-b]
@@ -30,8 +30,8 @@ subscriberData:
   groups: subscriber/group-memberships.json
 datasets:
   path-a:
-    profile: fixtures/full-core/traffic/profiles/full-core-cat-transition/path-a.json
+    profile: experiments/examples/full-core-cat-transition/traffic/path-a.json
     guestDirectory: /var/lib/5g-nwdaf-infrastructure/datasets/active
   path-b:
-    profile: fixtures/full-core/traffic/profiles/full-core-cat-transition/path-b.json
+    profile: experiments/examples/full-core-cat-transition/traffic/path-b.json
     guestDirectory: /var/lib/5g-nwdaf-infrastructure/datasets/active

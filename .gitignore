@@ -8,6 +8,10 @@ __pycache__/
 config/local/*
 !config/local/.gitkeep
 
+# User-authored experiment definitions.
+experiments/local/*
+!experiments/local/.gitkeep
+
 # Build and runtime state stay inside guests.
 build/
 dist/

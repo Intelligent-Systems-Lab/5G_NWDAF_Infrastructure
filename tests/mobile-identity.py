@@ -37,7 +37,7 @@ def render_and_check(testbed_path, output_root, name):
             "--name",
             name,
             "--scenario",
-            "fixtures/full-core/scenarios/fl-closure-smoke.yaml",
+            "experiments/examples/fl-closure-smoke/scenario.yaml",
             "--output-root",
             str(output_root),
             "--ml-device",

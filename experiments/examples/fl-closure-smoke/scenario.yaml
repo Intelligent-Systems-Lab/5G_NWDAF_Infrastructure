@@ -1,11 +1,11 @@
-schemaVersion: 1
+schemaVersion: 2
 name: fl-closure-smoke
 kind: bounded-smoke
 warmStartMode: inference-and-training
 samplingIntervalSeconds: 30
 trafficProfiles:
-  a: fixtures/full-core/traffic/profiles/fl-closure-smoke/path-a.json
-  b: fixtures/full-core/traffic/profiles/fl-closure-smoke/path-b.json
+  a: traffic/path-a.json
+  b: traffic/path-b.json
 monitoring:
   reportPeriodSeconds: 90
   minimumReferenceReports: 2

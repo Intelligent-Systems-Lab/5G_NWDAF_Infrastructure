@@ -11,7 +11,8 @@ import sys
 from configlib import (
     ROOT, canonical_sha256, config_generator_source_hash, dump_yaml,
     guest_network_configs, load_yaml, load_scenario_definition, resolve_path,
-    resolve_mobile_identities, set_path, sha256_tree,
+    repository_relative_paths, resolve_mobile_identities,
+    resolve_scenario_profile_paths, set_path, sha256_tree,
 )
 
 
@@ -379,7 +380,7 @@ def main():
     parser.add_argument("--name", required=True)
     parser.add_argument(
         "--scenario",
-        default="fixtures/full-core/scenarios/full-core-cat-transition.yaml",
+        default="experiments/examples/full-core-cat-transition/scenario.yaml",
     )
     parser.add_argument("--output-root", default="config/local")
     parser.add_argument("--ml-device", choices=("cpu", "gpu"))
@@ -397,6 +398,9 @@ def main():
         for service_name in ("pymtlf-a", "pymtlf-b"):
             testbed["mlRuntime"]["services"][service_name]["device"] = training_device
     scenario_path, scenario = load_scenario_definition(args.scenario)
+    profile_sources = repository_relative_paths(
+        resolve_scenario_profile_paths(scenario_path, scenario)
+    )
     baseline = ROOT / "config" / "default"
     output = resolve_path(args.output_root) / args.name
     if output.exists():
@@ -448,13 +452,14 @@ def main():
         },
     }
     manifest["datasets"] = {}
-    profiles = scenario["trafficProfiles"]
-    manifest.setdefault("constraints", {})["pseudoDriverProfiles"] = dict(profiles)
+    manifest.setdefault("constraints", {})["pseudoDriverProfiles"] = dict(
+        profile_sources
+    )
     for path_name in ("a", "b"):
         pseudo = testbed["paths"][path_name]["upf"]["pseudoDriver"]
         dataset = pseudo["dataset"]
         manifest["datasets"]["path-" + path_name] = {
-            "profile": profiles[path_name],
+            "profile": profile_sources[path_name],
             "guestDirectory": dataset["guestDirectory"],
         }
     manifest["generated"] = {

@@ -10,10 +10,11 @@ import uuid
 from pathlib import Path
 
 from configlib import (
-    ROOT, canonical_sha256, config_generator_source_hash, get_path,
+    ROOT, SCENARIO_SCHEMA, canonical_sha256, config_generator_source_hash, get_path,
     guest_network_configs, load_yaml, resolve_config_dir,
-    resolve_config_scenario, resolve_ml_bind_address, resolve_mobile_identities,
-    resolve_path, sha256_tree,
+    repository_relative_paths, resolve_config_scenario, resolve_ml_bind_address,
+    resolve_mobile_identities, resolve_path, resolve_scenario_profile_paths,
+    sha256_tree,
 )
 from datasetlib import resolve_dataset_spec
 
@@ -343,11 +344,13 @@ def main():
     )
 
     try:
-        _scenario_path, scenario = resolve_config_scenario(config_dir)
+        scenario_path, scenario = resolve_config_scenario(config_dir)
+        profile_paths = resolve_scenario_profile_paths(scenario_path, scenario)
+        profile_sources = repository_relative_paths(profile_paths)
     except (KeyError, OSError, ValueError) as exc:
         check.true("invalid scenario contract: {}".format(exc), False)
         return finish(check, testbed_path, config_dir)
-    check.equal("scenario schema", scenario.get("schemaVersion"), 1)
+    check.equal("scenario schema", scenario.get("schemaVersion"), SCENARIO_SCHEMA)
     check.true(
         "scenario kind must be business-acceptance or bounded-smoke",
         scenario.get("kind") in ("business-acceptance", "bounded-smoke"),
@@ -357,12 +360,10 @@ def main():
         scenario.get("warmStartMode") in ("inference-only", "inference-and-training"),
     )
     check.equal("scenario traffic paths", sorted(scenario.get("trafficProfiles", {})), ["a", "b"])
-    for path_name, profile_source in scenario.get("trafficProfiles", {}).items():
+    for path_name, profile_path in profile_paths.items():
         check.true(
-            "scenario Path {} traffic profile must be a repository-relative file".format(path_name),
-            isinstance(profile_source, str)
-            and bool(profile_source)
-            and (ROOT / profile_source).is_file(),
+            "scenario Path {} traffic profile is available".format(path_name),
+            profile_path.is_file(),
         )
     for section, fields in {
         "monitoring": ("reportPeriodSeconds", "minimumReferenceReports", "decisionWindowSize", "requiredHits"),
@@ -967,13 +968,13 @@ def main():
     check.equal(
         "manifest PseudoDriver profiles",
         manifest.get("constraints", {}).get("pseudoDriverProfiles"),
-        scenario["trafficProfiles"],
+        profile_sources,
     )
     for path_name in ("a", "b"):
         pseudo = testbed["paths"][path_name]["upf"]["pseudoDriver"]
         dataset = pseudo["dataset"]
         expected_manifest_dataset = {
-            "profile": scenario["trafficProfiles"][path_name],
+            "profile": profile_sources[path_name],
             "guestDirectory": dataset["guestDirectory"],
         }
         check.equal(

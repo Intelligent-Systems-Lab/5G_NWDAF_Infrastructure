@@ -1,11 +1,11 @@
-schemaVersion: 1
+schemaVersion: 2
 name: full-core-cat-transition
 kind: business-acceptance
 warmStartMode: inference-only
 samplingIntervalSeconds: 30
 trafficProfiles:
-  a: fixtures/full-core/traffic/profiles/full-core-cat-transition/path-a.json
-  b: fixtures/full-core/traffic/profiles/full-core-cat-transition/path-b.json
+  a: traffic/path-a.json
+  b: traffic/path-b.json
 monitoring:
   reportPeriodSeconds: 90
   minimumReferenceReports: 5

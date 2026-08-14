@@ -271,7 +271,7 @@ python3 "$HOST_ROOT/tests/testbed-definition.py"
 "$HOST_ROOT/scripts/host/webconsole-start.sh" "$testbed" "config/default" |
   grep -F "no toolchain, artifact, or process was changed"
 python3 "$HOST_ROOT/scripts/host/config-render.py" --testbed "$testbed" \
-  --name enabled --scenario fixtures/full-core/scenarios/fl-closure-smoke.yaml \
+  --name enabled --scenario experiments/examples/fl-closure-smoke/scenario.yaml \
   --output-root "$webconsole_root" --ml-device cpu --webconsole true
 python3 "$HOST_ROOT/scripts/host/config-check.py" --testbed "$testbed" \
   --config-dir "$webconsole_root/enabled"

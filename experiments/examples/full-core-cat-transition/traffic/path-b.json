@@ -6,9 +6,9 @@
   "stableWindows": 1800,
   "degradedWindows": 3630,
   "postBoundaryMode": "stable",
-  "stableUplinkBytes": 120,
-  "stableDownlinkBytes": 220,
+  "stableUplinkBytes": 110,
+  "stableDownlinkBytes": 190,
   "degradedUplinkBytes": 12,
-  "degradedDownlinkBytes": 22,
+  "degradedDownlinkBytes": 18,
   "degradedJitterScale": 1
 }

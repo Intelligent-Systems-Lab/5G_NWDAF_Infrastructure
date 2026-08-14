@@ -79,7 +79,7 @@ config-create:
 	@case "$(DEVICE)" in gpu|cpu) ;; *) echo "DEVICE must be gpu or cpu" >&2; exit 2;; esac
 	@case "$(WEBCONSOLE)" in false|true) ;; *) echo "WEBCONSOLE must be false or true" >&2; exit 2;; esac
 	@python3 scripts/host/config-render.py --testbed "$(TESTBED)" --name "$(NAME)" \
-		--scenario "fixtures/full-core/scenarios/$(FROM).yaml" --output-root config/local --ml-device "$(DEVICE)" \
+		--scenario "experiments/examples/$(FROM)/scenario.yaml" --output-root config/local --ml-device "$(DEVICE)" \
 		--webconsole "$(WEBCONSOLE)"
 
 config-validate:

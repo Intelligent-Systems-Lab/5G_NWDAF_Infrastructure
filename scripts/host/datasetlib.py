@@ -8,7 +8,8 @@ import math
 from pathlib import Path
 
 from configlib import (
-    ROOT, load_yaml, resolve_config_scenario, resolve_mobile_identities,
+    ROOT, load_yaml, repository_relative_paths, resolve_config_scenario,
+    resolve_mobile_identities, resolve_scenario_profile_paths,
 )
 
 
@@ -86,11 +87,8 @@ def resolve_dataset_spec(testbed, config_dir):
     config_dir = Path(config_dir)
     path_supis = resolve_mobile_identities(testbed)["pathSupis"]
     scenario_path, scenario = resolve_config_scenario(config_dir)
-    if scenario.get("schemaVersion") != 1:
-        raise ValueError("unsupported scenario schema")
-    profiles = scenario.get("trafficProfiles", {})
-    if sorted(profiles) != ["a", "b"]:
-        raise ValueError("scenario trafficProfiles must contain Path A and B")
+    profile_paths = resolve_scenario_profile_paths(scenario_path, scenario)
+    profile_sources = repository_relative_paths(profile_paths)
     sampling_contract = _positive_int(
         scenario.get("samplingIntervalSeconds"), "scenario sampling interval"
     )
@@ -162,12 +160,8 @@ def resolve_dataset_spec(testbed, config_dir):
             raise ValueError("path {} dataset file must be traffic.parquet".format(path_name))
         if pseudo["dataset"].get("guestDirectory") != "/var/lib/5g-nwdaf-infrastructure/datasets/active":
             raise ValueError("path {} dataset guest directory is not canonical".format(path_name))
-        profile_source = profiles.get(path_name)
-        if not isinstance(profile_source, str):
-            raise ValueError("path {} scenario traffic profile is required".format(path_name))
-        profile_path = (ROOT / profile_source).resolve()
-        if ROOT not in profile_path.parents:
-            raise ValueError("{} must remain inside the repository".format(profile_source))
+        profile_source = profile_sources[path_name]
+        profile_path = profile_paths[path_name]
         profile = load_json(profile_path)
         if profile.get("schemaVersion") != DATASET_SCHEMA or profile.get("path") != path_name:
             raise ValueError("{} has an invalid schema or path identity".format(profile_source))

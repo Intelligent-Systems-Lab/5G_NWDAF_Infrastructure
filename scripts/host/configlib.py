@@ -11,6 +11,7 @@ import yaml
 
 
 ROOT = Path(__file__).resolve().parents[2]
+SCENARIO_SCHEMA = 2
 
 
 def resolve_mobile_identities(testbed):
@@ -112,7 +113,60 @@ def load_scenario_definition(value):
     if path != ROOT and ROOT not in path.parents:
         raise ValueError("scenario definition must remain inside the repository")
     scenario = load_yaml(path)
+    if scenario.get("schemaVersion") != SCENARIO_SCHEMA:
+        raise ValueError(
+            "unsupported scenario schema: expected {}, got {}".format(
+                SCENARIO_SCHEMA, scenario.get("schemaVersion")
+            )
+        )
     return path, scenario
+
+
+def resolve_scenario_profile_paths(scenario_path, scenario):
+    """Resolve Path A/B traffic profiles relative to their scenario definition."""
+    references = scenario.get("trafficProfiles")
+    if not isinstance(references, dict) or sorted(references) != ["a", "b"]:
+        raise ValueError("scenario trafficProfiles must contain Path A and B")
+
+    resolved = {}
+    for path_name in ("a", "b"):
+        reference = references[path_name]
+        if not isinstance(reference, str) or not reference:
+            raise ValueError(
+                "scenario trafficProfiles.{} must be a non-empty relative path".format(
+                    path_name
+                )
+            )
+        relative = Path(reference)
+        if relative.is_absolute():
+            raise ValueError(
+                "scenario trafficProfiles.{} must be relative to scenario.yaml".format(
+                    path_name
+                )
+            )
+        profile_path = (Path(scenario_path).parent / relative).resolve()
+        if profile_path == ROOT or ROOT not in profile_path.parents:
+            raise ValueError(
+                "scenario trafficProfiles.{} escapes the repository: {}".format(
+                    path_name, reference
+                )
+            )
+        if not profile_path.is_file():
+            raise ValueError(
+                "scenario trafficProfiles.{} does not exist: {}".format(
+                    path_name, reference
+                )
+            )
+        resolved[path_name] = profile_path
+    return resolved
+
+
+def repository_relative_paths(paths):
+    """Return stable repository-relative provenance strings for resolved paths."""
+    return {
+        name: path.relative_to(ROOT).as_posix()
+        for name, path in paths.items()
+    }
 
 
 def resolve_config_scenario(config_dir):
@@ -128,6 +182,7 @@ def resolve_config_scenario(config_dir):
     actual_hash = canonical_sha256(scenario)
     if expected_hash != actual_hash:
         raise ValueError("config manifest scenario definition hash is stale")
+    resolve_scenario_profile_paths(path, scenario)
     return path, scenario
 
 
