@@ -38,6 +38,12 @@ def main():
     if "config-check.py" not in reset_source:
         raise SystemExit("destructive reset lost its exact-scope config validation")
 
+    preflight_source = (ROOT / "scripts" / "host" / "preflight.sh").read_text(
+        encoding="utf-8"
+    )
+    if "hard RAM gate" in preflight_source:
+        raise SystemExit("preflight still describes advisory RAM guidance as a gate")
+
     testbed = load_yaml(ROOT / "testbed.yaml")
     with tempfile.TemporaryDirectory(prefix="5g-execution-policy-") as temporary:
         temporary_root = Path(temporary)

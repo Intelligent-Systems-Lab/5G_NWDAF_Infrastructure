@@ -114,7 +114,7 @@ required_with_reserve=$((required_mib + host_reserve_mib))
 if [ "$swap_free_mib" -ge "$minimum_swap_mib" ]; then
   ok "free swap ${swap_free_mib}MiB >= ${minimum_swap_mib}MiB"
 elif [ "$swap_policy" = "warn" ]; then
-  warn "free swap ${swap_free_mib}MiB < ${minimum_swap_mib}MiB; continue only while MemAvailable remains above the hard RAM gate"
+  warn "free swap ${swap_free_mib}MiB < ${minimum_swap_mib}MiB; monitor MemAvailable during long runs"
 else
   fail "free swap ${swap_free_mib}MiB < ${minimum_swap_mib}MiB"
 fi
