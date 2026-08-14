@@ -65,7 +65,8 @@ observe logs as well as the compact state view.
 ```sh
 make experiment-status CONFIG_DIR=config/local/my-experiment
 make services-status
-make logs
+make observe
+make logs SERVICE=pymtlf-c
 ```
 
 `experiment-status` is a snapshot covering config identity, Host headroom, VM
@@ -75,9 +76,11 @@ table. Each UE row distinguishes service state, Registration, and PDU Session;
 only journal records carrying the service's current systemd invocation ID are
 considered. An active UE without the corresponding success evidence is
 `pending`, so a previous run cannot make a fresh process appear ready. `make
-logs` follows all owned VM journals and project ML container logs. This includes
-the template Guest units, the Core-only Consumer, and the Network unit on each
-VM; stopping the log follower does not stop the experiment.
+observe` refreshes the complete structured overview every five seconds; stop it
+with Ctrl-C without affecting the experiment. Use focused `make logs` calls for
+detailed component events. A bare `make logs` still follows all owned VM
+journals and project ML container logs, including template Guest units, the
+Core-only Consumer, and each Network unit.
 
 Powered-off or not-yet-created VMs are valid observable states: Guest,
 WebConsole, and Subscription sections report `not-running` without attempting
@@ -95,19 +98,21 @@ container logs do not yet contain that evidence; it is not inferred to be a
 component failure. The separate failure row only changes when an explicit FL
 failure signature is observed.
 
-For focused output, call the log script directly:
+Focused examples are:
 
 ```sh
-scripts/host/logs.sh --source vm --vm path-a --service upf-a --since today
-scripts/host/logs.sh --source ml --service pymtlf-a --since '10 minutes ago'
-scripts/host/logs.sh --source vm --vm core --service nwdaf-c --tail 100 --no-follow
-scripts/host/logs.sh --source vm --vm core --service consumer --no-follow
-scripts/host/logs.sh --source vm --service network --no-follow
+make logs SOURCE=vm VM=path-a SERVICE=upf-a SINCE=today
+make logs SOURCE=ml SERVICE=pymtlf-a SINCE='10 minutes ago'
+make logs SOURCE=vm VM=core SERVICE=nwdaf-c TAIL=100 FOLLOW=false
+make logs SOURCE=vm VM=core SERVICE=consumer FOLLOW=false
+make logs SOURCE=vm SERVICE=network FOLLOW=false
 ```
 
-Filters accept `--source vm|ml|all`, `--vm core|path-a|path-b|all`, a service
-name or glob, `--since`, `--tail`, and `--no-follow`. Logical service names map
-to their actual systemd units: regular services and WebConsole use
+Filters accept `SOURCE=vm|ml|all`, `VM=core|path-a|path-b|all`, a `SERVICE` name,
+glob, `all`, or empty value, `SINCE`, `TAIL`, and `FOLLOW=true|false`. Selectors
+are combined. `VM` affects only VM journals, so use `SOURCE=vm VM=path-a` when
+the intended scope excludes all Host ML logs. Logical service names map to
+their actual systemd units: regular services and WebConsole use
 `5g-nwdaf@<name>.service`, while `consumer` and `network` select their dedicated
 units. A VM that does not own a matching service is skipped.
 

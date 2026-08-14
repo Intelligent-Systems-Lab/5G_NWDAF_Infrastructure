@@ -23,7 +23,7 @@ help:
 	@echo "  make vm-up                               Create or start the three VMs"
 	@echo "  make experiment-start CONFIG_DIR=...     Start Guest, ML, consumer, and subscriptions"
 	@echo "  make experiment-status CONFIG_DIR=...    Show the complete experiment state"
-	@echo "  make logs                                Follow experiment logs"
+	@echo "  make logs [SERVICE=...]                  Follow selected logs; defaults to all"
 	@echo "  make experiment-stop                     Stop processes but retain state and VMs"
 	@echo "  make vm-halt                             Gracefully power off the VMs"
 	@echo ""
@@ -42,7 +42,9 @@ help-advanced:
 	@echo "  make ml-start CONFIG_DIR=... | ml-status | ml-stop"
 	@echo "  make webconsole-start CONFIG_DIR=... | webconsole-status | webconsole-stop"
 	@echo "  make subscriptions-start | subscriptions-status | subscriptions-stop"
-	@echo "  make observe | logs"
+	@echo "  make observe"
+	@echo "  make logs [SOURCE=vm|ml|all] [VM=core|path-a|path-b|all] [SERVICE=name|glob|all]"
+	@echo "            [SINCE='10 minutes ago'] [TAIL=lines|all] [FOLLOW=true|false]"
 	@echo ""
 	@echo "Subscriber and retained experiment state"
 	@echo "  make subscriber-data-show | subscriber-data-apply | subscriber-data-clear CONFIG_DIR=..."
@@ -165,5 +167,22 @@ subscriptions-stop:
 observe:
 	@scripts/host/observe.sh
 
+logs: SOURCE ?= all
+logs: VM ?= all
+logs: SERVICE ?= all
+logs: SINCE ?= 10 minutes ago
+logs: TAIL ?= all
+logs: FOLLOW ?= true
 logs:
-	@scripts/host/logs.sh
+	@case "$(FOLLOW)" in \
+		true) follow_args=() ;; \
+		false) follow_args=(--no-follow) ;; \
+		*) echo "FOLLOW must be true or false" >&2; exit 2 ;; \
+	esac; \
+	scripts/host/logs.sh \
+		--source "$(SOURCE)" \
+		--vm "$(VM)" \
+		--service "$(SERVICE)" \
+		--since "$(SINCE)" \
+		--tail "$(TAIL)" \
+		"$${follow_args[@]}"

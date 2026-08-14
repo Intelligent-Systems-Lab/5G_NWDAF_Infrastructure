@@ -18,7 +18,7 @@ while advanced and developer commands remain available. `TESTBED` defaults to
 | `make experiment-status CONFIG_DIR=...` | Show config identity, Host headroom, VM, guest service, ML, and subscription state. Read-only; rejects an incomplete running-backend snapshot while powered-off VMs appear as `not-running`. |
 | `make experiment-stop` | Delete exact subscriptions, leave the NWDAFs and ML backends available for a fixed 40-second asynchronous cleanup grace, then stop process domains while retaining state and VMs. |
 | `make observe` | Continuously display VM/service/container/subscription state. Read-only; failed sections retain their error and are marked unavailable while later intervals continue. |
-| `make logs` | Follow all owned VM journals—including dedicated Consumer/Network units—and project ML container logs with UTC timestamps. Read-only; use `scripts/host/logs.sh` for filters. |
+| `make logs [SOURCE=...] [VM=...] [SERVICE=...] [SINCE=...] [TAIL=...] [FOLLOW=...]` | Follow filtered owned VM journals and project ML container logs with UTC timestamps. Source selectors default to all components and the time window defaults to the last ten minutes; `FOLLOW=false` prints a bounded snapshot. Read-only. |
 
 ## Configuration and datasets
 
@@ -72,3 +72,20 @@ while advanced and developer commands remain available. `TESTBED` defaults to
 `load`, `apply`, `start`, `stop`, `reset`, `clear`, `up`, and `halt` change only
 the scope described by their row. Internal validation and regression helpers
 are not separate Make commands.
+
+`make logs` accepts the following per-invocation selectors:
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `SOURCE` | `all` | Select `vm`, `ml`, or both sources. |
+| `VM` | `all` | Select `core`, `path-a`, `path-b`, or all VM journals. This selector affects only the VM source. |
+| `SERVICE` | `all` | Select one logical service, a glob such as `pymtlf-*`, or all services. An empty value also means all. |
+| `SINCE` | `10 minutes ago` | Resolve one Host time expression and apply the same UTC instant to VM and container logs. |
+| `TAIL` | `all` | Select a non-negative line count or all available lines after `SINCE`. |
+| `FOLLOW` | `true` | Continue following logs; `false` returns after the current snapshot. |
+
+The selectors are combined. For example, `SOURCE=vm VM=path-a` shows all Path
+A Guest logs, while `SERVICE=pymtlf-c` is sufficient to find that unique ML
+service across the default `SOURCE=all`. With `SOURCE=all`, `VM` narrows only
+the VM portion and does not remove matching Host ML logs. Make command-line
+values apply to that invocation only and are not retained by the next command.

@@ -81,6 +81,34 @@ if [ "$invalid_since_output" != 'invalid --since value: not-a-time' ]; then
   echo "logs.sh returned an unexpected invalid-time diagnostic: $invalid_since_output" >&2
   exit 1
 fi
+make_log_plan=$(make -C "$HOST_ROOT" --no-print-directory -n logs \
+  SOURCE=ml VM=all SERVICE=pymtlf-c SINCE='15 minutes ago' TAIL=25 FOLLOW=false)
+for expected_arg in \
+  '--source "ml"' \
+  '--vm "all"' \
+  '--service "pymtlf-c"' \
+  '--since "15 minutes ago"' \
+  '--tail "25"' \
+  'follow_args=(--no-follow)'; do
+  if [[ "$make_log_plan" != *"$expected_arg"* ]]; then
+    echo "make logs did not forward $expected_arg" >&2
+    exit 1
+  fi
+done
+empty_service_plan=$(make -C "$HOST_ROOT" --no-print-directory -n logs SERVICE=)
+if [[ "$empty_service_plan" != *'--service ""'* ]]; then
+  echo "make logs did not preserve an empty all-service selector" >&2
+  exit 1
+fi
+if invalid_follow_output=$(make -C "$HOST_ROOT" --no-print-directory logs \
+    FOLLOW=sometimes 2>&1); then
+  echo "make logs accepted an invalid FOLLOW value" >&2
+  exit 1
+fi
+if [[ "$invalid_follow_output" != *'FOLLOW must be true or false'* ]]; then
+  echo "make logs returned an unexpected FOLLOW diagnostic" >&2
+  exit 1
+fi
 echo "PASS owned log sources and UTC time normalization"
 
 assert_ue_readiness() {

@@ -101,16 +101,24 @@ make experiment-start CONFIG_DIR=config/local/my-experiment
 make experiment-status CONFIG_DIR=config/local/my-experiment
 ```
 
-Follow logs in another terminal when detailed progress is needed:
+Use the continuously refreshed overview in another terminal when monitoring the
+whole environment:
 
 ```sh
-make logs
+make observe
+```
+
+Follow one component's detailed events when needed:
+
+```sh
+make logs SERVICE=pymtlf-c
 ```
 
 The aggregate start stages the selected inputs, starts Guest services and the
 optional WebConsole, starts five ML containers, and creates two Consumer
 subscriptions. [Operations](docs/operations.md) lists readiness signals and the
-full federated-learning closure milestones.
+full federated-learning closure milestones. A bare `make logs` remains available
+when one combined VM and ML event stream is explicitly wanted.
 
 ### 5. Stop and choose what to retain
 

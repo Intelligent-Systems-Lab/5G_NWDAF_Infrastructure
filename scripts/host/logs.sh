@@ -16,9 +16,10 @@ while [ "$#" -gt 0 ]; do
     --since) since=$2; shift 2;;
     --tail) tail_lines=$2; shift 2;;
     --no-follow) follow=false; shift;;
-    *) echo "usage: logs.sh [--source vm|ml|all] [--vm core|path-a|path-b|all] [--service name|glob] [--since value] [--tail lines|all] [--no-follow]" >&2; exit 2;;
+    *) echo "usage: logs.sh [--source vm|ml|all] [--vm core|path-a|path-b|all] [--service name|glob|all] [--since value] [--tail lines|all] [--no-follow]" >&2; exit 2;;
   esac
 done
+case "$service" in ''|all) service='*';; esac
 case "$source_type" in vm|ml|all) ;; *) echo "invalid source: $source_type" >&2; exit 2;; esac
 case "$vm" in all) selected=(core path-a path-b);; core|path-a|path-b) selected=("$vm");; *) echo "invalid VM: $vm" >&2; exit 2;; esac
 [[ "$service" =~ ^[A-Za-z0-9*?-]+$ ]] || { echo "invalid service filter" >&2; exit 2; }
