@@ -9,14 +9,17 @@ Run all commands from the repository root and keep the same `TESTBED` and
 
 ```sh
 git submodule update --init --recursive
-make config-create NAME=my-experiment DEVICE=gpu
+make config-create \
+  NAME=my-experiment \
+  FROM=experiments/examples/full-core-cat-transition/scenario.yaml \
+  DEVICE=gpu
 make dataset-generate CONFIG_DIR=config/local/my-experiment
 make experiment-validate CONFIG_DIR=config/local/my-experiment
 ```
 
-Use `DEVICE=cpu` when GPU execution is not required. A successful validation
-ends with a message that inputs and Host prerequisites are valid and confirms
-that no runtime state was changed.
+Use `DEVICE=cpu` when GPU execution is not required. Validation is read-only
+and reports all known findings without changing state. It is recommended before
+a run but is not called by startup and is not an execution gate.
 
 ### 2. Start or resume the VMs
 
@@ -40,7 +43,7 @@ make experiment-start CONFIG_DIR=config/local/my-experiment
 ```
 
 The aggregate command requires all three VMs to be running and the experiment
-domains to be stopped. It regenerates and validates the dataset, stages the
+domains to be stopped. It generates or reuses the dataset, stages the
 config and dataset, starts Guest services, optionally starts WebConsole, starts
 the five ML containers, and finally starts the Consumer and its two
 subscriptions. If startup fails, it rolls back only domains started by that
@@ -239,7 +242,10 @@ the selected records.
 Create the config with WebConsole enabled to include it in aggregate startup:
 
 ```sh
-make config-create NAME=my-webconsole DEVICE=cpu WEBCONSOLE=true
+make config-create \
+  NAME=my-webconsole \
+  FROM=experiments/examples/full-core-cat-transition/scenario.yaml \
+  DEVICE=cpu WEBCONSOLE=true
 ```
 
 After Guest services are active it can also be managed independently with

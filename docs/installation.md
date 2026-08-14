@@ -6,27 +6,17 @@ repository. Installing VirtualBox kernel modules, Docker, or NVIDIA support is
 a Host-wide administration task; coordinate it before changing the shared
 laboratory machine.
 
-## Reference Host
+## Platform boundary
 
-The current laboratory Host runs Ubuntu 20.04.6 on x86-64. The following
-versions have been used by this repository; they record the existing
-environment and are not minimum-version constraints:
+The Host must be Linux x86-64 with working VirtualBox, Vagrant, Docker Compose
+v2, and Python 3. This guide intentionally does not prescribe one laboratory
+Host OS or package-version snapshot; use versions supported together by their
+current vendors.
 
-| Component | Reference version |
-| --- | --- |
-| VirtualBox | 6.1.50 |
-| Vagrant | 2.4.3 |
-| Docker Engine | 27.4.1 |
-| Docker Compose | 2.32.1 |
-| Python | 3.8.10 |
-| `uv` | 0.9.7 |
-| NVIDIA Container Toolkit | 1.19.1 |
-
-The Vagrant guests are separate from the Host and remain pinned to Ubuntu
-22.04 (`ubuntu/jammy64` `20241002.0.0`). Automatic box update checks are
-disabled. Do not choose Ubuntu 20.04 for a new Host merely to copy the existing
-machine; use a release supported by the current VirtualBox, Docker, and NVIDIA
-installation guides.
+The Vagrant Guests are separate and pinned by `testbed.yaml` to Ubuntu 22.04
+(`ubuntu/jammy64` `20241002.0.0`). Automatic box update checks are disabled.
+Changing the Guest release requires an explicit provisioning and kernel-module
+compatibility review.
 
 ## 1. Base command-line tools
 
@@ -107,9 +97,10 @@ testbed range with:
 * 192.168.56.0/21
 ```
 
-The `/21` is only a VirtualBox allowlist. The topology still creates separate
-`/24` networks. `experiment-validate` checks the declared interfaces before VM
-mutation.
+The `/21` is only an example allowlist covering the committed topology. The
+topology still creates separate `/24` networks. `experiment-validate` reports
+whether the declared interfaces are allowed; `vm-up` may still fail at the
+provider if the Host configuration is incompatible.
 
 ## 3. Docker Engine and Compose
 
@@ -173,8 +164,9 @@ sudo systemctl restart docker
 Do not run those commands on the shared Host without coordination: they modify
 Docker daemon configuration and restart the daemon. Repository commands never
 perform that configuration, restart Docker, change its default runtime, or
-silently fall back from GPU to CPU. `experiment-validate` performs the final
-CDI and CUDA visibility probe for a selected GPU config.
+silently fall back from GPU to CPU. `experiment-validate` reports CDI/runtime
+readiness; `ml-start` performs the actual image-level CUDA visibility probe
+before starting the production containers.
 
 ## 5. Source initialization
 
@@ -202,14 +194,14 @@ The default VMs use:
 | Path B | 3072 MiB | 3 | 40 GiB |
 
 VirtualBox disks are dynamically allocated, so the three 40 GiB ceilings do
-not immediately consume 120 GiB. The Host resource gate nevertheless requires
-120 GiB of free workspace storage before creation and keeps 6 GiB of available
-RAM outside the guest allocation for the Host and containers. Low swap follows
-the configured warning policy rather than causing memory to be preallocated at
-VM startup.
+not immediately consume 120 GiB. The committed testbed recommends 120 GiB of
+free storage and 6 GiB of available RAM outside the guest allocation for the
+Host and containers. Low swap follows the configured warning policy rather
+than causing memory to be preallocated at VM startup.
 
-Use the repository preflight rather than estimating readiness from total RAM
-or logical disk ceilings:
+Use the repository preflight to inspect current headroom rather than estimating
+it from total RAM or logical disk ceilings. Findings are advisory and do not
+reserve resources or authorize startup:
 
 ```sh
 make experiment-validate CONFIG_DIR=config/local/my-experiment
@@ -220,7 +212,10 @@ make experiment-validate CONFIG_DIR=config/local/my-experiment
 Create and validate a config before creating VMs:
 
 ```sh
-make config-create NAME=my-experiment DEVICE=gpu
+make config-create \
+  NAME=my-experiment \
+  FROM=experiments/examples/full-core-cat-transition/scenario.yaml \
+  DEVICE=gpu
 make dataset-generate CONFIG_DIR=config/local/my-experiment
 make experiment-validate CONFIG_DIR=config/local/my-experiment
 make vm-up

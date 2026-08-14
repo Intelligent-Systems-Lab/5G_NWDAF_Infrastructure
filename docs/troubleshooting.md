@@ -25,10 +25,11 @@ whether the parent pin or local checkout is intended.
 
 ## Config selection or stale files
 
-There is no local overlay. If an old `testbed.local.yaml` exists from an earlier
-workflow, it is ignored unless explicitly passed as `TESTBED=...`. Confirm the
-effective inputs in the first line of `experiment-status` and always pass the
-same pair:
+There is no local overlay. A stale repository-root `testbed.local.yaml` from an
+earlier workflow is rejected so it cannot appear to affect only some commands;
+move its intended values into one complete testbed file with a different name.
+Confirm the effective inputs in the first line of `experiment-status` and
+always pass the same pair:
 
 ```sh
 make config-validate TESTBED=testbed.lab.yaml CONFIG_DIR=config/local/lab
@@ -48,17 +49,18 @@ make dataset-validate CONFIG_DIR=config/local/my-experiment
 ```
 
 Regenerate when a file is missing or its content hash, UE IPs, timestamps, or
-scenario contract no longer match. Generated artifacts are content-addressed;
-do not edit a Parquet file in place. `services-start` automatically stages a
-valid matching set.
+resolved specification no longer match. Generated artifacts are
+content-addressed; do not edit a Parquet file in place. `services-start`
+automatically stages the matching integrity-checked set.
 
 ## Host RAM, storage, or swap
 
 The default guest allocation is not reserved in full before use, and all three
-VirtualBox disks grow dynamically. Validation nevertheless blocks when
-available RAM would fall below the 6 GiB Host reserve or workspace free space
-is below 120 GiB. Identify other users' processes, VMs, containers, images,
-volumes, and caches before changing those safety values.
+VirtualBox disks grow dynamically. Validation reports when available RAM falls
+below the 6 GiB Host reserve or free space falls below the 120 GiB recommendation;
+it no longer blocks startup. Identify other users' processes, VMs, containers,
+images, volumes, and caches before changing those values or running for long
+periods.
 
 Low free swap is a warning under the committed `swapPolicy`. With no usable
 swap, Linux has less room to move inactive pages and an abrupt workload peak is
@@ -98,8 +100,8 @@ First verify non-root access with `docker info`. A new Docker-group membership
 requires a new login session or `newgrp docker`.
 
 For GPU mode, check `nvidia-smi`, Docker's `nvidia` runtime, CDI inventory, and
-the disposable CUDA probe reported by `experiment-validate`. The runtime does
-not restart Docker, alter its default runtime, or silently fall back to CPU.
+the disposable image-level CUDA probe run by `ml-start`. The runtime does not
+restart Docker, alter its default runtime, or silently fall back to CPU.
 If GPU is not required, create a separate config with `DEVICE=cpu`; do not edit
 only the Compose file or native PyMTLF config.
 

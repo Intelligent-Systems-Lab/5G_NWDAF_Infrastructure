@@ -1,122 +1,79 @@
 # Configuration
 
-## Two explicit inputs
+An experiment is built from three layers. `TESTBED` describes where software
+runs, a scenario describes what experiment should happen, and `config-create`
+renders the native files consumed by each process. Traffic profiles belong to
+the scenario and generated Parquet belongs to neither source tree.
 
-Every command resolves two inputs:
+## Create one experiment
 
-- `TESTBED` selects one complete topology definition. It defaults to the
-  committed `testbed.yaml`.
-- `CONFIG_DIR` selects one complete native config set. When omitted, the
-  command uses only `TESTBED:config.directory`, which defaults to
-  `config/default`.
-
-There is no implicit `testbed.local.yaml` overlay. To use a different topology,
-copy `testbed.yaml` to an ignored local path, edit the complete definition, and
-pass that same path explicitly:
+Use the committed `testbed.yaml`, or copy it to an ignored local file when the
+Host topology differs. There is no implicit `testbed.local.yaml` overlay.
 
 ```sh
-cp testbed.yaml testbed.lab.yaml
-make config-create TESTBED=testbed.lab.yaml NAME=lab DEVICE=cpu
-make experiment-validate TESTBED=testbed.lab.yaml CONFIG_DIR=config/local/lab
-```
-
-Do not mix a config rendered from one topology with another `TESTBED`.
-
-## Creating a complete config set
-
-The normal interface is:
-
-```sh
+cp testbed.yaml testbed.lab.yaml       # only when topology changes are needed
 make config-create \
+  TESTBED=testbed.lab.yaml \
   NAME=my-experiment \
-  FROM=full-core-cat-transition \
+  FROM=experiments/examples/full-core-cat-transition/scenario.yaml \
   DEVICE=gpu \
   WEBCONSOLE=false
 ```
 
-- `NAME` names the ignored output directory below `config/local/`.
-- `FROM` selects the committed example contract. Supported values are
-  `full-core-cat-transition` and `fl-closure-smoke`.
-- `DEVICE` is the explicit `gpu` or `cpu` ML policy.
-- `WEBCONSOLE` decides whether aggregate experiment startup includes the
-  optional Core service.
+`FROM` is always an explicit repository-relative YAML path. It has no default.
+`NAME` creates `config/local/NAME`, `DEVICE` is `cpu` or `gpu`, and
+`WEBCONSOLE` is `true` or `false`. The renderer refuses to overwrite an
+existing directory; choose a new name or remove an unwanted local set yourself.
 
-The renderer writes a complete set of native NF, RAN, Consumer, PyAnLF,
-PyMTLF, subscriber, and generated network files. `manifest.yaml` records the
-scenario, runtime policy, referenced inputs, and config identity. Always pass
-the directory as a unit; copying individual YAML files between sets defeats
-the consistency checks.
-
-`config/default` is the committed full-core baseline. `config/local` is the
-only user-managed output area and contains the complete sets created by
-`make config-create`. Repository tests keep their disposable config under
-`.generated/tests/config/`, outside the user-facing config tree.
-
-## Ownership of values
-
-`testbed.yaml` owns placement, VM resources, networks, service endpoints,
-mobile-network identity, UE pools, and the config directory selection. The
-scenario owns experiment timing, traffic profile choice, preparation window,
-monitor policy, training epochs/rounds, and closure budget. Native NF config is
-renderer output from those two sources.
-
-`mobileNetwork.plmn` is the single MCC/MNC source. The renderer derives:
-
-- NF and UERANSIM PLMNs and TAIs
-- 15-digit IMSI SUPIs for all six subscribers
-- Internal Group ID
-- Consumer path targets
-- subscriber and group fixtures
-
-`subscriberNumbers` are stable local ordinals that are padded into the MSIN.
-GPSI/MSISDN is a separate identity and is intentionally not derived from PLMN;
-edit it explicitly when telephone-number identities must change.
-
-## Scenarios
-
-`full-core-cat-transition` is the reference business experiment. Its historical
-warm-start fills PyAnLF's prediction input before monitoring and its Path A
-profile transitions to degradation while Path B stays stable.
-
-`fl-closure-smoke` shortens the bounded closure path and includes enough
-warm-start evidence for training as well as inference. It exercises the same
-three-VM architecture and process contracts; it is not a different VM
-topology.
-
-Sampling and policy windows are validated as a relationship. The committed
-profiles use 30-second reports and a 90-second monitor window, so a normal
-window contains three observations. Validation rejects a scenario that lacks
-the historical prediction input, trigger-time training/validation evidence,
-startup margin, or post-trigger closure budget required by its native config.
-
-## Dataset lifecycle
-
-PseudoDriver Parquet files are generated, ignored artifacts. They are not
-committed and are not inherited from the go-upf submodule.
+Generate and inspect the dataset described by that complete config:
 
 ```sh
-make dataset-generate CONFIG_DIR=config/local/my-experiment
-make dataset-validate CONFIG_DIR=config/local/my-experiment
-make dataset-show CONFIG_DIR=config/local/my-experiment
+make config-validate TESTBED=testbed.lab.yaml CONFIG_DIR=config/local/my-experiment
+make dataset-generate TESTBED=testbed.lab.yaml CONFIG_DIR=config/local/my-experiment
+make dataset-show TESTBED=testbed.lab.yaml CONFIG_DIR=config/local/my-experiment
 ```
 
-Generation derives UE addresses from each `uePool`, resolves the scenario's
-traffic profiles, and writes a content-addressed Path A/B set below
-`.generated/datasets/`. Its manifest fixes schema, rows, IPs, timestamps,
-breaking time, and content hashes. `services-start` stages the matching Path
-artifact and atomically activates it in each guest; UPF startup rejects an
-absent or incomplete active set.
+`config-validate` and `experiment-validate` are explicit diagnostics. They
+report inconsistent, risky, or unsupported combinations and return non-zero
+when findings exist, but neither is invoked by `experiment-start`. Startup
+still stops for conditions that make execution impossible or unsafe, such as
+missing inputs, unreadable YAML/JSON, invalid artifacts, inactive VMs, process
+collisions, unavailable bind addresses or GPU runtime, and component startup
+failures.
 
-## Validation and activation
+Keep the same `TESTBED` and `CONFIG_DIR` pair for generation, startup, status,
+and reset. `CONFIG_DIR` overrides `TESTBED:config.directory`; when it is omitted,
+the selected testbed's directory is used.
 
-`make config-validate CONFIG_DIR=...` checks the static config contract only.
-`make experiment-validate CONFIG_DIR=...` additionally checks source locks,
-Host prerequisites, the generated dataset, Compose policy, resource gates,
-and the Vagrant definition without starting anything.
+## Where to edit
 
-At service startup, the chosen config is hashed, staged to each VM, and made
-active below `/etc/5g-nwdaf-infrastructure/config-sets/`; the
-`/etc/5g-nwdaf-infrastructure/active` symlink selects the complete set. Network
-aliases are rendered into a persistent Netplan fragment. Existing VMs receive
-a hash-verified copy of current runtime helpers before activation, so ordinary
-script changes do not require reprovisioning.
+| Desired change | Authoritative input |
+| --- | --- |
+| VM size, network, IP, NF placement, PLMN, UE identity, service endpoint | `testbed.yaml` or a complete local testbed YAML |
+| Sampling, monitoring policy, FL rounds, preparation/closure budget | selected `scenario.yaml` |
+| Raw traffic rows, warm-start boundary, stable/degraded stimulus | scenario-relative `traffic/*.json` |
+| CPU/GPU choice or optional WebConsole | `DEVICE` and `WEBCONSOLE` at render time |
+| Component-native behavior not modeled by the renderer | a complete generated config under `config/local/` |
+
+Prefer changing the higher-level source and rendering a new config. Native
+edits are supported for advanced experiments, but the user then owns their
+cross-file consistency; diagnostics explain drift without silently rewriting
+it.
+
+## Reference documents
+
+- [Testbed reference](configuration/testbed-reference.md) — topology, resources,
+  identity, endpoint, placement, runtime, and operations fields.
+- [Scenario reference](configuration/scenario-reference.md) — experiment timing,
+  monitoring, and training policy.
+- [Traffic profile reference](configuration/traffic-profile-reference.md) — raw
+  row generation and stable/degraded phases.
+- [Native config reference](configuration/native-config-reference.md) — every
+  rendered file, its consumer, and safe editing boundary.
+- [Dataset reference](configuration/dataset-reference.md) — row/window/
+  observation/report/sample terminology, artifacts, and lifecycle.
+
+`config/default` is the committed reference output. `config/local/` is ignored
+user space. `experiments/examples/` contains committed examples, while
+`experiments/local/` is ignored space for new scenarios and their traffic
+profiles.

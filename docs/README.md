@@ -9,8 +9,8 @@ path.
 | Order | Document | Continue here when |
 | --- | --- | --- |
 | 1 | [Architecture](architecture.md) | Learning the runtime placement, networks, lifecycle boundaries, and federated-learning flow |
-| 2 | [Installation](installation.md) | Preparing Host software, VirtualBox, Docker, optional GPU support, and resource gates |
-| 3 | [Configuration](configuration.md) | Selecting `TESTBED`, creating a complete config set, and generating its dataset |
+| 2 | [Installation](installation.md) | Preparing Host software, VirtualBox, Docker, optional GPU support, and resource diagnostics |
+| 3 | [Configuration](configuration.md) | Selecting `TESTBED` and an explicit scenario, creating native config, and generating its dataset |
 | 4 | [Operations](operations.md) | Creating VMs and starting, observing, stopping, resetting, or destroying the environment |
 
 These four documents form the first-use path. The root
@@ -22,6 +22,7 @@ commands in one runnable sequence.
 | Document | Use it for |
 | --- | --- |
 | [Commands](commands.md) | Look up every Make target, parameter, side effect, and intended audience |
+| [Configuration references](configuration.md#reference-documents) | Look up testbed, scenario, traffic, native config, and dataset fields and terminology |
 | [Components](components.md) | Understand submodules, gitlinks, metadata locks, and Guest builds |
 | [Troubleshooting](troubleshooting.md) | Diagnose common Host, VM, network, kernel, Docker, GPU, config, and lifecycle failures |
 

@@ -71,15 +71,19 @@ Create one complete local config and generate its deterministic PseudoDriver
 dataset:
 
 ```sh
-make config-create NAME=my-experiment DEVICE=gpu
+make config-create \
+  NAME=my-experiment \
+  FROM=experiments/examples/full-core-cat-transition/scenario.yaml \
+  DEVICE=gpu
 make dataset-generate CONFIG_DIR=config/local/my-experiment
 make experiment-validate CONFIG_DIR=config/local/my-experiment
 ```
 
 Use `DEVICE=cpu` when CUDA is not wanted. The choice is explicit; the runtime
-does not silently fall back from GPU to CPU. Validation is read-only and must
-pass before runtime creation; see [Configuration](docs/configuration.md) for
-scenario, identity, topology, and dataset choices.
+does not silently fall back from GPU to CPU. Validation is a recommended,
+read-only diagnostic: review its findings, but startup does not invoke or
+require it to pass. See [Configuration](docs/configuration.md) for scenario,
+identity, topology, native config, and dataset choices.
 
 ### 3. Create the three VMs
 
