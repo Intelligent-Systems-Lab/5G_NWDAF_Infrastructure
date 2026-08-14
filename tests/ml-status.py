@@ -3,6 +3,7 @@
 
 import importlib.util
 import io
+import tempfile
 from contextlib import redirect_stdout
 from pathlib import Path
 
@@ -136,6 +137,74 @@ def main():
     assert captured["command"] == [
         "docker", "logs", "--timestamps", "--since", "2026-08-13T00:00:00.123Z", "container-c"
     ], captured
+
+    original_output = MODULE.output
+    cuda_calls = []
+    try:
+        def fake_output(command, timeout=30):
+            cuda_calls.append((command, timeout))
+            return "true"
+
+        MODULE.output = fake_output
+        with tempfile.TemporaryDirectory() as directory:
+            cache = Path(directory)
+            assert MODULE.cuda_visible("container-a", cache) == "true"
+            assert MODULE.cuda_visible("container-a", cache) == "true"
+            assert MODULE.cuda_visible("container-b", cache) == "true"
+    finally:
+        MODULE.output = original_output
+    assert len(cuda_calls) == 2, cuda_calls
+
+    incremental_calls = []
+    try:
+        class IncrementalCompleted:
+            returncode = 0
+            stderr = ""
+
+            def __init__(self, stdout):
+                self.stdout = stdout
+
+        def fake_incremental_run(command, **_kwargs):
+            incremental_calls.append(command)
+            return IncrementalCompleted(
+                "2026-08-13T00:00:0{}Z line-{}\n".format(
+                    len(incremental_calls), len(incremental_calls)
+                )
+            )
+
+        MODULE.subprocess.run = fake_incremental_run
+        with tempfile.TemporaryDirectory() as directory:
+            cache = Path(directory)
+            container_value = {
+                "Id": "container-c",
+                "State": {"StartedAt": "2026-08-13T00:00:00.123Z"},
+            }
+            first = MODULE.container_logs_since(
+                container_value,
+                service="pymtlf-c",
+                cache_dir=cache,
+                until="2026-08-13T00:00:10Z",
+            )
+            second = MODULE.container_logs_since(
+                container_value,
+                service="pymtlf-c",
+                cache_dir=cache,
+                until="2026-08-13T00:00:20Z",
+            )
+    finally:
+        MODULE.subprocess.run = original_run
+    assert "line-1" in first, first
+    assert "line-1" in second and "line-2" in second, second
+    assert incremental_calls[0] == [
+        "docker", "logs", "--timestamps", "--since",
+        "2026-08-13T00:00:00.123Z", "--until", "2026-08-13T00:00:10Z",
+        "container-c",
+    ], incremental_calls
+    assert incremental_calls[1] == [
+        "docker", "logs", "--timestamps", "--since",
+        "2026-08-13T00:00:10Z", "--until", "2026-08-13T00:00:20Z",
+        "container-c",
+    ], incremental_calls
 
     def container(identity):
         name, digest = identity.split(":")

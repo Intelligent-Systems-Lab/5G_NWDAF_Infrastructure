@@ -2,6 +2,15 @@
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
+SERVICE_STATUS_ACTIVE_DIR=''
+
+services_status_cleanup() {
+  if [ -n "$SERVICE_STATUS_ACTIVE_DIR" ] && [ -d "$SERVICE_STATUS_ACTIVE_DIR" ]; then
+    rm -rf -- "$SERVICE_STATUS_ACTIVE_DIR"
+  fi
+  SERVICE_STATUS_ACTIVE_DIR=''
+}
+
 machine_snapshot() {
   local machine=$1; shift
   local units="$*"
@@ -38,15 +47,19 @@ machine_snapshot() {
 }
 
 services_status_main() {
-  local machine snapshot line record unit state invocation encoded journal registration pdu_session vm_records
+  local machine snapshot line record unit state invocation encoded journal registration pdu_session vm_records snapshot_dir snapshot_failure
   local -a units=()
   local -a service_records=()
   local -a ue_records=()
   local -A vm_states=()
+  local -A snapshot_pids=()
   vm_records=$(vm_state_records) || return
   while IFS='|' read -r machine state; do
     vm_states["$machine"]=$state
   done <<<"$vm_records"
+
+  snapshot_dir=$(mktemp -d -t 5g-nwdaf-service-status.XXXXXX)
+  SERVICE_STATUS_ACTIVE_DIR=$snapshot_dir
   for machine in core path-a path-b; do
     case "$machine" in
       core) units=("${CORE_UNITS[@]}");;
@@ -60,7 +73,28 @@ services_status_main() {
       done
       continue
     fi
-    snapshot=$(machine_snapshot "$machine" "${units[@]}")
+    (
+      machine_snapshot "$machine" "${units[@]}"
+    ) >"$snapshot_dir/$machine" 2>"$snapshot_dir/$machine.error" &
+    snapshot_pids["$machine"]=$!
+  done
+
+  snapshot_failure=0
+  for machine in core path-a path-b; do
+    [ -n "${snapshot_pids[$machine]:-}" ] || continue
+    if ! wait "${snapshot_pids[$machine]}"; then
+      cat "$snapshot_dir/$machine.error" >&2
+      snapshot_failure=1
+    fi
+  done
+  if [ "$snapshot_failure" -ne 0 ]; then
+    services_status_cleanup
+    return 1
+  fi
+
+  for machine in core path-a path-b; do
+    [ -n "${snapshot_pids[$machine]:-}" ] || continue
+    snapshot=$(<"$snapshot_dir/$machine")
     while IFS= read -r line; do
       line=${line%$'\r'}
       case "$line" in
@@ -71,6 +105,7 @@ services_status_main() {
       esac
     done <<<"$snapshot"
   done
+  services_status_cleanup
 
   printf '%-8s %-14s %s\n' VM SERVICE STATE
   for record in "${service_records[@]}"; do
@@ -88,5 +123,7 @@ services_status_main() {
 }
 
 if [ "${BASH_SOURCE[0]}" = "$0" ]; then
+  trap 'services_status_cleanup; exit 130' INT TERM
+  trap services_status_cleanup EXIT
   services_status_main "$@"
 fi

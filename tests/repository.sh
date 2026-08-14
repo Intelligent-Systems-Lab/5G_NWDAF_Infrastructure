@@ -244,6 +244,11 @@ echo "PASS current-invocation UE readiness parsing"
   fi
   [[ "$failed_output" == *'backend refused query'* ]]
   [[ "$failed_output" == *'TEST status unavailable'* ]]
+  observe_snapshot() { printf '%s\n' complete-snapshot; }
+  rendered=$(OBSERVE_INTERVAL=0 observe_main --once)
+  [[ "$rendered" == *'SNAPSHOT started='* ]]
+  [[ "$rendered" == *'collection='* ]]
+  [[ "$rendered" == *'complete-snapshot'* ]]
   observe_snapshot() { return 1; }
   if observe_main --once >/dev/null 2>&1; then
     echo "observe --once accepted an incomplete snapshot" >&2
@@ -253,9 +258,11 @@ echo "PASS current-invocation UE readiness parsing"
   vm_state_for() { printf '%s\n' poweroff; }
   [[ "$(webconsole_status_main)" == *'state=not-running'* ]]
   source "$HOST_ROOT/scripts/host/subscriptions-status.sh"
+  vm_state_for() { printf '%s\n' poweroff; }
   powered_off_subscriptions=$(subscriptions_status_main)
   [[ "$powered_off_subscriptions" == *'consumer_service=not-running reason=core-not-running'* ]]
   [[ "$powered_off_subscriptions" == *'local_resource_state=not-readable reason=core-not-running'* ]]
+  source "$HOST_ROOT/scripts/host/lib.sh"
   vm_state_records() { return 1; }
   if vm_state_for core >/dev/null 2>&1; then
     echo "vm_state_for hid a Vagrant status failure" >&2
@@ -263,6 +270,19 @@ echo "PASS current-invocation UE readiness parsing"
   fi
 )
 echo "PASS aggregate status failure and poweroff semantics"
+
+(
+  source "$HOST_ROOT/scripts/host/lib.sh"
+  vm_cache=$(mktemp)
+  printf '%s\n' 'core|running' 'path-a|poweroff' 'path-b|not_created' >"$vm_cache"
+  VM_STATE_RECORDS_FILE=$vm_cache
+  cached_states=$(vm_state_records)
+  rm -f -- "$vm_cache"
+  unset VM_STATE_RECORDS_FILE
+  [[ "$cached_states" == *'core|running'* ]]
+  [[ "$cached_states" == *'path-b|not_created'* ]]
+)
+echo "PASS cached VM state snapshot"
 
 (
   vm_state_for() { printf '%s\n' poweroff; }
@@ -315,8 +335,7 @@ python3 "$HOST_ROOT/tests/ml-status.py"
   legacy_rendered=$(render_subscription_status <<<"$legacy_fixture")
   [[ "$legacy_rendered" == *'unknown'* ]]
   vm_state_for() { printf '%s\n' running; }
-  vssh() { printf '%s\n' active; }
-  consumer_cli() { printf '%s\n' '{not-json'; }
+  consumer_status_snapshot() { printf '%s\n' 'CONSUMER_SERVICE|active' '{not-json'; }
   if subscriptions_status_main >/dev/null 2>&1; then
     echo "subscriptions-status accepted invalid Consumer state" >&2
     exit 1

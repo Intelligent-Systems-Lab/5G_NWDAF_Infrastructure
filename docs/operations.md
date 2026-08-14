@@ -85,11 +85,43 @@ table. Each UE row distinguishes service state, Registration, and PDU Session;
 only journal records carrying the service's current systemd invocation ID are
 considered. An active UE without the corresponding success evidence is
 `pending`, so a previous run cannot make a fresh process appear ready. `make
-observe` refreshes the complete structured overview every five seconds; stop it
-with Ctrl-C without affecting the experiment. Use focused `make logs` calls for
-detailed component events. A bare `make logs` still follows all owned VM
-journals and project ML container logs, including template Guest units, the
-Core-only Consumer, and each Network unit.
+observe` does not require `CONFIG_DIR`: it reads the active Guest config,
+container identity/mounts, and saved Consumer state. Use `experiment-status`
+when a selected config must be compared with that runtime.
+
+Continuous observation keeps the previous complete screen visible while the
+next VM, Guest, Docker, and subscription snapshot is collected in parallel.
+Only a complete new snapshot replaces it. The header reports collection start,
+completion, and elapsed time; the default five-second interval begins after a
+snapshot is rendered, so a slow backend never creates overlapping rounds. CUDA
+probe results are cached by container identity and PyMTLF log reads continue
+from the preceding cursor for the lifetime of that `make observe` process. The
+temporary cache is removed on normal exit or Ctrl-C and does not alter
+experiment state. Stop observation with Ctrl-C without affecting the
+experiment. Use focused `make logs` calls for detailed component events. A bare
+`make logs` still follows all owned VM journals and project ML container logs,
+including template Guest units, the Core-only Consumer, and each Network unit.
+
+To keep each runtime domain readable, open four terminals from the repository
+root and run one follower in each:
+
+```sh
+# Core VM
+make logs SOURCE=vm VM=core
+
+# Path A VM
+make logs SOURCE=vm VM=path-a
+
+# Path B VM
+make logs SOURCE=vm VM=path-b
+
+# Host Docker ML services
+make logs SOURCE=ml
+```
+
+Each command first prints the selected domain's recent logs and then follows new
+events. Ctrl-C stops only that terminal's follower; it does not stop any VM,
+Guest service, container, or experiment.
 
 Powered-off or not-yet-created VMs are valid observable states. Guest and
 WebConsole services report `not-running` without attempting SSH. For the Core

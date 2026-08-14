@@ -4,6 +4,7 @@
 import argparse
 import datetime
 import json
+import os
 import re
 import subprocess
 import sys
@@ -48,9 +49,29 @@ def configured_device(container):
     return "cpu"
 
 
-def cuda_visible(container_id):
+def atomic_cache_write(path, content):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(".{}.{}.tmp".format(path.name, os.getpid()))
+    temporary.write_text(content, encoding="utf-8")
+    temporary.replace(path)
+
+
+def cache_key(value):
+    return re.sub(r"[^A-Za-z0-9_.-]", "_", value)
+
+
+def cuda_visible(container_id, cache_dir=None):
+    cache_file = None
+    if cache_dir is not None:
+        cache_file = cache_dir / "cuda" / cache_key(container_id)
+        try:
+            cached = cache_file.read_text(encoding="utf-8").strip()
+        except FileNotFoundError:
+            cached = ""
+        if cached in ("true", "false"):
+            return cached
     try:
-        return output(
+        visible = output(
             [
                 "docker",
                 "exec",
@@ -63,6 +84,9 @@ def cuda_visible(container_id):
         )
     except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
         return "error"
+    if cache_file is not None and visible in ("true", "false"):
+        atomic_cache_write(cache_file, visible + "\n")
+    return visible
 
 
 def environment(container):
@@ -298,12 +322,37 @@ def fl_result(summary, coordinator_state):
     )
 
 
-def container_logs_since(container):
+def container_logs_since(container, service=None, cache_dir=None, until=None):
     started_at = container.get("State", {}).get("StartedAt", "")
     if not started_at or started_at.startswith("0001-"):
         return ""
+    cached_logs = ""
+    cursor = started_at
+    metadata_file = None
+    log_file = None
+    if cache_dir is not None:
+        key = cache_key(service or container["Id"])
+        metadata_file = cache_dir / "fl-logs" / (key + ".json")
+        log_file = cache_dir / "fl-logs" / (key + ".log")
+        try:
+            metadata = json.loads(metadata_file.read_text(encoding="utf-8"))
+            if (
+                metadata.get("containerId") == container["Id"]
+                and metadata.get("startedAt") == started_at
+                and log_file.is_file()
+            ):
+                cursor = metadata.get("until", started_at)
+                cached_logs = log_file.read_text(encoding="utf-8")
+        except (FileNotFoundError, json.JSONDecodeError, OSError):
+            pass
+
+    command = ["docker", "logs", "--timestamps", "--since", cursor]
+    if cache_dir is not None:
+        until = until or datetime.datetime.now(datetime.timezone.utc).isoformat()
+        command.extend(("--until", until))
+    command.append(container["Id"])
     completed = subprocess.run(
-        ["docker", "logs", "--timestamps", "--since", started_at, container["Id"]],
+        command,
         text=True,
         capture_output=True,
         timeout=30,
@@ -315,10 +364,30 @@ def container_logs_since(container):
                 container.get("Name", container["Id"]), completed.stderr.strip()
             )
         )
-    return "\n".join(value for value in (completed.stdout, completed.stderr) if value)
+    new_logs = "\n".join(value for value in (completed.stdout, completed.stderr) if value)
+    combined = cached_logs
+    if combined and new_logs:
+        combined = combined.rstrip("\n") + "\n"
+    combined += new_logs
+    if metadata_file is not None and log_file is not None:
+        atomic_cache_write(log_file, combined)
+        atomic_cache_write(
+            metadata_file,
+            json.dumps(
+                {
+                    "schemaVersion": 1,
+                    "containerId": container["Id"],
+                    "startedAt": started_at,
+                    "until": until,
+                },
+                sort_keys=True,
+            )
+            + "\n",
+        )
+    return combined
 
 
-def print_fl_summary(by_service):
+def print_fl_summary(by_service, cache_dir=None):
     coordinator = by_service.get("pymtlf-c")
     if coordinator is None:
         print("FL CURRENT RUN container=absent milestones=not-seen")
@@ -346,7 +415,9 @@ def print_fl_summary(by_service):
             )
     started_at = coordinator.get("State", {}).get("StartedAt", "unknown")
     logs = {
-        service: container_logs_since(by_service[service])
+        service: container_logs_since(
+            by_service[service], service=service, cache_dir=cache_dir
+        )
         for service in ("pymtlf-a", "pymtlf-b", "pymtlf-c")
         if service in by_service
     }
@@ -376,9 +447,11 @@ def memory_usage(containers):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--project", default="5g-nwdaf-infrastructure")
+    parser.add_argument("--cache-dir")
     args = parser.parse_args()
     if not PROJECT_PATTERN.fullmatch(args.project):
         raise SystemExit("invalid project name")
+    cache_dir = Path(args.cache_dir).resolve() if args.cache_dir else None
 
     ids = output(
         [
@@ -435,7 +508,7 @@ def main():
         health = (
             state.get("Health", {}).get("Status", "none") if state["Running"] else "n/a"
         )
-        cuda = cuda_visible(container["Id"]) if state["Running"] else "n/a"
+        cuda = cuda_visible(container["Id"], cache_dir) if state["Running"] else "n/a"
         labels = container["Config"].get("Labels", {})
         image = images.get(container["Image"], {"id": "unknown", "revision": "unknown"})
         config = "{}:{}".format(
@@ -462,7 +535,7 @@ def main():
         print("ERROR duplicate services: {}".format(", ".join(sorted(duplicates))), file=sys.stderr)
         return 1
     print()
-    print_fl_summary(by_service)
+    print_fl_summary(by_service, cache_dir)
     return 0
 
 

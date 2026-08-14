@@ -23,7 +23,7 @@ else
   fail "invalid Guest provisioning dependency lock"
 fi
 
-for command in git go python3 sha256sum tar vagrant docker ip ss; do
+for command in git go python3 sha256sum tar vagrant docker ip ss flock; do
   command -v "$command" >/dev/null && ok "$command=$(command -v "$command")" || fail "missing command: $command"
 done
 

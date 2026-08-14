@@ -61,6 +61,14 @@ journal_log_since() {
 
 vm_state_records() {
   local raw machine state
+  if [ -n "${VM_STATE_RECORDS_FILE:-}" ]; then
+    [ -r "$VM_STATE_RECORDS_FILE" ] || {
+      echo "cached VM state is not readable: $VM_STATE_RECORDS_FILE" >&2
+      return 1
+    }
+    cat "$VM_STATE_RECORDS_FILE"
+    return
+  fi
   if ! raw=$(cd "$HOST_ROOT" && TESTBED="${TESTBED:-testbed.yaml}" vagrant status --machine-readable); then
     echo "failed to query Vagrant machine states" >&2
     return 1
@@ -133,7 +141,14 @@ ue_readiness_states() {
 
 vssh() {
   local machine=$1 command=$2
-  (cd "$HOST_ROOT" && vagrant ssh "$machine" -c "$command")
+  local lock_root=${XDG_RUNTIME_DIR:-/tmp}/5g-nwdaf-infrastructure-$UID
+  mkdir -p "$lock_root"
+  chmod 700 "$lock_root"
+  (
+    flock 9
+    cd "$HOST_ROOT"
+    vagrant ssh "$machine" -c "$command"
+  ) 9>"$lock_root/vagrant-$machine.lock"
 }
 
 consumer_cli() {

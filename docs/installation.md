@@ -28,13 +28,14 @@ python3 --version
 curl --version
 tar --version
 sha256sum --version
+flock --version
 ```
 
 On Ubuntu, install only missing base packages:
 
 ```sh
 sudo apt-get update
-sudo apt-get install -y git python3 curl ca-certificates gnupg tar coreutils
+sudo apt-get install -y git python3 curl ca-certificates gnupg tar coreutils util-linux
 ```
 
 Python project dependencies are managed with `uv` where required. If `uv` is

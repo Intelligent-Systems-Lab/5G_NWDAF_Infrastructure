@@ -57,23 +57,36 @@ if unknown:
 '
 }
 
+consumer_status_snapshot() {
+  vssh core "state=\$(systemctl is-active 5g-nwdaf-consumer.service 2>/dev/null || true)
+printf 'CONSUMER_SERVICE|%s\\n' \"\${state:-unknown}\"
+sudo -u 5g-nwdaf /usr/local/libexec/5g-nwdaf-infrastructure/nwdaf-consumer \\
+  --config /etc/5g-nwdaf-infrastructure/active/consumer.yaml status"
+}
+
 subscriptions_status_main() {
-  local core_state service_state state
+  local core_state service_record service_state state snapshot
   core_state=$(vm_state_for core)
   if [ "$core_state" != running ]; then
     echo "consumer_service=not-running reason=core-not-running"
     echo "local_resource_state=not-readable reason=core-not-running"
     return 0
   fi
-  if ! service_state=$(vssh core "state=\$(systemctl is-active 5g-nwdaf-consumer.service 2>/dev/null || true); printf '%s\\n' \"\${state:-unknown}\"" | tr -d '\r' | tail -n 1); then
-    echo "failed to query Core Consumer service state" >&2
+  if ! snapshot=$(consumer_status_snapshot | tr -d '\r'); then
+    echo "failed to query Core Consumer service and saved subscription state" >&2
     return 1
   fi
+  service_record=${snapshot%%$'\n'*}
+  case "$service_record" in
+    CONSUMER_SERVICE\|*) service_state=${service_record#CONSUMER_SERVICE|} ;;
+    *) echo "Core Consumer status snapshot omitted service state" >&2; return 1 ;;
+  esac
   printf 'consumer_service=%s\n' "${service_state:-unknown}"
-  if ! state=$(consumer_cli status); then
-    echo "failed to read Consumer saved subscription state" >&2
+  if [ "$snapshot" = "$service_record" ]; then
+    echo "Core Consumer status snapshot omitted saved state" >&2
     return 1
   fi
+  state=${snapshot#*$'\n'}
   if ! render_subscription_status <<<"$state"; then
     echo "failed to parse Consumer saved subscription state" >&2
     return 1

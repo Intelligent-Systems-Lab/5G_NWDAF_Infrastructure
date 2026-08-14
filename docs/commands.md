@@ -17,7 +17,7 @@ while advanced and developer commands remain available. `TESTBED` defaults to
 | `make experiment-start CONFIG_DIR=...` | Generate/reuse data, then start Guest services, enabled WebConsole, ML containers, Consumer, and two subscriptions. Requires running VMs and stopped domains; it does not invoke diagnostic validation. |
 | `make experiment-status CONFIG_DIR=...` | Show config identity, Host headroom, VM, guest service, ML, FL result, and subscription state. Read-only; rejects an incomplete running-backend snapshot while powered-off services appear as `not-running` and Core-owned saved state appears as `not-readable`. |
 | `make experiment-stop` | Delete exact subscriptions, leave the NWDAFs and ML backends available for a fixed 40-second asynchronous cleanup grace, then stop process domains while retaining state and VMs. |
-| `make observe` | Continuously display VM/service/container/subscription state. Read-only; failed sections retain their error and are marked unavailable while later intervals continue. |
+| `make observe` | Continuously display the active VM/service/container/subscription state without requiring `CONFIG_DIR`. It keeps the previous complete screen while collecting the next bounded parallel snapshot, then replaces it once; failed sections retain their error and are marked unavailable while later intervals continue. Read-only with respect to experiment state. |
 | `make logs [SOURCE=...] [VM=...] [SERVICE=...] [SINCE=...] [TAIL=...] [FOLLOW=...]` | Follow filtered owned VM journals and project ML container logs with UTC timestamps. Source selectors default to all components and the time window defaults to the last ten minutes; `FOLLOW=false` prints a bounded snapshot. Read-only. |
 
 ## Configuration and datasets
@@ -72,6 +72,16 @@ while advanced and developer commands remain available. `TESTBED` defaults to
 `load`, `apply`, `start`, `stop`, `reset`, `clear`, `up`, and `halt` change only
 the scope described by their row. Internal validation and regression helpers
 are not separate Make commands.
+
+`make observe` accepts two per-invocation environment settings:
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `OBSERVE_INTERVAL` | `5` | Seconds to retain a completed screen before beginning the next collection. Collection time is additional; rounds never overlap. |
+| `OBSERVE_SECTION_TIMEOUT` | `30` | Positive integer seconds allowed for each bounded status collector before that section becomes `unavailable`. |
+
+For example, `OBSERVE_INTERVAL=30 make observe` retains each completed screen
+for 30 seconds. These values apply only to that command invocation.
 
 `make logs` accepts the following per-invocation selectors:
 
