@@ -53,7 +53,9 @@ inconsistent set may start and then fail at the responsible component.
 Guest startup hashes and stages the whole directory below
 `/etc/5g-nwdaf-infrastructure/config-sets/<name>-<hash-prefix>/`. The Guest
 `active` symlink selects that immutable staged copy. Host ML containers bind
-the selected native files read-only and carry config name/hash labels.
+the selected native files read-only and carry config name/hash labels. Validation,
+Guest activation, container labels, logs, and status all use the same canonical
+tree SHA-256 for that directory.
 
 Do not edit an already staged Guest copy. Create or edit the Host config and
 restart the relevant lifecycle so identity, logs, and status remain traceable.

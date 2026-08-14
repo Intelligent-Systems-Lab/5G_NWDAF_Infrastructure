@@ -348,7 +348,9 @@ def normalize_location(location, api_root):
 
 def create_one(config, candidate):
     callback = config["callback"]["advertisedUri"]
-    correlation = "5g-nwdaf-{}-{}".format(candidate["path"], uuid.uuid4().hex[:12])
+    correlation = candidate.get("correlationId") or "5g-nwdaf-{}-{}".format(
+        candidate["path"], uuid.uuid4().hex[:12]
+    )
     plmn = config["target"]["plmn"]
     payload = {
         "notificationURI": callback,
@@ -379,20 +381,47 @@ def create_all(config, store):
     existing = store.read()
     if existing.get("status") == "active" and len(existing.get("subscriptions", [])) == 2:
         return existing
+    candidates = []
+    for candidate in discover(config):
+        prepared = dict(candidate)
+        prepared.update({
+            "correlationId": "5g-nwdaf-{}-{}".format(candidate["path"], uuid.uuid4().hex[:12]),
+            "status": "creating",
+        })
+        candidates.append(prepared)
+    created_at = now()
+
+    def begin(value):
+        value.update({
+            "status": "creating",
+            "createdAt": created_at,
+            "subscriptions": candidates,
+            "notificationCount": 0,
+            "callbacksByPath": {
+                str(item["path"]): {
+                    "correlationId": item["correlationId"],
+                    "requestCount": 0,
+                }
+                for item in candidates
+            },
+        })
+        for field in (
+            "lastNotificationAt",
+            "lastNotificationCorrelations",
+            "unknownCallbacks",
+            "lastError",
+        ):
+            value.pop(field, None)
+        return value
+
+    store.update(begin)
     created = []
     try:
-        for candidate in discover(config):
+        for candidate in candidates:
             created.append(create_one(config, candidate))
-        created_at = now()
 
         def activate(value):
             value.update({"status": "active", "createdAt": created_at, "subscriptions": created})
-            value.setdefault("notificationCount", 0)
-            callbacks = value.setdefault("callbacksByPath", {})
-            for item in created:
-                summary = callbacks.setdefault(str(item["path"]), {})
-                summary["correlationId"] = item["correlationId"]
-                summary.setdefault("requestCount", 0)
             return value
 
         return store.update(activate)
@@ -402,6 +431,7 @@ def create_all(config, store):
                 delete_location(item["location"])
             except Exception:
                 pass
+        store.write(existing)
         raise
 
 

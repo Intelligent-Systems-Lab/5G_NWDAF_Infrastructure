@@ -100,9 +100,9 @@ def main():
             CONSUMER.discover = lambda _config: candidates
 
             def create_one(_config, candidate):
-                result = subscription(candidate["path"], "early-" + candidate["path"])
+                result = subscription(candidate["path"], candidate["correlationId"])
                 if candidate["path"] == "a":
-                    early.record_notification({"notifCorrId": "early-a"})
+                    early.record_notification({"notifCorrId": candidate["correlationId"]})
                 return result
 
             CONSUMER.create_one = create_one
@@ -111,8 +111,46 @@ def main():
             CONSUMER.discover = original_discover
             CONSUMER.create_one = original_create_one
         assert state["notificationCount"] == 1, state
-        assert state["unknownCallbacks"]["requestCount"] == 1, state
+        assert state["callbacksByPath"]["a"]["requestCount"] == 1, state
+        assert "unknownCallbacks" not in state, state
         assert len(state["subscriptions"]) == 2, state
+
+        rerun_path = Path(temporary) / "rerun.json"
+        rerun = CONSUMER.StateStore(rerun_path)
+        rerun.write({
+            "status": "stopped",
+            "subscriptions": [subscription("a", "old-a"), subscription("b", "old-b")],
+            "notificationCount": 88,
+            "lastNotificationAt": "2026-08-13T00:00:00Z",
+            "callbacksByPath": {
+                "a": {"correlationId": "old-a", "requestCount": 44},
+                "b": {"correlationId": "old-b", "requestCount": 44},
+            },
+            "unknownCallbacks": {"requestCount": 2, "correlationIds": ["old-unknown"]},
+        })
+        original_discover = CONSUMER.discover
+        original_create_one = CONSUMER.create_one
+        try:
+            CONSUMER.discover = lambda _config: [
+                {"path": "a", "tac": "000001", "nfInstanceId": "a" * 8, "apiRoot": "http://192.0.2.1"},
+                {"path": "b", "tac": "000002", "nfInstanceId": "b" * 8, "apiRoot": "http://192.0.2.2"},
+            ]
+            CONSUMER.create_one = lambda _config, candidate: subscription(
+                candidate["path"], candidate["correlationId"]
+            )
+            state = CONSUMER.create_all({}, rerun)
+        finally:
+            CONSUMER.discover = original_discover
+            CONSUMER.create_one = original_create_one
+        assert state["notificationCount"] == 0, state
+        assert state["callbacksByPath"]["a"]["requestCount"] == 0, state
+        assert state["callbacksByPath"]["b"]["requestCount"] == 0, state
+        assert "lastNotificationAt" not in state, state
+        assert "unknownCallbacks" not in state, state
+        rerun.record_notification({"notifCorrId": state["subscriptions"][0]["correlationId"]})
+        state = rerun.read()
+        assert state["notificationCount"] == 1, state
+        assert state["callbacksByPath"]["a"]["requestCount"] == 1, state
 
         delete_path = Path(temporary) / "delete.json"
         deleting = CONSUMER.StateStore(delete_path)

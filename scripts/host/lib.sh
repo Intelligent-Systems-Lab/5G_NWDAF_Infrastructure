@@ -181,14 +181,16 @@ stop_unit() {
 }
 
 config_hash() {
-  (
-    cd "$1"
-    find . -type f -print0 |
-      LC_ALL=C sort -z |
-      xargs -0 sha256sum |
-      sha256sum |
-      awk '{print $1}'
-  )
+  PYTHONPATH="$HOST_ROOT/scripts/host" python3 - "$1" <<'PY'
+import sys
+from pathlib import Path
+from configlib import sha256_tree
+
+directory = Path(sys.argv[1])
+if not directory.is_dir():
+    raise SystemExit("config directory does not exist: {}".format(directory))
+print(sha256_tree(directory))
+PY
 }
 
 effective_config_dir() {

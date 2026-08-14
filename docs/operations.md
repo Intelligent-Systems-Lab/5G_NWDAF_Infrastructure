@@ -214,7 +214,8 @@ not claim that subscription resources currently exist or change them itself.
 resource state. The resource state is local ownership evidence, not a remote
 GET verification. Each Path row includes provider, TAC, correlation, exact
 Location, callback HTTP request count, and last callback UTC time. Counts are
-per callback request, not the number of analytics items inside one payload.
+for the current subscription pair and reset before a new pair is created. They
+count callback HTTP requests, not the number of analytics items inside one payload.
 Retained state from an older version remains readable and shows `unknown` until
 a new callback establishes per-Path evidence. Unknown correlation IDs are
 reported separately rather than attributed to Path A or B. An unreachable Core,

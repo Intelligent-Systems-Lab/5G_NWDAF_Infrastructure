@@ -53,6 +53,18 @@ make --no-print-directory -C "$HOST_ROOT" config-create \
   DEVICE=cpu WEBCONSOLE=false >/dev/null
 python3 "$HOST_ROOT/scripts/host/config-check.py" --testbed "$testbed" \
   --config-dir "$make_config" >/dev/null
+canonical_config_hash=$(PYTHONPATH="$HOST_ROOT/scripts/host" python3 - "$make_config" <<'PY'
+import sys
+from configlib import sha256_tree
+
+print(sha256_tree(sys.argv[1]))
+PY
+)
+runtime_config_hash=$(config_hash "$make_config")
+if [ "$runtime_config_hash" != "$canonical_config_hash" ]; then
+  echo "runtime config hash differs from the canonical tree hash" >&2
+  exit 1
+fi
 if make --no-print-directory -C "$HOST_ROOT" config-create \
   NAME=repository-interface-test \
   FROM=.generated/tests/experiments/repository-interface-test/scenario.yaml \
@@ -61,6 +73,7 @@ if make --no-print-directory -C "$HOST_ROOT" config-create \
   exit 1
 fi
 echo "PASS explicit scenario path interface"
+echo "PASS canonical config hash identity"
 
 expected='consumer|5g-nwdaf-consumer.service'
 actual=$(vm_log_sources core consumer)
