@@ -2,6 +2,7 @@
 """Build, audit, and locate topology-derived PseudoDriver datasets."""
 
 import argparse
+import json
 import os
 import shutil
 import subprocess
@@ -108,6 +109,96 @@ def check(args, spec, quiet=False):
     return root
 
 
+def _byte_size(value):
+    size = float(value)
+    for unit in ("B", "KiB", "MiB", "GiB"):
+        if size < 1024 or unit == "GiB":
+            return "{:.0f}{}".format(size, unit) if unit == "B" else "{:.1f}{}".format(size, unit)
+        size /= 1024
+
+
+def _ratio(numerator, denominator):
+    if denominator and numerator % denominator == 0:
+        return str(numerator // denominator)
+    return "non-integral({}/{})".format(numerator, denominator)
+
+
+def render_summary(spec, manifest, root):
+    scenario = spec["scenario"]
+    lines = [
+        "DATASET id={} scenario={} kind={} warm_start={}".format(
+            spec["datasetSetId"],
+            scenario["name"],
+            scenario["kind"],
+            scenario["warmStartMode"],
+        ),
+        "SOURCE definition={} root={}".format(scenario["definition"], root),
+    ]
+    for path_name in ("path-a", "path-b"):
+        profile = spec["paths"][path_name]
+        artifact = manifest["paths"][path_name]
+        raw_window = profile["windowSeconds"]
+        sampling = profile["samplingIntervalSeconds"]
+        report_period = profile["monitorReportPeriodSeconds"]
+        warm_start = profile["breakingTimeSeconds"]
+        transition = profile["stableWindows"] * raw_window
+        total_duration = (
+            profile["stableWindows"] + profile["degradedWindows"]
+        ) * raw_window
+        lines.extend(
+            [
+                "",
+                "PATH {} mode={} ues={} rows={} size={} sha256={}".format(
+                    path_name,
+                    profile["postBoundaryMode"],
+                    len(artifact["ueIps"]),
+                    artifact["rows"],
+                    _byte_size(artifact["bytes"]),
+                    artifact["sha256"],
+                ),
+                "  artifact={} timestamps={}..{}s duration={}s".format(
+                    profile["artifactFile"],
+                    artifact["minTimestamp"],
+                    artifact["maxTimestamp"],
+                    total_duration,
+                ),
+                "  aggregation raw_window={}s observation={}s raw_windows_per_observation={}".format(
+                    raw_window,
+                    sampling,
+                    _ratio(sampling, raw_window),
+                ),
+                "  reporting period={}s observations_per_report={} minimum_matched={}".format(
+                    report_period,
+                    _ratio(report_period, sampling),
+                    profile["minimumMatchedPredictions"],
+                ),
+                "  timeline warm_start_boundary={}s traffic_transition={}s live_stable_lead={}s post_duration={}s".format(
+                    warm_start,
+                    transition,
+                    profile["stableLeadInSeconds"],
+                    profile["degradedTailSeconds"],
+                ),
+                "  model input_observations={} output_observations={} warm_start_observations={}".format(
+                    profile["modelInputWindow"],
+                    profile["modelOutputWindow"],
+                    profile["historicalObservations"],
+                ),
+                "  trigger earliest_after_start={}s bounded_after_start={}s bounded_closure={}s".format(
+                    profile["earliestTriggerSeconds"],
+                    profile["boundedTriggerSeconds"],
+                    profile["boundedClosureSeconds"],
+                ),
+                "  trigger_samples observations={} training={} validation={} admission_minimum={}".format(
+                    profile["triggerObservations"],
+                    profile["triggerTrainingSamples"],
+                    profile["triggerValidationSamples"],
+                    profile["minimumAdmissionTrainingSamples"],
+                ),
+            ]
+        )
+    return "\n".join(lines) + "\n"
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--testbed", default="testbed.yaml")
@@ -130,7 +221,8 @@ def main():
             check(args, spec)
         elif args.action == "show":
             root = check(args, spec, quiet=True)
-            print((root / "manifest.json").read_text(encoding="utf-8"), end="")
+            manifest = json.loads((root / "manifest.json").read_text(encoding="utf-8"))
+            print(render_summary(spec, manifest, root), end="")
         else:
             root = check(args, spec, quiet=True)
             print(spec["datasetSetId"])
