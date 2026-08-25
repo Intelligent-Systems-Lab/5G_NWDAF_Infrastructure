@@ -47,7 +47,7 @@ services:
       dockerfile: containers/ml/Dockerfile
       target: pyanlf
       args:
-        COMPONENT_REVISION: 08798f15c3693027e00bc60dd53f74ebaa26c3a1
+        COMPONENT_REVISION: 6a4d94ad3cc6f66dac55ea921772d731e4b71371
     environment: *environment
     cpus: 1.0
     mem_limit: 768m
@@ -70,7 +70,7 @@ services:
       dockerfile: containers/ml/Dockerfile
       target: pyanlf
       args:
-        COMPONENT_REVISION: 08798f15c3693027e00bc60dd53f74ebaa26c3a1
+        COMPONENT_REVISION: 6a4d94ad3cc6f66dac55ea921772d731e4b71371
     environment: *environment
     cpus: 1.0
     mem_limit: 768m
@@ -94,7 +94,7 @@ services:
       dockerfile: containers/ml/Dockerfile
       target: pymtlf
       args:
-        COMPONENT_REVISION: 7e8ab7f23bf5d6398eb1cd5f053dd8bda9439a87
+        COMPONENT_REVISION: e9aa2235b6b4adc1d9d778b6cfdf23645fc622ec
     environment:
       <<: *environment
       SERVICE_PORT: "9092"
@@ -122,7 +122,7 @@ services:
       dockerfile: containers/ml/Dockerfile
       target: pymtlf
       args:
-        COMPONENT_REVISION: 7e8ab7f23bf5d6398eb1cd5f053dd8bda9439a87
+        COMPONENT_REVISION: e9aa2235b6b4adc1d9d778b6cfdf23645fc622ec
     environment:
       <<: *environment
       SERVICE_PORT: "9092"
@@ -149,7 +149,7 @@ services:
       dockerfile: containers/ml/Dockerfile
       target: pymtlf
       args:
-        COMPONENT_REVISION: 7e8ab7f23bf5d6398eb1cd5f053dd8bda9439a87
+        COMPONENT_REVISION: e9aa2235b6b4adc1d9d778b6cfdf23645fc622ec
     environment:
       <<: *environment
       SERVICE_PORT: "9292"

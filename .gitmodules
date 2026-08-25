@@ -45,7 +45,7 @@
 [submodule "NFs/nwdaf"]
 	path = NFs/nwdaf
 	url = https://github.com/Intelligent-Systems-Lab/NWDAF.git
-	branch = feat/r18-federated-learning
+	branch = feat/r18-hierarchical-federated-learning
 [submodule "NFs/adrf"]
 	path = NFs/adrf
 	url = https://github.com/Intelligent-Systems-Lab/adrf.git
@@ -57,7 +57,7 @@
 [submodule "ML/PyMTLF"]
 	path = ML/PyMTLF
 	url = https://github.com/Intelligent-Systems-Lab/PyMTLF.git
-	branch = feat/r18-federated-learning
+	branch = feat/r18-hierarchical-federated-learning
 [submodule "kernel/gtp5g"]
 	path = kernel/gtp5g
 	url = https://github.com/free5gc/gtp5g.git
