@@ -23,6 +23,36 @@ leading `-` means it has not been initialized. Compare an unexpected revision
 with `components.lock.yaml`. Do not repair it with `--remote`; first determine
 whether the parent pin or local checkout is intended.
 
+## Guest source and installed binary mismatch
+
+A clean Host submodule checkout and a current source tree below
+`/opt/5g-nwdaf-infrastructure/source` do not prove that an existing VM is
+executing a binary built from that source. `vm-up` does not reprovision an
+existing VM, and `services-start` synchronizes helpers, config, and dataset but
+does not rebuild guest-owned components.
+
+Suspect a stale artifact when a Guest endpoint exposes an older contract even
+though the Host pin and synced source agree, or when PyMTLF capability
+verification reports fields missing from the containing NWDAF context. Stop
+the experiment, identify the affected Core or Path build boundary, and rebuild
+the affected artifact explicitly. Record hashes before and after the rebuild;
+do not use `reset` for this problem, because reset changes retained data rather
+than installed software. See [Components](components.md#existing-vm-binary-boundary).
+
+## Model Provision returns 503 during startup
+
+PyAnLF reconciliation may begin while the processes are healthy but the
+NWDAF-C to PyMTLF-C Model Provision chain is still converging. A bounded series
+of create `503` responses is recoverable only when retry is followed by a `201`
+Model Provision subscription, successful Model Monitor registration, and
+active monitor scopes.
+
+Do not treat container health alone as that business-level evidence, and do not
+disable production readiness or create replacement resources manually. If the
+503 responses persist, the later `201`/monitor evidence never appears, or a
+reconciler reaches its terminal failure, inspect NWDAF-C, PyMTLF-C, and
+PyAnLF-A/B logs together with UTC timestamps and treat startup as failed.
+
 ## Config selection or stale files
 
 There is no local overlay. A stale repository-root `testbed.local.yaml` from an

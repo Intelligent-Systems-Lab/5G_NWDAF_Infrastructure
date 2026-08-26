@@ -167,6 +167,10 @@ def resolve_dataset_spec(testbed, config_dir, diagnostics=None):
         "coordinator fitting rounds differ from the scenario",
     )
     diagnose(
+        server.get("client_training", {}).get("epochs") == local_epochs,
+        "coordinator client training epochs differ from the scenario",
+    )
+    diagnose(
         server.get("preparation_data_window_seconds") == preparation_window,
         "coordinator preparation window differs from the scenario",
     )
@@ -241,11 +245,6 @@ def resolve_dataset_spec(testbed, config_dir, diagnostics=None):
         diagnose(
             upf["ees"]["periodSec"] == sampling,
             "path {} UPF period and AnLF sampling interval differ".format(path_name),
-        )
-        diagnose(
-            mtlf["federated_learning"]["client"]["training"].get("epochs")
-            == local_epochs,
-            "path {} local epochs differ from the scenario".format(path_name),
         )
         diagnose(
             mtlf["dataset"].get("retrieval_window_seconds") == preparation_window,

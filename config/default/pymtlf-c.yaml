@@ -1,5 +1,5 @@
 server: {binding_host: 0.0.0.0, port: 9292}
-runtime: {mode: fl_server}
+runtime: {mode: federated}
 containing_nwdaf: {internal_api_root: http://192.168.57.30:8091, request_timeout_seconds: 30}
 storage: {artifact_root: /var/lib/5g-nwdaf-infrastructure/pymtlf-c/artifacts}
 model_state: {directory: /var/lib/5g-nwdaf-infrastructure/pymtlf-c/model-state}
@@ -24,9 +24,14 @@ federated_learning:
   workspace_root: /var/lib/5g-nwdaf-infrastructure/pymtlf-c/fl-workspaces
   public_base_url: http://192.168.57.1:9292
   artifact_download: {allowed_origins: [http://192.168.57.1:9092, http://192.168.57.1:9091, http://192.168.57.1:9292]}
+  orchestration: {mode: flat, participant_source: monitor_scopes}
+  training_trigger:
+    degradation: {enabled: true}
+    private_api: {enabled: false}
   server:
     callback_uri: http://192.168.57.1:9292/internal/v1/ml-model-training/notifications
     round_count: 2
+    client_training: {epochs: 18}
     preparation_timeout_seconds: 300
     preparation_data_window_seconds: 3600
     round_timeout_seconds: 300

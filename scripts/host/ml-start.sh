@@ -58,7 +58,7 @@ trap rollback ERR
 trap 'rollback 130' INT
 trap 'rollback 143' TERM
 rollback_needed=true
-ml_compose up --detach --no-build --wait --wait-timeout 240
+ml_compose up --detach --no-build --wait --wait-timeout 240 || rollback "$?"
 "$HOST_ROOT/scripts/host/ml-status.sh"
 rollback_needed=false
 trap - ERR INT TERM

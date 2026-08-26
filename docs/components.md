@@ -35,10 +35,11 @@ git submodule update --init --recursive
 Do not use `git submodule update --remote` for an experiment checkout. The
 branch tip may advance while the parent gitlink intentionally remains fixed.
 
-Preflight verifies each installed HEAD against the readable lock and rejects a
-dirty submodule worktree. It does not require a local submodule's `origin` URL
-to match because the checked-out commit, not the local fetch configuration, is
-the executable source identity.
+Preflight verifies each Host submodule HEAD against the readable lock and
+rejects a dirty submodule worktree. It does not require a local submodule's
+`origin` URL to match because the checked-out commit, not the local fetch
+configuration, is the Host source identity. This check does not inspect a
+binary that was previously installed inside an existing VM.
 
 ## Guest build boundary
 
@@ -53,6 +54,24 @@ clone or select branches:
 Runtime helper scripts and systemd definitions are hash-synced before config
 activation, so helper changes can reach existing VMs without rebuilding every
 guest component.
+
+### Existing VM binary boundary
+
+Source synchronization and Guest binary installation are separate. On an
+existing VM, `vm-up` is only a boot and `services-start` synchronizes runtime
+helpers, config, and dataset; neither command rebuilds guest-owned NF, ADRF,
+UPF, UERANSIM, or NWDAF binaries. A Guest can therefore contain the current
+synced source tree while still executing an artifact built from an older parent
+gitlink.
+
+After a component pin changes, stop the experiment, identify which Guest owns
+the changed component, and explicitly rebuild that Guest artifact through the
+corresponding provisioning/build boundary before starting a run. Record the
+installed binary hash or equivalent artifact identity with the experiment.
+Use the full Core/Path build only when all components in that build boundary
+are intentionally in scope; a targeted component rebuild is a maintenance
+operation and must not be presented as an ordinary `services-start` side
+effect. A data reset cannot repair a stale binary.
 
 Go and MongoDB provisioning inputs are separately owned by
 `provisioning.lock.yaml`. Go archive identity and SHA-256 are strict. MongoDB

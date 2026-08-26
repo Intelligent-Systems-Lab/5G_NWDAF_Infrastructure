@@ -39,7 +39,7 @@ def configured_device(container):
     service = container["Config"]["Labels"].get("com.docker.compose.service", "")
     if service.startswith("pyanlf-"):
         return config.get("model", {}).get("device", "cpu")
-    if config.get("runtime", {}).get("mode") == "fl_client":
+    if config.get("federated_learning", {}).get("client") is not None:
         return (
             config.get("federated_learning", {})
             .get("client", {})

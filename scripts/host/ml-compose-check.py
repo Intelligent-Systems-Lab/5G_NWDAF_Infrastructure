@@ -35,6 +35,8 @@ def compose_config(mode, device_policy, config_dir, bind_address):
     command = ["docker", "compose", "-f", str(ROOT / "compose.yaml")]
     if device_policy == "cpu":
         command.extend(["-f", str(ROOT / "compose.cpu.yaml")])
+    if mode == "cpu-smoke":
+        command.extend(["-f", str(ROOT / "compose.cpu-smoke.yaml")])
     command.extend(["config", "--format", "json"])
     environment = dict(os.environ)
     environment.update(
@@ -85,7 +87,7 @@ def main():
         native = load_yaml(config_dir / (name + ".yaml"))
         if name.startswith("pyanlf-"):
             configured_device = native["model"]["device"]
-        elif native.get("runtime", {}).get("mode") == "fl_client":
+        elif native.get("federated_learning", {}).get("client") is not None:
             configured_device = native["federated_learning"]["client"]["training"]["device"]
         else:
             configured_device = "cpu"

@@ -42,7 +42,7 @@ multiple of sampling, and one report can contain at least the native
 | Field | Meaning |
 | --- | --- |
 | `minimumSamples` | Minimum local training samples admitted per client. Small positive datasets remain valid. |
-| `localEpochs` | PyMTLF-A/B epochs for each federated round. |
+| `localEpochs` | Local dataset passes the coordinator requires from every Client in each federated round. The renderer writes this Server-owned value to `pymtlf-c.yaml`, not to the A/B Client configs. |
 | `fittingRounds` | Coordinator round count. |
 | `preparationDataWindowSeconds` | ADRF history requested for client preparation/fallback. |
 | `closureBudgetSeconds` | Time reserved after the bounded degradation trigger for training, publication, adoption, cutover, and post-cutover evidence. |
@@ -51,6 +51,14 @@ multiple of sampling, and one report can contain at least the native
 The renderer transfers these values into PyAnLF/PyMTLF and related 5GC timing
 fields. A native edit can intentionally differ; `config-validate` reports the
 difference without changing or blocking the run.
+
+`localEpochs` is orchestration policy. PyMTLF-C embeds it as
+`fl_metadata.client_training.epochs` in each typed `ROUND_INPUT` artifact; the
+round PATCH sent to A/B carries the artifact URL. Each Client validates that
+artifact and uses the supplied value for local fitting. A/B still own local
+runtime choices such as device, batch size, learning rate, validation ratio,
+and random seed, but a federated Client config must not declare its own
+`epochs`.
 
 ## Committed examples
 

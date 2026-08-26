@@ -286,6 +286,9 @@ ml_compose() {
   if [ "$policy" = cpu ]; then
     command+=(-f "$HOST_ROOT/compose.cpu.yaml")
   fi
+  if [ "$(ml_runtime_mode)" = cpu-smoke ]; then
+    command+=(-f "$HOST_ROOT/compose.cpu-smoke.yaml")
+  fi
   "${command[@]}" "$@"
 }
 

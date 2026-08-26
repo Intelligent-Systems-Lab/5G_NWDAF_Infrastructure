@@ -29,6 +29,11 @@ def main():
         "scripts/host/ml-start.sh",
         ("config-check.py", "ml-compose-check.py", "ml_host_resource_gate"),
     )
+    ml_start_source = (ROOT / "scripts" / "host" / "ml-start.sh").read_text(
+        encoding="utf-8"
+    )
+    if 'ml_compose up --detach --no-build --wait --wait-timeout 240 || rollback "$?"' not in ml_start_source:
+        raise SystemExit("ML startup must explicitly stop its project after Compose wait failure")
     reject_startup_gate("scripts/host/webconsole-start.sh", ("config-check.py",))
     reject_startup_gate("scripts/host/subscriber-data.sh", ("config-check.py",))
 

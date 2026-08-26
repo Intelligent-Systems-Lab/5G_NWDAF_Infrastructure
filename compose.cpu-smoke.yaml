@@ -1,0 +1,20 @@
+# Standalone container-lifecycle validation does not start the containing Go
+# NWDAFs.  Keep the production readiness probe unchanged, but let this
+# disposable profile distinguish an unavailable NWDAF context from a broken
+# PyMTLF process or a capability mismatch.
+x-pymtlf-smoke: &pymtlf-smoke
+  volumes:
+    - type: bind
+      source: ./tests/support/pymtlf-smoke-health.py
+      target: /opt/app/pymtlf-smoke-health.py
+      read_only: true
+  healthcheck:
+    test: [CMD, python, /opt/app/pymtlf-smoke-health.py]
+
+services:
+  pymtlf-a:
+    <<: *pymtlf-smoke
+  pymtlf-b:
+    <<: *pymtlf-smoke
+  pymtlf-c:
+    <<: *pymtlf-smoke

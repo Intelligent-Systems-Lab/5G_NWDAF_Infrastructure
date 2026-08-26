@@ -220,6 +220,34 @@ def main():
             "pymtlf-a FL public URL",
         ),
         (
+            "pymtlf-runtime-mode",
+            "pymtlf-a.yaml",
+            lambda value: value["runtime"].update({"mode": "fl_client"}),
+            "pymtlf-a runtime mode",
+        ),
+        (
+            "pymtlf-collection-trigger",
+            "pymtlf-a.yaml",
+            lambda value: value["federated_learning"]["client"].pop(
+                "training_data"
+            ),
+            "pymtlf-a collection trigger",
+        ),
+        (
+            "pymtlf-coordinator-orchestration",
+            "pymtlf-c.yaml",
+            lambda value: value["federated_learning"].pop("orchestration"),
+            "pymtlf-c orchestration mode",
+        ),
+        (
+            "pymtlf-private-training-trigger",
+            "pymtlf-c.yaml",
+            lambda value: value["federated_learning"]["training_trigger"][
+                "private_api"
+            ].update({"enabled": True}),
+            "pymtlf-c private training trigger",
+        ),
+        (
             "consumer-callback",
             "consumer.yaml",
             lambda value: value["callback"].update(

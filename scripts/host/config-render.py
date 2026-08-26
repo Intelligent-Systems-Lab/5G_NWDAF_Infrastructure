@@ -327,7 +327,6 @@ def render(testbed, baseline, output, scenario):
         mtlf["artifact"]["public_base_url"] = endpoint_uri(mtlf_endpoint)
         mtlf["federated_learning"]["public_base_url"] = endpoint_uri(mtlf_endpoint)
         mtlf["federated_learning"]["client"]["training"]["device"] = runtime_services[mtlf_name]["device"]
-        mtlf["federated_learning"]["client"]["training"]["epochs"] = training["localEpochs"]
         mtlf["dataset"]["retrieval_window_seconds"] = training["preparationDataWindowSeconds"]
         mtlf["dataset"]["mongodb"]["url"] = mongo_uri
         write(output, mtlf_name + ".yaml", mtlf)
@@ -346,6 +345,7 @@ def render(testbed, baseline, output, scenario):
     ]
     mtlf_c["federated_learning"]["server"]["callback_uri"] = endpoint_uri(mtlf_c_endpoint) + "/internal/v1/ml-model-training/notifications"
     mtlf_c["federated_learning"]["server"]["round_count"] = training["fittingRounds"]
+    mtlf_c["federated_learning"]["server"]["client_training"]["epochs"] = training["localEpochs"]
     mtlf_c["federated_learning"]["server"]["preparation_data_window_seconds"] = training["preparationDataWindowSeconds"]
     mtlf_c["federated_learning"]["server"]["final_validation"]["enforce_performance_gate"] = training["enforcePerformanceGate"]
     mtlf_c["model_monitor"]["callback_uri"] = endpoint_uri(mtlf_c_endpoint) + "/internal/v1/ml-model-monitor/notifications"

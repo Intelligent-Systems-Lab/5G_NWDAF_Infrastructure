@@ -38,6 +38,12 @@ make vm-status
 experiment processes. First creation provisions and builds the guest-owned
 components; a later invocation is an ordinary VM boot.
 
+If the parent component pins changed after those VMs were provisioned, do not
+infer binary freshness from `vm-up`, source rsync, or a passing Host submodule
+check. Follow the [existing VM binary boundary](components.md#existing-vm-binary-boundary),
+rebuild the affected Guest artifacts explicitly, and record their identity
+before the experiment. Resetting retained data does not rebuild software.
+
 For a first run or a run that should retain previous state, continue directly.
 For a deliberately clean subsequent run, stop all experiment processes and use
 the guarded reset described under [Clean-run reset](#clean-run-reset).
@@ -63,6 +69,13 @@ Useful success signals are:
 - five healthy ML containers with the requested device policy;
 - two distinct NRF-discovered NWDAF subscriptions;
 - Consumer callbacks from both paths.
+
+Container health proves process, artifact, and containing-NWDAF capability
+checks, but it is not by itself proof that the complete Model Provision and
+Model Monitor business chain has converged. For FL readiness, also confirm
+successful Model Provision subscription creation and active monitor scopes.
+See [Model Provision returns 503 during startup](troubleshooting.md#model-provision-returns-503-during-startup)
+when early reconciliation retries appear.
 
 The full-core scenario then continues through accuracy monitoring, A/B local
 training, C FedAvg, ADRF publication, A/B reprovisioning, generation cutover,

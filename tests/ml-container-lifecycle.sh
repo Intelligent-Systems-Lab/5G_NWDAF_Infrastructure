@@ -43,6 +43,12 @@ for service in pymtlf-a pymtlf-b; do
   ml_compose exec -T "$service" python -c \
     'from py_mtlf.config import load_settings; print("training_device=" + load_settings("/etc/5g-nwdaf/config.yaml").federated_learning.client.training.device)'
 done
+ml_compose exec -T pymtlf-c python -c \
+  'from py_mtlf.config import load_settings; s=load_settings("/etc/5g-nwdaf/config.yaml"); print("orchestration=" + s.federated_learning.orchestration.mode + " participant_source=" + s.federated_learning.orchestration.participant_source)'
+
+for service in pymtlf-a pymtlf-b pymtlf-c; do
+  ml_compose exec -T "$service" python /opt/app/pymtlf-smoke-health.py
+done
 
 mapfile -t running_containers < <(ml_compose ps -q)
 if [ "${#running_containers[@]}" -ne 5 ]; then

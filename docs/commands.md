@@ -65,8 +65,15 @@ while advanced and developer commands remain available. `TESTBED` defaults to
 
 | Command | Function and effect |
 | --- | --- |
-| `make test` | Run shell/Python/YAML, lock, config, network, dataset, Compose, Consumer, and Vagrant definition checks. It does not start the production stack. |
-| `make test-containers` | Run the disposable five-container CPU lifecycle test, then remove only its own containers, network, volumes, and generated config. |
+| `make test` | Run shell/Python/YAML, lock, config, production Flat ownership, network, dataset, Compose, Consumer, and Vagrant definition checks. It does not start the production stack. |
+| `make test-containers` | Run the disposable five-container CPU lifecycle test, load the rendered configs with the pinned ML components, then remove only its own containers, network, volumes, and generated config. |
+
+The disposable container test does not start the three containing Go NWDAFs.
+Its test-only PyMTLF health override accepts either a fully verified ready
+context or an explicit `503 unavailable` context while still requiring process
+artifacts to be ready and rejecting a capability mismatch. That override is
+selected only by the isolated `cpu-smoke` project; production readiness and
+`ml-start` are not relaxed.
 
 `validate`, `status`, `show`, and `observe` are read-only. `create`, `generate`,
 `load`, `apply`, `start`, `stop`, `reset`, `clear`, `up`, and `halt` change only

@@ -853,6 +853,7 @@ def main():
         )
 
         mtlf = load_yaml(config_dir / (mtlf_name + ".yaml"))
+        check.equal(mtlf_name + " runtime mode", mtlf.get("runtime", {}).get("mode"), "federated")
         check.equal(mtlf_name + " bind", mtlf["server"]["binding_host"], "0.0.0.0")
         check.equal(mtlf_name + " container port", mtlf["server"]["port"], services[mtlf_name]["containerPort"])
         expected_mtlf_server = nwdaf_native[name]["mtlf"]["server"]
@@ -873,19 +874,46 @@ def main():
         )
         client = mtlf["federated_learning"]["client"]
         check.equal(
+            mtlf_name + " collection trigger",
+            client.get("training_data", {}).get("collection_trigger"),
+            "consumer_subscription",
+        )
+        check.equal(
             mtlf_name + " FL interoperability",
             client["model_interoperability_ids"],
             [expected_interoperability],
         )
         expected_device = "cpu" if ml_device_policy == "cpu" else "cuda:0"
         check.equal(mtlf_name + " device", client["training"]["device"], expected_device)
-        check.equal(mtlf_name + " local epochs", client["training"]["epochs"], training["localEpochs"])
+        check.true(
+            mtlf_name + " client training must not own epochs",
+            "epochs" not in client["training"],
+        )
         check.equal(mtlf_name + " retrieval window", mtlf["dataset"]["retrieval_window_seconds"], training["preparationDataWindowSeconds"])
         check.equal(mtlf_name + " dataset MongoDB URL", mtlf["dataset"]["mongodb"]["url"], mongo_uri)
         check.equal(mtlf_name + " dataset MongoDB database", mtlf["dataset"]["mongodb"]["database"], mongo["database"])
         check_pymtlf_data_paths(check, mtlf_name, mtlf)
 
     mtlf_c_endpoint = backends["pymtlf-c"]
+    check.equal("pymtlf-c runtime mode", mtlf_c.get("runtime", {}).get("mode"), "federated")
+    orchestration = mtlf_c["federated_learning"].get("orchestration", {})
+    check.equal("pymtlf-c orchestration mode", orchestration.get("mode"), "flat")
+    check.equal(
+        "pymtlf-c participant source",
+        orchestration.get("participant_source"),
+        "monitor_scopes",
+    )
+    training_trigger = mtlf_c["federated_learning"].get("training_trigger", {})
+    check.equal(
+        "pymtlf-c degradation training trigger",
+        training_trigger.get("degradation", {}).get("enabled"),
+        True,
+    )
+    check.equal(
+        "pymtlf-c private training trigger",
+        training_trigger.get("private_api", {}).get("enabled"),
+        False,
+    )
     check.equal("pymtlf-c bind", mtlf_c["server"]["binding_host"], "0.0.0.0")
     check.equal("pymtlf-c container port", mtlf_c["server"]["port"], services["pymtlf-c"]["containerPort"])
     expected_mtlf_c_server = nwdaf_native["c"]["mtlf"]["server"]
@@ -935,6 +963,11 @@ def main():
         + "/internal/v1/ml-model-monitor/notifications",
     )
     check.equal("pymtlf-c fitting rounds", server["round_count"], training["fittingRounds"])
+    check.equal(
+        "pymtlf-c client training epochs",
+        server.get("client_training", {}).get("epochs"),
+        training["localEpochs"],
+    )
     check.equal("pymtlf-c preparation window", server["preparation_data_window_seconds"], training["preparationDataWindowSeconds"])
     check.equal("pymtlf-c performance gate", server["final_validation"]["enforce_performance_gate"], training["enforcePerformanceGate"])
     check.equal("pymtlf-c monitor period", mtlf_c["model_monitor"]["report_period_seconds"], monitoring["reportPeriodSeconds"])

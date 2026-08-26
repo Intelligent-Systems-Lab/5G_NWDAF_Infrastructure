@@ -18,8 +18,8 @@ native YAML/JSON, while `manifest.yaml` records provenance and runtime choices.
 | `nwdafcfg-a.yaml`, `-b.yaml`, `-c.yaml` | three NWDAFs | NF identity/role, SBI, NRF/ADRF, ML endpoints, FL contracts |
 | `adrfcfg.yaml` | ADRF | stable NF identity, SBI, MongoDB, model storage and retrieval |
 | `pyanlf-a.yaml`, `-b.yaml` | PyAnLF containers | sampling, analytics/accuracy delivery, model device and endpoints |
-| `pymtlf-a.yaml`, `-b.yaml` | FL clients | native training, ADRF retrieval, artifacts, rounds and device |
-| `pymtlf-c.yaml` | FL server | Model Provision/Monitor, accuracy policy, rounds, validation and publication |
+| `pymtlf-a.yaml`, `-b.yaml` | FL clients | collection trigger, local fitting runtime parameters, ADRF retrieval, artifacts and device |
+| `pymtlf-c.yaml` | FL server | Flat orchestration, participant source, training trigger, Server-owned client epochs, rounds, Model Provision/Monitor, validation and publication |
 | `consumer.yaml` | Consumer/callback server | NRF discovery, Path scope, Internal Group, callback and reporting |
 | `webuicfg.yaml` | optional WebConsole | management HTTP, NRF, MongoDB, loopback billing compatibility |
 | `ueransim/gnb-*.yaml` | two gNBs | PLMN/TAI, N2/N3, AMF and S-NSSAI |
@@ -27,6 +27,26 @@ native YAML/JSON, while `manifest.yaml` records provenance and runtime choices.
 | `subscriber/*.json` | MongoDB fixture loader | same derived SUPIs, authentication, DNN, slice and Internal Group |
 | `network/*.yaml` | Guest network reconciler | VM base interfaces and service aliases |
 | `manifest.yaml` | Host tooling | topology/scenario provenance, runtime policy, fixture and dataset paths |
+
+## Production Flat PyMTLF ownership
+
+All three PyMTLF processes use `runtime.mode: federated`, but their configured
+engines and policy ownership differ:
+
+- A/B configure the Client engine and
+  `training_data.collection_trigger: consumer_subscription`. Their `training`
+  section owns device, batch size, learning rate, validation ratio, and random
+  seed; it must not contain `epochs`.
+- C configures the Server engine, `orchestration.mode: flat`,
+  `participant_source: monitor_scopes`, degradation-triggered training, and a
+  disabled private trigger. It owns `round_count` and
+  `client_training.epochs`.
+
+For each round, C writes its client-training directive into the typed
+`ROUND_INPUT` artifact manifest and sends A/B a training PATCH containing that
+artifact's `mLModelUrl`. A/B validate the artifact and use the embedded epochs;
+epochs are not an extra ad-hoc field in the public training request. Adding a
+Client-local epochs value is therefore a schema error, not an override.
 
 ## Renderer-owned and advanced values
 
