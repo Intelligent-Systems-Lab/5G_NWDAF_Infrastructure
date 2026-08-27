@@ -17,7 +17,7 @@ subscriptions_attempted=false
 
 vm_state() {
   local machine=$1
-  (cd "$HOST_ROOT" && vagrant status "$machine" --machine-readable 2>/dev/null) |
+  (cd "$HOST_ROOT" && provider_vagrant status "$machine" --machine-readable 2>/dev/null) |
     awk -F, '$3 == "state" {state=$4} END {print state}'
 }
 

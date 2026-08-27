@@ -38,6 +38,19 @@ make vm-status
 experiment processes. First creation provisions and builds the guest-owned
 components; a later invocation is an ordinary VM boot.
 
+Before its first provider query, `vm-up` verifies the approved Host context,
+parses the current user's `VBoxHeadless --startvm <UUID>` processes, and checks
+the exact Vagrant machine UUID metadata. It then compares a second process
+snapshot with Vagrant's live state. Duplicate UUIDs, missing or unexpected
+metadata, process/state mismatches, inventory changes, or parse failures stop
+the command before `vagrant up`. Do not bypass this preflight with a direct
+Vagrant or VirtualBox command.
+
+`vm-status` does not request a power transition, but it still starts a provider
+client and therefore requires the same approved Host context. Its reported
+`poweroff` or `not created` state is not, by itself, proof that no VM process
+exists.
+
 If the parent component pins changed after those VMs were provisioned, do not
 infer binary freshness from `vm-up`, source rsync, or a passing Host submodule
 check. Follow the [existing VM binary boundary](components.md#existing-vm-binary-boundary),

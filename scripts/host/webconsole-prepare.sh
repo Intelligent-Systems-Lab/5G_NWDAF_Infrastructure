@@ -54,7 +54,7 @@ tar -C "$HOST_ROOT/webconsole" \
   -czf "$archive" .
 archive_sha=$(sha256sum "$archive" | awk '{print $1}')
 remote_archive=/tmp/5g-nwdaf-webconsole-"${archive_sha:0:16}".tgz
-(cd "$HOST_ROOT" && vagrant upload "$archive" "$remote_archive" core)
+(cd "$HOST_ROOT" && provider_vagrant upload "$archive" "$remote_archive" core)
 printf -v command \
   'sudo /usr/local/libexec/5g-nwdaf-infrastructure/webconsole-build %q %q %q %q' \
   "$identity" "$remote_archive" "$archive_sha" "$actual_revision"

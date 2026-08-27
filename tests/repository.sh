@@ -8,13 +8,11 @@ cpu_config="$HOST_ROOT/.generated/tests/config/ml-repository-test"
 make_config="$HOST_ROOT/config/local/repository-interface-test"
 custom_scenario_root="$HOST_ROOT/.generated/tests/experiments/repository-interface-test"
 webconsole_root=$(mktemp -d)
-legacy_testbed_root=$(mktemp -d)
 cleanup() {
   rm -rf "$cpu_config"
   rm -rf "$make_config"
   rm -rf "$custom_scenario_root"
   rm -rf "$webconsole_root"
-  rm -rf "$legacy_testbed_root"
 }
 trap cleanup EXIT
 check_args=(--testbed "$testbed")
@@ -26,6 +24,69 @@ while IFS= read -r -d '' script; do
   bash -n "$script"
 done < <(find "$HOST_ROOT/scripts" "$HOST_ROOT/tests" -type f -name '*.sh' -print0)
 echo "PASS shell syntax"
+
+(
+  provider_fixture=$(mktemp -d)
+  trap 'rm -rf "$provider_fixture"' EXIT
+  fixture_log="$provider_fixture/invocation.log"
+  printf '%s\n' '#!/usr/bin/env bash' 'printf "%s|%s\\n" "$(basename "$0")" "$*" >>"$PROVIDER_FIXTURE_LOG"' \
+    >"$provider_fixture/vagrant"
+  cp "$provider_fixture/vagrant" "$provider_fixture/VBoxManage"
+  chmod 0755 "$provider_fixture/vagrant" "$provider_fixture/VBoxManage"
+  export PATH="$provider_fixture:$PATH"
+  export PROVIDER_FIXTURE_LOG="$fixture_log"
+
+  provider_host_context_available /dev/null
+  touch "$provider_fixture/not-a-device"
+  if provider_host_context_available "$provider_fixture/not-a-device"; then
+    echo "provider host-context check accepted a regular file" >&2
+    exit 1
+  fi
+
+  require_provider_host_context() { return 126; }
+  if provider_vagrant status; then
+    echo "provider wrapper bypassed a rejected host context" >&2
+    exit 1
+  fi
+  if provider_vboxmanage list vms; then
+    echo "VirtualBox wrapper bypassed a rejected host context" >&2
+    exit 1
+  fi
+  if [ -e "$fixture_log" ]; then
+    echo "provider fixture started before the host-context guard passed" >&2
+    exit 1
+  fi
+
+  require_provider_host_context() { :; }
+  provider_vagrant validate
+  provider_vboxmanage list vms
+  grep -Fx 'vagrant|validate' "$fixture_log" >/dev/null
+  grep -Fx 'VBoxManage|list vms' "$fixture_log" >/dev/null
+)
+echo "PASS provider host-context guard and mock wrapper"
+
+"$HOST_ROOT/tests/provider-runtime-preflight.sh"
+
+(
+  test_vssh_runtime=$(mktemp -d)
+  trap 'rm -rf "$test_vssh_runtime"' EXIT
+  export XDG_RUNTIME_DIR=$test_vssh_runtime
+  provider_vagrant() {
+    # Model the real SSH client consuming its caller's stdin.
+    IFS= read -r _ || true
+  }
+  observed=()
+  while IFS= read -r unit; do
+    observed+=("$unit")
+    unit_action core start "$unit"
+  done <<< $'nrf\nnwdaf-root'
+  if [ "${observed[*]}" != 'nrf nwdaf-root' ]; then
+    echo "unit action consumed the manifest-driven service loop input" >&2
+    exit 1
+  fi
+)
+echo "PASS manifest-driven service loop stdin isolation"
+
 
 if make --no-print-directory -C "$HOST_ROOT" config-create \
   NAME=repository-interface-test FROM= DEVICE=cpu >/dev/null 2>&1; then
@@ -361,23 +422,32 @@ python3 "$HOST_ROOT/scripts/host/config-check.py" --testbed "$testbed" --config-
 python3 "$HOST_ROOT/scripts/host/ml-compose-check.py" --testbed "$testbed" \
   --config-dir "$cpu_config" --mode cpu-smoke
 
-cp "$HOST_ROOT/Vagrantfile" "$legacy_testbed_root/Vagrantfile"
-cp "$HOST_ROOT/testbed.yaml" "$legacy_testbed_root/testbed.yaml"
-touch "$legacy_testbed_root/testbed.local.yaml"
-if legacy_output=$(cd "$legacy_testbed_root" && TESTBED=testbed.yaml vagrant validate 2>&1); then
-  echo "Vagrant accepted removed testbed.local.yaml compatibility layer" >&2
+embedded_ruby=/opt/vagrant/embedded/bin/ruby
+[ -x "$embedded_ruby" ] || {
+  echo "Vagrant embedded Ruby is unavailable for isolated Vagrantfile syntax validation" >&2
   exit 1
-fi
-grep -F "testbed.local.yaml is no longer supported" <<<"$legacy_output" >/dev/null
-echo "OK stale testbed.local.yaml is rejected"
-rm "$legacy_testbed_root/testbed.local.yaml"
-if provider_output=$(cd "$legacy_testbed_root" && VAGRANT_DEFAULT_PROVIDER=libvirt TESTBED=testbed.yaml vagrant validate 2>&1); then
-  echo "Vagrant accepted a non-VirtualBox provider" >&2
-  exit 1
-fi
-grep -F "unsupported provider libvirt; expected virtualbox" <<<"$provider_output" >/dev/null
-echo "OK non-VirtualBox provider is rejected"
+}
+"$embedded_ruby" -c "$HOST_ROOT/Vagrantfile" >/dev/null
+echo "PASS isolated Vagrantfile Ruby syntax"
+(
+  vagrantfile_fixture=$(mktemp -d)
+  trap 'rm -rf "$vagrantfile_fixture"' EXIT
+  cp "$HOST_ROOT/Vagrantfile" "$vagrantfile_fixture/Vagrantfile"
+  cp "$HOST_ROOT/testbed.yaml" "$vagrantfile_fixture/testbed.yaml"
+  touch "$vagrantfile_fixture/testbed.local.yaml"
+  if legacy_output=$(cd "$vagrantfile_fixture" && TESTBED=testbed.yaml "$embedded_ruby" Vagrantfile 2>&1); then
+    echo "Vagrantfile accepted removed testbed.local.yaml compatibility layer" >&2
+    exit 1
+  fi
+  grep -F "testbed.local.yaml is no longer supported" <<<"$legacy_output" >/dev/null
+  rm "$vagrantfile_fixture/testbed.local.yaml"
+  if provider_output=$(cd "$vagrantfile_fixture" && VAGRANT_DEFAULT_PROVIDER=libvirt \
+    TESTBED=testbed.yaml "$embedded_ruby" Vagrantfile 2>&1); then
+    echo "Vagrantfile accepted a non-VirtualBox provider" >&2
+    exit 1
+  fi
+  grep -F "unsupported provider libvirt; expected virtualbox" <<<"$provider_output" >/dev/null
+)
+echo "PASS isolated Vagrantfile selection guards"
 
-(cd "$HOST_ROOT" && TESTBED="$testbed" vagrant validate)
-
-echo "Repository tests passed; no VM or service lifecycle state was changed."
+echo "Repository tests passed with synthetic provider checks; no provider or service process was started."

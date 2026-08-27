@@ -55,6 +55,19 @@ def main():
     assert "testbed.local" not in source
     assert "load_local_settings" not in source
     print("OK config resolution has no hidden local layer")
+
+    vagrantfile = (ROOT / "Vagrantfile").read_text(encoding="utf-8")
+    assert (
+        'abort "testbed.local.yaml is no longer supported; move topology settings into #{definition_path}" if File.exist?(legacy_local_path)'
+        in vagrantfile
+    )
+    assert (
+        'abort "unsupported provider #{requested_provider}; expected virtualbox" if requested_provider && requested_provider != "virtualbox"'
+        in vagrantfile
+    )
+    assert 'provider_name = "virtualbox"' in vagrantfile
+    assert 'Vagrant.configure("2")' in vagrantfile
+    print("OK Vagrantfile retains selected-testbed and VirtualBox-only guards")
     return 0
 
 

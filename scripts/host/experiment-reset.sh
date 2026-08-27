@@ -40,7 +40,7 @@ volume_specs=(
 
 vm_state() {
   local machine=$1
-  (cd "$HOST_ROOT" && vagrant status "$machine" --machine-readable 2>/dev/null) |
+  (cd "$HOST_ROOT" && provider_vagrant status "$machine" --machine-readable 2>/dev/null) |
     awk -F, '$3 == "state" {state=$4} END {print state}'
 }
 
@@ -112,8 +112,8 @@ assert_runtime_stopped() {
 
 guest_reset() {
   local guest_action=$1 remote_shell=/tmp/5g-nwdaf-experiment-reset.sh remote_js=/tmp/5g-nwdaf-experiment-reset.js
-  (cd "$HOST_ROOT" && vagrant upload "$HOST_ROOT/scripts/guest/experiment-reset.sh" "$remote_shell" core)
-  (cd "$HOST_ROOT" && vagrant upload "$HOST_ROOT/scripts/guest/experiment-reset.js" "$remote_js" core)
+  (cd "$HOST_ROOT" && provider_vagrant upload "$HOST_ROOT/scripts/guest/experiment-reset.sh" "$remote_shell" core)
+  (cd "$HOST_ROOT" && provider_vagrant upload "$HOST_ROOT/scripts/guest/experiment-reset.js" "$remote_js" core)
   vssh core "sudo bash '$remote_shell' '$guest_action' '$mongo_uri' '$nrf_database' '$adrf_database' '$storage_dir' '$adrf_instance_id' '$remote_js'; status=\$?; rm -f '$remote_shell' '$remote_js'; exit \$status"
 }
 

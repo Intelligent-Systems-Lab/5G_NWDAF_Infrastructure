@@ -15,6 +15,6 @@ export ML_DEVICE_POLICY
 ML_DEVICE_POLICY=$(config_ml_device_policy "$config_dir")
 python3 "$HOST_ROOT/scripts/host/ml-compose-check.py" "${check_args[@]}"
 ml_runtime_gate
-(cd "$HOST_ROOT" && TESTBED="$testbed" vagrant validate)
+(cd "$HOST_ROOT" && TESTBED="$testbed" provider_vagrant validate)
 
 echo "Experiment inputs and Host prerequisites are valid; no runtime state was changed."

@@ -8,6 +8,247 @@ PATH_A_UNITS=(upf-a nwdaf-a gnb-a ue1 ue2 ue3)
 PATH_B_UNITS=(upf-b nwdaf-b gnb-b ue4 ue5 ue6)
 ML_SERVICES=(pyanlf-a pyanlf-b pymtlf-a pymtlf-b pymtlf-c)
 
+provider_host_context_available() {
+  local device=${1:-/dev/vboxdrv}
+  # Require the host VirtualBox device namespace before a provider client can touch shared host IPC state.
+  [ -c "$device" ]
+}
+
+require_provider_host_context() {
+  local device=/dev/vboxdrv
+  if ! provider_host_context_available "$device"; then
+    echo "provider execution refused: $device is not visible as a character device; use an approved host context" >&2
+    return 126
+  fi
+}
+
+provider_vagrant() {
+  require_provider_host_context || return
+  # Keep long-lived provider helpers from inheriting repository lifecycle lock descriptors.
+  command vagrant "$@" 9>&-
+}
+
+provider_vboxmanage() {
+  require_provider_host_context || return
+  command VBoxManage "$@"
+}
+
+provider_process_records() {
+  local raw status
+  command -v pgrep >/dev/null || {
+    echo "provider process inventory refused: pgrep is unavailable" >&2
+    return 1
+  }
+  if raw=$(pgrep -a -u "$UID" -x VBoxHeadless 2>&1); then
+    :
+  else
+    status=$?
+    if [ "$status" -eq 1 ]; then
+      raw=
+    else
+      echo "provider process inventory failed: $raw" >&2
+      return 1
+    fi
+  fi
+  printf '%s\n' "$raw" | python3 "$HOST_ROOT/scripts/host/provider-process-inventory.py"
+}
+
+provider_machine_uuid_records() {
+  local metadata_root=${1:-$HOST_ROOT/.vagrant/machines}
+  local machine path machine_uuid entry provider_dir
+  local uuid_pattern='^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$'
+  declare -A seen=()
+  if [ -e "$metadata_root" ]; then
+    [ -d "$metadata_root" ] && [ -r "$metadata_root" ] || {
+      echo "invalid Vagrant machine metadata root: $metadata_root" >&2
+      return 1
+    }
+    for entry in "$metadata_root"/*; do
+      [ -e "$entry" ] || continue
+      machine=${entry##*/}
+      [[ " ${MACHINES[*]} " == *" $machine "* ]] || {
+        echo "unexpected Vagrant machine metadata: $machine" >&2
+        return 1
+      }
+    done
+  fi
+  for machine in "${MACHINES[@]}"; do
+    if [ -d "$metadata_root/$machine" ]; then
+      for provider_dir in "$metadata_root/$machine"/*; do
+        [ -e "$provider_dir" ] || continue
+        [ "${provider_dir##*/}" = virtualbox ] || {
+          echo "unexpected Vagrant provider metadata for $machine: ${provider_dir##*/}" >&2
+          return 1
+        }
+      done
+    fi
+    path="$metadata_root/$machine/virtualbox/id"
+    if [ ! -e "$path" ]; then
+      printf '%s|\n' "$machine"
+      continue
+    fi
+    [ -f "$path" ] && [ -r "$path" ] || {
+      echo "invalid Vagrant UUID metadata for $machine: $path" >&2
+      return 1
+    }
+    machine_uuid=$(<"$path")
+    [[ "$machine_uuid" =~ $uuid_pattern ]] || {
+      echo "invalid Vagrant UUID metadata for $machine: $path" >&2
+      return 1
+    }
+    machine_uuid=${machine_uuid,,}
+    if [ -n "${seen[$machine_uuid]:-}" ]; then
+      echo "duplicate Vagrant UUID metadata: $machine and ${seen[$machine_uuid]} use $machine_uuid" >&2
+      return 1
+    fi
+    seen[$machine_uuid]=$machine
+    printf '%s|%s\n' "$machine" "$machine_uuid"
+  done
+}
+
+validate_provider_runtime_inventory() {
+  local processes=$1 metadata=$2 states=${3:-}
+  local pid machine_uuid extra machine state
+  local uuid_pattern='^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'
+  declare -A process_counts=() metadata_uuids=() state_values=()
+
+  while IFS='|' read -r pid machine_uuid extra; do
+    [ -n "$pid$machine_uuid$extra" ] || continue
+    [[ "$pid" =~ ^[1-9][0-9]*$ ]] && [[ "$machine_uuid" =~ $uuid_pattern ]] && [ -z "$extra" ] || {
+      echo "invalid provider process record: $pid|$machine_uuid${extra:+|$extra}" >&2
+      return 1
+    }
+    process_counts[$machine_uuid]=$(( ${process_counts[$machine_uuid]:-0} + 1 ))
+    if [ "${process_counts[$machine_uuid]}" -gt 1 ]; then
+      echo "duplicate VBoxHeadless runtime for UUID $machine_uuid" >&2
+      return 1
+    fi
+  done <<<"$processes"
+
+  while IFS='|' read -r machine machine_uuid extra; do
+    [ -n "$machine$machine_uuid$extra" ] || continue
+    [[ " ${MACHINES[*]} " == *" $machine "* ]] && [ -z "$extra" ] || {
+      echo "invalid Vagrant metadata record: $machine|$machine_uuid${extra:+|$extra}" >&2
+      return 1
+    }
+    [ -z "${metadata_uuids[$machine]+set}" ] || {
+      echo "duplicate Vagrant metadata record for $machine" >&2
+      return 1
+    }
+    metadata_uuids[$machine]=$machine_uuid
+  done <<<"$metadata"
+  for machine in "${MACHINES[@]}"; do
+    [ -n "${metadata_uuids[$machine]+set}" ] || {
+      echo "Vagrant metadata omitted machine: $machine" >&2
+      return 1
+    }
+  done
+
+  [ -n "$states" ] || return 0
+  while IFS='|' read -r machine state extra; do
+    [ -n "$machine$state$extra" ] || continue
+    [[ " ${MACHINES[*]} " == *" $machine "* ]] && [ -n "$state" ] && [ -z "$extra" ] || {
+      echo "invalid Vagrant state record: $machine|$state${extra:+|$extra}" >&2
+      return 1
+    }
+    [ -z "${state_values[$machine]+set}" ] || {
+      echo "duplicate Vagrant state record for $machine" >&2
+      return 1
+    }
+    state_values[$machine]=$state
+  done <<<"$states"
+
+  for machine in "${MACHINES[@]}"; do
+    [ -n "${state_values[$machine]+set}" ] || {
+      echo "Vagrant state omitted machine: $machine" >&2
+      return 1
+    }
+    machine_uuid=${metadata_uuids[$machine]}
+    state=${state_values[$machine]}
+    if [ -z "$machine_uuid" ]; then
+      [ "$state" = not_created ] || {
+        echo "provider/Vagrant metadata mismatch for $machine: state=$state UUID=missing" >&2
+        return 1
+      }
+      continue
+    fi
+    case "$state" in
+      running)
+        [ "${process_counts[$machine_uuid]:-0}" -eq 1 ] || {
+          echo "provider/process mismatch for $machine: state=running process-count=${process_counts[$machine_uuid]:-0}" >&2
+          return 1
+        }
+        ;;
+      poweroff|saved|aborted)
+        [ "${process_counts[$machine_uuid]:-0}" -eq 0 ] || {
+          echo "provider/process mismatch for $machine: state=$state process-count=${process_counts[$machine_uuid]:-0}" >&2
+          return 1
+        }
+        ;;
+      not_created)
+        echo "provider/Vagrant metadata mismatch for $machine: state=not_created UUID=$machine_uuid" >&2
+        return 1
+        ;;
+      *)
+        echo "provider runtime preflight refused unsupported state for $machine: $state" >&2
+        return 1
+        ;;
+    esac
+  done
+}
+
+provider_live_vm_state_records() {
+  local raw machine state count total
+  if ! raw=$(cd "$HOST_ROOT" && TESTBED="${TESTBED:-testbed.yaml}" provider_vagrant status --machine-readable); then
+    echo "failed to query Vagrant machine states" >&2
+    return 1
+  fi
+  total=$(awk -F, '$3=="state" {count++} END {print count+0}' <<<"$raw")
+  [ "$total" -eq "${#MACHINES[@]}" ] || {
+    echo "Vagrant status returned $total total machine state records; expected ${#MACHINES[@]}" >&2
+    return 1
+  }
+  for machine in "${MACHINES[@]}"; do
+    count=$(awk -F, -v wanted="$machine" '$2==wanted && $3=="state" {count++} END {print count+0}' <<<"$raw")
+    [ "$count" -eq 1 ] || {
+      echo "Vagrant status returned $count state records for machine: $machine" >&2
+      return 1
+    }
+    state=$(awk -F, -v wanted="$machine" '$2==wanted && $3=="state" {print $4}' <<<"$raw")
+    printf '%s|%s\n' "$machine" "$state"
+  done
+}
+
+provider_vm_up_preflight() {
+  local metadata_root=${1:-$HOST_ROOT/.vagrant/machines}
+  local processes_before processes_after metadata states
+  require_provider_host_context || return
+  processes_before=$(provider_process_records) || return
+  metadata=$(provider_machine_uuid_records "$metadata_root") || return
+  validate_provider_runtime_inventory "$processes_before" "$metadata" || return
+  states=$(provider_live_vm_state_records) || return
+  processes_after=$(provider_process_records) || return
+  [ "$processes_before" = "$processes_after" ] || {
+    echo "provider process inventory changed during Vagrant state query; refusing vm-up" >&2
+    return 1
+  }
+  validate_provider_runtime_inventory "$processes_after" "$metadata" "$states"
+}
+
+provider_vagrant_up() {
+  local lock_root=${XDG_RUNTIME_DIR:-/tmp}/5g-nwdaf-infrastructure-$UID
+  require_provider_host_context || return
+  mkdir -p "$lock_root" && chmod 700 "$lock_root" || {
+    echo "provider runtime preflight cannot secure lifecycle lock directory: $lock_root" >&2
+    return 1
+  }
+  (
+    flock 9 || return
+    provider_vm_up_preflight || return
+    provider_vagrant up "$@"
+  ) 9>"$lock_root/vagrant-up.lock"
+}
+
 vm_log_sources() {
   local machine=$1 filter=$2 logical unit
   local -a template_units=()
@@ -69,18 +310,7 @@ vm_state_records() {
     cat "$VM_STATE_RECORDS_FILE"
     return
   fi
-  if ! raw=$(cd "$HOST_ROOT" && TESTBED="${TESTBED:-testbed.yaml}" vagrant status --machine-readable); then
-    echo "failed to query Vagrant machine states" >&2
-    return 1
-  fi
-  for machine in "${MACHINES[@]}"; do
-    state=$(awk -F, -v wanted="$machine" '$2==wanted && $3=="state" {value=$4} END {print value}' <<<"$raw")
-    if [ -z "$state" ]; then
-      echo "Vagrant status omitted machine: $machine" >&2
-      return 1
-    fi
-    printf '%s|%s\n' "$machine" "$state"
-  done
+  provider_live_vm_state_records
 }
 
 vm_state_for() {
@@ -147,7 +377,7 @@ vssh() {
   (
     flock 9
     cd "$HOST_ROOT"
-    vagrant ssh "$machine" -c "$command"
+    provider_vagrant ssh "$machine" -c "$command" </dev/null
   ) 9>"$lock_root/vagrant-$machine.lock"
 }
 
@@ -383,7 +613,7 @@ stage_config_all() {
   tar -C "$config_dir" -czf "$archive" .
   for machine in "${MACHINES[@]}"; do
     echo "STAGE $machine $destination"
-    (cd "$HOST_ROOT" && vagrant upload "$archive" "/tmp/5g-nwdaf-config-${hash:0:16}.tgz" "$machine")
+    (cd "$HOST_ROOT" && provider_vagrant upload "$archive" "/tmp/5g-nwdaf-config-${hash:0:16}.tgz" "$machine")
     vssh "$machine" "sudo rm -rf '$destination' && sudo install -d '$destination' && sudo tar -C '$destination' -xzf '/tmp/5g-nwdaf-config-${hash:0:16}.tgz' && sudo rm -f '/tmp/5g-nwdaf-config-${hash:0:16}.tgz' && sudo /usr/local/libexec/5g-nwdaf-infrastructure/config-activate '$machine' '$destination' '$hash'"
   done
   trap - RETURN

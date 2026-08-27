@@ -35,8 +35,8 @@ while advanced and developer commands remain available. `TESTBED` defaults to
 
 | Command | Function and effect |
 | --- | --- |
-| `make vm-up` | Create/provision missing VMs or power on existing Core/Path VMs. Does not start experiment processes. |
-| `make vm-status` | Show Vagrant VM power state. Read-only. |
+| `make vm-up` | After a fail-closed Host process/Vagrant UUID and state preflight, create/provision missing VMs or power on existing Core/Path VMs. Does not start experiment processes. |
+| `make vm-status` | Show Vagrant VM power state from an approved Host context; this provider query does not prove that no orphan process exists. |
 | `make vm-halt` | Gracefully power off all three VMs without deleting them. |
 | `make services-start CONFIG_DIR=...` | Sync helpers, stage config/data, apply subscriber fixtures, and start guest units in dependency order. Does not start ML or subscriptions. |
 | `make services-status` | Show all 23 guest unit states plus current-invocation Registration/PDU readiness for six UEs. Read-only; readiness is `inactive`, `pending`, `successful`, or `failed`. |

@@ -129,13 +129,13 @@ webconsole-stop:
 	@scripts/host/webconsole-stop.sh
 
 vm-up:
-	@TESTBED="$(TESTBED)" vagrant up
+	@source scripts/host/lib.sh; TESTBED="$(TESTBED)" provider_vagrant_up
 
 vm-status:
-	@TESTBED="$(TESTBED)" vagrant status
+	@source scripts/host/lib.sh; TESTBED="$(TESTBED)" provider_vagrant status
 
 vm-halt:
-	@TESTBED="$(TESTBED)" vagrant halt
+	@source scripts/host/lib.sh; TESTBED="$(TESTBED)" provider_vagrant halt
 
 services-start:
 	@scripts/host/services-start.sh "$(TESTBED)" "$(CONFIG_DIR)"

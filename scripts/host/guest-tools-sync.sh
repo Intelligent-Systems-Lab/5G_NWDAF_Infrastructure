@@ -39,7 +39,7 @@ fi
 
 for machine in "${selected_machines[@]}"; do
   echo "SYNC RUNTIME TOOLS $machine source=$source_hash"
-  (cd "$HOST_ROOT" && vagrant upload "$archive" "$remote_archive" "$machine")
+  (cd "$HOST_ROOT" && provider_vagrant upload "$archive" "$remote_archive" "$machine")
   printf -v command \
     'set -euo pipefail; archive=%q; expected=%q; actual=$(sha256sum "$archive" | awk '\''{print $1}'\''); test "$actual" = "$expected"; stage=$(mktemp -d); trap '\''rm -rf "$stage" "$archive"'\'' EXIT; tar -C "$stage" -xzf "$archive"; sudo bash "$stage/scripts/guest/runtime-tools-install.sh" %q "$stage" "$expected"' \
     "$remote_archive" "$source_hash" "$machine"

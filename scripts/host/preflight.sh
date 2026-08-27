@@ -31,9 +31,9 @@ if command -v vagrant >/dev/null; then
   provider=${VAGRANT_DEFAULT_PROVIDER:-virtualbox}
   case "$provider" in
     virtualbox)
-      if command -v VBoxManage >/dev/null && VBoxManage list vms >/dev/null 2>&1; then
+      if command -v VBoxManage >/dev/null && provider_vboxmanage list vms >/dev/null 2>&1; then
         ok "VirtualBox CLI and host driver available"
-        virtualbox_storage=$(VBoxManage list systemproperties | sed -n 's/^Default machine folder:[[:space:]]*//p')
+        virtualbox_storage=$(provider_vboxmanage list systemproperties | sed -n 's/^Default machine folder:[[:space:]]*//p')
         if [ -n "$virtualbox_storage" ] && [ -d "$virtualbox_storage" ]; then
           ok "VirtualBox machine folder available: $virtualbox_storage"
         else
