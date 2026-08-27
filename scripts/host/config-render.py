@@ -71,6 +71,18 @@ def static_owned_supis(testbed):
     }
 
 
+def static_owner_tracking_area(testbed, item):
+    owner = next(
+        owner
+        for owner in testbed["analytics"]["dataOwners"]
+        if owner["position"] == item["dataOwner"]
+    )
+    return {
+        "plmn_id": dict(testbed["mobileNetwork"]["plmn"]),
+        "tac": testbed["paths"][owner["path"]]["tai"]["tac"],
+    }
+
+
 def render_static_nwdaf(testbed, output, item):
     role = item["role"]
     template = "nwdafcfg-c.yaml" if role in ("server", "root") else "nwdafcfg-a.yaml"
@@ -91,11 +103,18 @@ def render_static_nwdaf(testbed, output, item):
         ["nnwdaf-mlmodelprovision", "nnwdaf-mlmodelmonitor"]
         if role in ("server", "root") else ["nnwdaf-mlmodeltraining"]
     )
-    native["nwdafInfo"] = {"mlAnalyticsList": [{
+    analytics_info = {
         "mlAnalyticsIds": ["UE_COMMUNICATION"],
         "mlModelInterInfo": {"vendorList": ["001122"]},
         "flCapabilityType": capability,
-    }]}
+    }
+    if deployment_kind(testbed) == "static-flat" and role == "client":
+        area = static_owner_tracking_area(testbed, item)
+        analytics_info["trackingAreaList"] = [{
+            "plmnId": area["plmn_id"],
+            "tac": area["tac"],
+        }]
+    native["nwdafInfo"] = {"mlAnalyticsList": [analytics_info]}
     for service in ("anlf", "mtlf"):
         native[service]["server"].update({
             "registerIPv4": item["address"], "bindingIPv4": item["address"],
@@ -229,13 +248,7 @@ def static_topology(testbed, nwdafs):
     if deployment_kind(testbed) == "static-flat":
         return {"version": 1, "clients": [{
             "nf_instance_id": item["nfInstanceId"],
-            "scope": {"tracking_areas": [{
-                "plmn_id": dict(testbed["mobileNetwork"]["plmn"]),
-                "tac": testbed["paths"][next(
-                    owner["path"] for owner in testbed["analytics"]["dataOwners"]
-                    if owner["position"] == item["dataOwner"]
-                )]["tai"]["tac"],
-            }]},
+            "scope": {"tracking_areas": [static_owner_tracking_area(testbed, item)]},
         } for item in nwdafs if item["role"] == "client"]}
     leaves = {item["dataOwner"]: item for item in nwdafs if item["role"] == "leaf"}
     return {

@@ -336,6 +336,18 @@ def check_static_specific(check, testbed, config_dir, runtime, scenario):
             item["unit"] + " FL capability",
             native["nwdafInfo"]["mlAnalyticsList"][0].get("flCapabilityType"), capability,
         )
+        expected_tracking_areas = None
+        if kind == "static-flat" and item["role"] == "client":
+            owner = owners[item["dataOwner"]]
+            expected_tracking_areas = [{
+                "plmnId": dict(testbed["mobileNetwork"]["plmn"]),
+                "tac": testbed["paths"][owner["path"]]["tai"]["tac"],
+            }]
+        check.equal(
+            item["unit"] + " registration tracking areas",
+            native["nwdafInfo"]["mlAnalyticsList"][0].get("trackingAreaList"),
+            expected_tracking_areas,
+        )
         service = item["backends"]["mtlf"]
         definition = testbed["mlRuntime"]["services"][service]
         config = load_yaml(config_dir / (service + ".yaml"))

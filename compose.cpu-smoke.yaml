@@ -5,7 +5,7 @@
 x-pymtlf-smoke: &pymtlf-smoke
   volumes:
     - type: bind
-      source: ./tests/support/pymtlf-smoke-health.py
+      source: ${REPOSITORY_ROOT:?REPOSITORY_ROOT must be set}/tests/support/pymtlf-smoke-health.py
       target: /opt/app/pymtlf-smoke-health.py
       read_only: true
   healthcheck:

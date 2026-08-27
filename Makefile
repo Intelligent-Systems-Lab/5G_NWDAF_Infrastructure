@@ -12,7 +12,8 @@ WEBCONSOLE ?= false
 	webconsole-start webconsole-status webconsole-stop \
 	services-start services-status services-stop subscriptions-start \
 	subscriptions-status subscriptions-stop subscriber-data-apply \
-	subscriber-data-show subscriber-data-clear observe logs
+	subscriber-data-show subscriber-data-clear fl-collection-start fl-collection-status \
+	fl-collection-stop fl-training-start fl-training-status observe logs
 
 help:
 	@echo "5G NWDAF Infrastructure"
@@ -42,6 +43,8 @@ help-advanced:
 	@echo "  make ml-start CONFIG_DIR=... | ml-status | ml-stop"
 	@echo "  make webconsole-start CONFIG_DIR=... | webconsole-status | webconsole-stop"
 	@echo "  make subscriptions-start | subscriptions-status | subscriptions-stop"
+	@echo "  make fl-collection-start|status|stop CONFIG_DIR=... RUN_ID=<uuid>"
+	@echo "  make fl-training-start|status CONFIG_DIR=... RUN_ID=<uuid> [MODEL_FAMILY_ID=...]"
 	@echo "  make observe"
 	@echo "  make logs [SOURCE=vm|ml|all] [VM=core|path-a|path-b|all] [SERVICE=name|glob|all]"
 	@echo "            [SINCE='10 minutes ago'] [TAIL=lines|all] [FOLLOW=true|false]"
@@ -164,6 +167,21 @@ subscriptions-status:
 
 subscriptions-stop:
 	@scripts/host/subscriptions-stop.sh
+
+fl-collection-start:
+	@python3 scripts/host/fl-control.py collection-start --testbed "$(TESTBED)" --config-dir "$(CONFIG_DIR)" --run-id "$(RUN_ID)"
+
+fl-collection-status:
+	@python3 scripts/host/fl-control.py collection-status --testbed "$(TESTBED)" --config-dir "$(CONFIG_DIR)" --run-id "$(RUN_ID)"
+
+fl-collection-stop:
+	@python3 scripts/host/fl-control.py collection-stop --testbed "$(TESTBED)" --config-dir "$(CONFIG_DIR)" --run-id "$(RUN_ID)"
+
+fl-training-start:
+	@python3 scripts/host/fl-control.py training-start --testbed "$(TESTBED)" --config-dir "$(CONFIG_DIR)" --run-id "$(RUN_ID)" $(if $(MODEL_FAMILY_ID),--model-family-id "$(MODEL_FAMILY_ID)")
+
+fl-training-status:
+	@python3 scripts/host/fl-control.py training-status --testbed "$(TESTBED)" --config-dir "$(CONFIG_DIR)" --run-id "$(RUN_ID)" $(if $(MODEL_FAMILY_ID),--model-family-id "$(MODEL_FAMILY_ID)")
 
 observe:
 	@scripts/host/observe.sh "$(TESTBED)" "$(CONFIG_DIR)"

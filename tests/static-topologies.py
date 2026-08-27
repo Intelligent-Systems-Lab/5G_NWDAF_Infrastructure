@@ -110,8 +110,36 @@ def main():
             topology_path = config_dir / "topology" / (deployment + ".yaml")
             topology = yaml.safe_load(topology_path.read_text(encoding="utf-8"))
             if deployment == "static-flat":
+                topology_tais = {
+                    client["nf_instance_id"]: [
+                        {
+                            "plmnId": area["plmn_id"],
+                            "tac": area["tac"],
+                        }
+                        for area in client["scope"]["tracking_areas"]
+                    ]
+                    for client in topology["clients"]
+                }
+                for unit, item in definition["analytics"].items():
+                    if not unit.startswith("nwdaf-") or item.get("role") != "client":
+                        continue
+                    native = load_yaml(config_dir / ("nwdafcfg-{}.yaml".format(
+                        unit[len("nwdaf-"):]
+                    )))["configuration"]
+                    assert native["nwdafInfo"]["mlAnalyticsList"][0].get(
+                        "trackingAreaList"
+                    ) == topology_tais[item["nfInstanceId"]]
                 topology["clients"] = topology["clients"][:-1]
             else:
+                for unit, item in definition["analytics"].items():
+                    if not unit.startswith("nwdaf-"):
+                        continue
+                    native = load_yaml(config_dir / ("nwdafcfg-{}.yaml".format(
+                        unit[len("nwdaf-"):]
+                    )))["configuration"]
+                    assert "trackingAreaList" not in (
+                        native["nwdafInfo"]["mlAnalyticsList"][0]
+                    )
                 topology["branches"][0]["leaves"] = []
             topology_path.write_text(yaml.safe_dump(topology, sort_keys=False), encoding="utf-8")
             rejected = run(

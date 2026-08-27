@@ -24,10 +24,12 @@ on_error() {
 trap on_error ERR INT TERM
 cleanup
 python3 "$HOST_ROOT/tests/support/ml-cpu-config.py" --output "$config_dir"
+export CONFIG_DIR="$config_dir"
 "$HOST_ROOT/scripts/host/ml-start.sh" "$HOST_ROOT/testbed.yaml" "$config_dir"
-"$HOST_ROOT/scripts/host/ml-status.sh"
+"$HOST_ROOT/scripts/host/ml-status.sh" "$HOST_ROOT/testbed.yaml" "$config_dir"
 "$HOST_ROOT/scripts/host/logs.sh" --source ml --service pyanlf-a \
-  --since "5 minutes ago" --tail 10 --no-follow
+  --since "5 minutes ago" --tail 10 --no-follow \
+  --testbed "$HOST_ROOT/testbed.yaml" --config-dir "$config_dir"
 
 for service in "${ML_SERVICES[@]}"; do
   runtime_uid=$(ml_compose exec -T "$service" id -u)
@@ -59,7 +61,7 @@ docker stats --no-stream --format \
   'container={{.Name}} memory={{.MemUsage}} cpu={{.CPUPerc}} pids={{.PIDs}}' \
   "${running_containers[@]}"
 
-"$HOST_ROOT/scripts/host/ml-stop.sh"
+"$HOST_ROOT/scripts/host/ml-stop.sh" "$HOST_ROOT/testbed.yaml" "$config_dir"
 
 if docker ps -q --filter "label=com.docker.compose.project=$ML_PROJECT_NAME" | read -r _; then
   echo "test containers are still running after ml-stop" >&2
@@ -75,7 +77,7 @@ if [ "${#retained_containers[@]}" -ne 5 ] || [ "${#retained_volumes[@]}" -ne 5 ]
   echo "ml-stop did not retain the expected five containers and five volumes" >&2
   false
 fi
-"$HOST_ROOT/scripts/host/ml-status.sh"
+"$HOST_ROOT/scripts/host/ml-status.sh" "$HOST_ROOT/testbed.yaml" "$config_dir"
 
 trap - ERR INT TERM
 cleanup

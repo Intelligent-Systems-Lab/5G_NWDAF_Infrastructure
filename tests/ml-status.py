@@ -59,8 +59,8 @@ def main():
     assert summary["adoption"]["detail"] == "model=2 scopes=2 complete=True", summary
     assert summary["cutover"]["timestamp"] == "2026-08-13T00:00:15Z", summary
     assert summary["post_cutover_accuracy"]["timestamp"] == "2026-08-13T00:00:16Z", summary
-    assert summary["client_a"]["detail"] == "rounds=0,1 final_validation=true", summary
-    assert summary["client_b"]["detail"] == "rounds=0,1 final_validation=true", summary
+    assert summary["client_a"]["detail"] == "rounds=0,1 samples=0:6,1:6 final_validation=true", summary
+    assert summary["client_b"]["detail"] == "rounds=0,1 samples=0:6,1:6 final_validation=true", summary
     assert summary["failure"] == {"timestamp": "not-seen", "detail": "not-seen"}, summary
     assert MODULE.fl_result(summary, "running") == (
         "outcome=complete model=2 evidence=post-cutover-accuracy"
@@ -116,6 +116,105 @@ def main():
     })
     assert cross_service_failure["failure"]["timestamp"] == "2026-08-13T00:00:13Z", cross_service_failure
     assert "pymtlf-a" in cross_service_failure["failure"]["detail"], cross_service_failure
+
+    static_logs = {
+        "pymtlf-server": "\n".join((
+            "2026-08-27T00:00:10Z Federated process started process_id=static-1 scopes=['1','2','3','4']",
+            "2026-08-27T00:00:20Z Federated preparation complete process_id=static-1 participants=['1','2','3','4']",
+            "2026-08-27T00:00:30Z Federated round aggregated process_id=static-1 round=0 artifact=a",
+            "2026-08-27T00:00:40Z Federated round aggregated process_id=static-1 round=1 artifact=b",
+            "2026-08-27T00:00:50Z Federated final validation evaluated process_id=static-1 base_wape=1.0 candidate_wape=0.5 gate_would_accept=True enforced=False",
+            "2026-08-27T00:01:00Z Federated model published publication_id=pub model_id=2 state=COMPLETE required_scopes=0",
+            "2026-08-27T00:01:01Z Federated final validation complete process_id=static-1 state=COMPLETE artifact=http://candidate",
+        )),
+    }
+    for position in range(1, 5):
+        static_logs["pymtlf-client-{}".format(position)] = "\n".join((
+            "2026-08-27T00:00:25Z FL client local result ready subscription_id={} round=0 samples={} artifact=a".format(position, position),
+            "2026-08-27T00:00:35Z FL client local result ready subscription_id={} round=1 samples={} artifact=b".format(position, position + 4),
+            "2026-08-27T00:00:45Z FL client final validation ready subscription_id={} round=2 samples=1".format(position),
+        ))
+    static = MODULE.parse_fl_milestones(static_logs, "pymtlf-server")
+    assert all(
+        static["client_{}".format(position)]["timestamp"] != "not-seen"
+        for position in range(1, 5)
+    ), static
+    assert static["client_4"]["detail"] == (
+        "rounds=0,1 samples=0:4,1:8 final_validation=true"
+    ), static
+    assert MODULE.fl_result(static, "running", static=True) == (
+        "outcome=verification-incomplete phase=cleanup"
+    ), static
+    cleanup_lines = []
+    for position in range(1, 5):
+        cleanup_lines.extend((
+            "2026-08-27T00:00:{:02d}Z FL participant resource created process_id=static-1 nf=client-{} location=/training/{}".format(
+                20 + position, position, position
+            ),
+            "2026-08-27T00:01:{:02d}Z FL participant resource deleted process_id=static-1 nf=client-{} location=/training/{} status=204".format(
+                1 + position, position, position
+            ),
+        ))
+    static_success = MODULE.parse_fl_milestones(
+        {
+            **static_logs,
+            "pymtlf-server": static_logs["pymtlf-server"] + "\n" + "\n".join(cleanup_lines),
+        },
+        "pymtlf-server",
+    )
+    assert static_success["cleanup"]["detail"] == (
+        "created=4 deleted=4 active=0 unknown_deletes=0"
+    ), static_success
+    assert MODULE.fl_result(static_success, "running", static=True) == (
+        "outcome=complete model=2 evidence=static-publication"
+    ), static_success
+    mixed_run = MODULE.parse_fl_milestones(
+        {
+            **static_logs,
+            "pymtlf-server": static_logs["pymtlf-server"]
+            + "\n"
+            + "\n".join(cleanup_lines[:6])
+            + "\n2026-08-27T00:01:10Z FL participant resource created process_id=other-run nf=client-4 location=/training/other"
+            + "\n2026-08-27T00:01:11Z FL participant resource deleted process_id=other-run nf=client-4 location=/training/other status=204",
+        },
+        "pymtlf-server",
+    )
+    assert mixed_run["cleanup"]["detail"] == (
+        "created=3 deleted=3 active=0 unknown_deletes=0"
+    ), mixed_run
+    assert MODULE.fl_result(mixed_run, "running", static=True) == (
+        "outcome=verification-incomplete phase=cleanup"
+    ), mixed_run
+    static_failed = MODULE.parse_fl_milestones(
+        {
+            **static_logs,
+            "pymtlf-server": static_logs["pymtlf-server"]
+            + "\n2026-08-27T00:01:02Z FL participant cleanup failed process_id=static-1 nf=client-4 error=timeout",
+        },
+        "pymtlf-server",
+    )
+    assert MODULE.fl_result(static_failed, "running", static=True).startswith(
+        "outcome=failed"
+    ), static_failed
+
+    hfl_container = {
+        "Config": {
+            "Labels": {
+                "io.5g-nwdaf.config-set": "static-hfl",
+                "io.5g-nwdaf.config-hash": "c" * 64,
+            }
+        },
+        "State": {
+            "Running": True,
+            "Status": "running",
+            "StartedAt": "2026-08-27T00:00:00Z",
+        },
+    }
+    rendered = io.StringIO()
+    with redirect_stdout(rendered):
+        MODULE.print_fl_summary({"pymtlf-root": hfl_container}, "pymtlf-root")
+    assert "topology=static-hierarchical milestones=not-evaluated" in rendered.getvalue()
+    assert "created=4" not in rendered.getvalue()
 
     original_run = MODULE.subprocess.run
     captured = {}
@@ -252,13 +351,19 @@ def main():
             "ml-status.py", "--services", "pymtlf-client-1",
             "--coordinator", "pymtlf-client-1", "--config-set", "static-flat",
             "--config-hash", "selected-hash", "--identity-only",
+            "--require-running-selected",
         ]
         assert MODULE.main() == 0
         assert [command[1] for command in identity_commands] == ["ps", "inspect"]
 
-        MODULE.sys.argv[-2] = "wrong-hash"
+        MODULE.sys.argv[2] = "pymtlf-client-1,pymtlf-client-2"
+        assert MODULE.main() == 1
+        MODULE.sys.argv[2] = "pymtlf-client-1"
+
+        MODULE.sys.argv[8] = "wrong-hash"
         assert MODULE.main() == 1
 
+        MODULE.sys.argv.pop()
         MODULE.sys.argv.append("--allow-stopped-selected-mismatch")
         assert MODULE.main() == 1
 

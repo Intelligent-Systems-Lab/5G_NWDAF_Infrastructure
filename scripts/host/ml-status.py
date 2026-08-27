@@ -146,17 +146,18 @@ def latest_milestone(current, timestamp, detail):
     return current
 
 
-def parse_fl_milestones(logs_by_service):
+def parse_fl_milestones(logs_by_service, coordinator_name="pymtlf-c"):
     result = {
         "monitors": milestone(),
         "degradation": milestone(),
         "process": milestone(),
         "preparation": milestone(),
-        "client_a": milestone(),
-        "client_b": milestone(),
         "rounds": milestone(),
         "validation": milestone(),
         "publication": milestone(),
+        "completion": milestone(),
+        "cleanup": milestone(),
+        "cleanup_failure": milestone(),
         "adoption": milestone(),
         "cutover": milestone(),
         "post_cutover_accuracy": milestone(),
@@ -167,9 +168,20 @@ def parse_fl_milestones(logs_by_service):
     process_id = None
     rounds = set()
     adopted_scopes = set()
-    client_rounds = {"pymtlf-a": set(), "pymtlf-b": set()}
-    client_validation = {"pymtlf-a": False, "pymtlf-b": False}
-    client_timestamp = {"pymtlf-a": "not-seen", "pymtlf-b": "not-seen"}
+    created_resources = {}
+    deleted_resources = {}
+    cleanup_timestamps = {}
+    client_services = tuple(
+        sorted(
+            service
+            for service in logs_by_service
+            if service != coordinator_name and service.startswith("pymtlf-")
+        )
+    )
+    client_rounds = {service: set() for service in client_services}
+    client_samples = {service: {} for service in client_services}
+    client_validation = {service: False for service in client_services}
+    client_timestamp = {service: "not-seen" for service in client_services}
     cutover_seen = False
 
     for service, raw in logs_by_service.items():
@@ -179,7 +191,9 @@ def parse_fl_milestones(logs_by_service):
             if service in client_rounds:
                 local = re.search(r"FL client local result ready .* round=(\d+) samples=(\d+)", message)
                 if local:
-                    client_rounds[service].add(int(local.group(1)))
+                    round_indicator = int(local.group(1))
+                    client_rounds[service].add(round_indicator)
+                    client_samples[service][round_indicator] = int(local.group(2))
                     client_timestamp[service] = timestamp
                 validation = re.search(r"FL client final validation ready .* round=(\d+) samples=(\d+)", message)
                 if validation:
@@ -242,6 +256,43 @@ def parse_fl_milestones(logs_by_service):
                     timestamp,
                     "model={} state={} required_scopes={}".format(*published.groups()),
                 )
+            completed = re.search(
+                r"Federated final validation complete process_id=([^ ]+) state=([^ ]+) artifact=([^ ]+)",
+                message,
+            )
+            if completed:
+                result["completion"] = milestone(
+                    timestamp,
+                    "process={} state={} artifact={}".format(*completed.groups()),
+                )
+            cleanup_failed = re.search(
+                r"FL participant cleanup failed process_id=([^ ]+) nf=([^ ]+) error=(.*)",
+                message,
+            )
+            if cleanup_failed:
+                result["cleanup_failure"] = latest_milestone(
+                    result["cleanup_failure"],
+                    timestamp,
+                    "process={} nf={} error={}".format(*cleanup_failed.groups()),
+                )
+            created = re.search(
+                r"FL participant resource created process_id=([^ ]+) nf=([^ ]+) location=([^ ]+)",
+                message,
+            )
+            if created:
+                resource_process = created.group(1)
+                created_resources.setdefault(resource_process, {})[created.group(3)] = (
+                    created.group(2)
+                )
+                cleanup_timestamps[resource_process] = timestamp
+            deleted = re.search(
+                r"FL participant resource deleted process_id=([^ ]+) nf=([^ ]+) location=([^ ]+) status=(\d+)",
+                message,
+            )
+            if deleted:
+                resource_process = deleted.group(1)
+                deleted_resources.setdefault(resource_process, set()).add(deleted.group(3))
+                cleanup_timestamps[resource_process] = timestamp
             adopted = re.search(r"Federated model scope adopted model_id=([^ ]+) scope=([^ ]+) complete=([^ ]+)", message)
             if adopted:
                 adopted_scopes.add(adopted.group(2))
@@ -261,12 +312,43 @@ def parse_fl_milestones(logs_by_service):
                     result["failure"], timestamp, "process={}".format(failed.group(1))
                 )
 
-    for service, key in (("pymtlf-a", "client_a"), ("pymtlf-b", "client_b")):
+    cleanup_process = milestone_value(result["completion"]["detail"], "process")
+    if cleanup_process == "unknown":
+        cleanup_process = process_id
+    process_created = created_resources.get(cleanup_process or "", {})
+    process_deleted = deleted_resources.get(cleanup_process or "", set())
+    if process_created or process_deleted:
+        active_resources = set(process_created).difference(process_deleted)
+        unknown_deletes = process_deleted.difference(process_created)
+        result["cleanup"] = milestone(
+            cleanup_timestamps[cleanup_process],
+            "created={} deleted={} active={} unknown_deletes={}".format(
+                len(process_created),
+                len(process_deleted.intersection(process_created)),
+                len(active_resources),
+                len(unknown_deletes),
+            ),
+        )
+
+    for service in client_services:
+        key = {
+            "pymtlf-a": "client_a",
+            "pymtlf-b": "client_b",
+        }.get(
+            service,
+            service[len("pymtlf-") :].replace("-", "_"),
+        )
+        result[key] = milestone()
         if client_rounds[service] or client_validation[service]:
+            samples = ",".join(
+                "{}:{}".format(round_indicator, client_samples[service][round_indicator])
+                for round_indicator in sorted(client_samples[service])
+            ) or "none"
             result[key] = milestone(
                 client_timestamp[service],
-                "rounds={} final_validation={}".format(
+                "rounds={} samples={} final_validation={}".format(
                     ",".join(map(str, sorted(client_rounds[service]))) or "none",
+                    samples,
                     str(client_validation[service]).lower(),
                 ),
             )
@@ -278,7 +360,42 @@ def milestone_value(detail, key):
     return match.group(1) if match else "unknown"
 
 
-def fl_result(summary, coordinator_state):
+def fl_result(summary, coordinator_state, *, static=False):
+    if static:
+        completion = summary["completion"]
+        failure = latest_milestone(
+            summary["failure"],
+            summary["cleanup_failure"]["timestamp"],
+            summary["cleanup_failure"]["detail"],
+        )
+        complete_time = timestamp_order(completion["timestamp"])
+        failure_time = timestamp_order(failure["timestamp"])
+        if failure["timestamp"] != "not-seen" and (
+            completion["timestamp"] == "not-seen"
+            or complete_time is None
+            or failure_time is None
+            or failure_time >= complete_time
+        ):
+            return "outcome=failed evidence={}".format(failure["detail"].replace(" ", "_"))
+        if (
+            completion["timestamp"] != "not-seen"
+            and milestone_value(completion["detail"], "state") == "COMPLETE"
+            and summary["publication"]["timestamp"] != "not-seen"
+            and milestone_value(summary["publication"]["detail"], "required_scopes") == "0"
+            and milestone_value(summary["cleanup"]["detail"], "created") == "4"
+            and milestone_value(summary["cleanup"]["detail"], "deleted") == "4"
+            and milestone_value(summary["cleanup"]["detail"], "active") == "0"
+            and milestone_value(summary["cleanup"]["detail"], "unknown_deletes") == "0"
+        ):
+            return "outcome=complete model={} evidence=static-publication".format(
+                milestone_value(summary["publication"]["detail"], "model")
+            )
+        if (
+            completion["timestamp"] != "not-seen"
+            and milestone_value(completion["detail"], "state") == "COMPLETE"
+            and summary["publication"]["timestamp"] != "not-seen"
+        ):
+            return "outcome=verification-incomplete phase=cleanup"
     success = summary["post_cutover_accuracy"]
     failure = summary["failure"]
     success_time = timestamp_order(success["timestamp"])
@@ -304,6 +421,8 @@ def fl_result(summary, coordinator_state):
         ("cutover", "post-cutover-validation"),
         ("adoption", "model-adoption"),
         ("publication", "model-publication"),
+        ("completion", "static-completion"),
+        ("cleanup", "participant-cleanup"),
         ("validation", "federated-validation"),
         ("rounds", "federated-training"),
         ("preparation", "federated-preparation"),
@@ -388,11 +507,21 @@ def container_logs_since(container, service=None, cache_dir=None, until=None):
 
 
 def print_fl_summary(by_service, coordinator_name="pymtlf-c", cache_dir=None):
+    static_flat = coordinator_name == "pymtlf-server"
+    supported = coordinator_name == "pymtlf-c" or static_flat
     coordinator = by_service.get(coordinator_name)
     if coordinator is None:
         print("FL CURRENT RUN coordinator={} container=absent milestones=not-seen".format(coordinator_name))
-        if coordinator_name == "pymtlf-c":
-            print("FL RESULT {}".format(fl_result(parse_fl_milestones({}), "absent")))
+        if supported:
+            print(
+                "FL RESULT {}".format(
+                    fl_result(
+                        parse_fl_milestones({}, coordinator_name),
+                        "absent",
+                        static=static_flat,
+                    )
+                )
+            )
         else:
             print("FL RESULT outcome=not-started reason=coordinator-absent")
         return
@@ -401,22 +530,26 @@ def print_fl_summary(by_service, coordinator_name="pymtlf-c", cache_dir=None):
         labels.get("io.5g-nwdaf.config-set", "unknown"),
         labels.get("io.5g-nwdaf.config-hash", "unknown")[:12],
     )
-    if coordinator_name != "pymtlf-c":
-        started_at = coordinator.get("State", {}).get("StartedAt", "unknown")
-        state = (
-            "running" if coordinator.get("State", {}).get("Running")
-            else coordinator.get("State", {}).get("Status", "stopped")
-        )
+    started_at = coordinator.get("State", {}).get("StartedAt", "unknown")
+    coordinator_state = (
+        "running" if coordinator.get("State", {}).get("Running")
+        else coordinator.get("State", {}).get("Status", "stopped")
+    )
+    if not supported:
         print(
             "FL CURRENT RUN config={} coordinator={} coordinator_started_at={}".format(
                 identity, coordinator_name, started_at
             )
         )
-        print("FL RESULT outcome={} topology=static milestones=not-evaluated".format(
-            "in-progress" if state == "running" else "not-started"
-        ))
+        print(
+            "FL RESULT outcome={} topology=static-hierarchical milestones=not-evaluated".format(
+                "in-progress" if coordinator_state == "running" else "not-started"
+            )
+        )
         return
-    for service in ("pymtlf-a", "pymtlf-b"):
+    for service in by_service:
+        if not service.startswith("pymtlf-") or service == coordinator_name:
+            continue
         container = by_service.get(service)
         if container is None:
             continue
@@ -427,28 +560,33 @@ def print_fl_summary(by_service, coordinator_name="pymtlf-c", cache_dir=None):
         )
         if service_identity != identity:
             raise RuntimeError(
-                "FL current-run config identity mismatch: pymtlf-c={} {}={}".format(
-                    identity, service, service_identity
+                "FL current-run config identity mismatch: {}={} {}={}".format(
+                    coordinator_name, identity, service, service_identity
                 )
             )
-    started_at = coordinator.get("State", {}).get("StartedAt", "unknown")
+    selected_fl_services = tuple(
+        service for service in by_service if service.startswith("pymtlf-")
+    )
     logs = {
         service: container_logs_since(
             by_service[service], service=service, cache_dir=cache_dir
         )
-        for service in ("pymtlf-a", "pymtlf-b", "pymtlf-c")
-        if service in by_service
+        for service in selected_fl_services
     }
-    summary = parse_fl_milestones(logs)
-    print("FL CURRENT RUN config={} coordinator_started_at={}".format(identity, started_at))
+    summary = parse_fl_milestones(logs, coordinator_name)
+    print(
+        "FL CURRENT RUN config={} coordinator={} coordinator_started_at={}".format(
+            identity, coordinator_name, started_at
+        )
+    )
     print("{:<24} {:<30} {}".format("MILESTONE", "TIMESTAMP", "EVIDENCE"))
     for name, value in summary.items():
         print("{:<24} {:<30} {}".format(name, value["timestamp"], value["detail"]))
-    coordinator_state = (
-        "running" if coordinator.get("State", {}).get("Running")
-        else coordinator.get("State", {}).get("Status", "stopped")
+    print(
+        "FL RESULT {}".format(
+            fl_result(summary, coordinator_state, static=static_flat)
+        )
     )
-    print("FL RESULT {}".format(fl_result(summary, coordinator_state)))
 
 
 def memory_usage(containers):
@@ -472,9 +610,17 @@ def main():
     parser.add_argument("--config-hash", required=True)
     parser.add_argument("--identity-only", action="store_true")
     parser.add_argument("--allow-stopped-selected-mismatch", action="store_true")
+    parser.add_argument("--require-running-selected", action="store_true")
     args = parser.parse_args()
     if args.allow_stopped_selected_mismatch and not args.identity_only:
         parser.error("--allow-stopped-selected-mismatch requires --identity-only")
+    if args.require_running_selected and not args.identity_only:
+        parser.error("--require-running-selected requires --identity-only")
+    if args.require_running_selected and args.allow_stopped_selected_mismatch:
+        parser.error(
+            "--require-running-selected cannot be combined with "
+            "--allow-stopped-selected-mismatch"
+        )
     if not PROJECT_PATTERN.fullmatch(args.project):
         raise SystemExit("invalid project name")
     cache_dir = Path(args.cache_dir).resolve() if args.cache_dir else None
@@ -494,6 +640,9 @@ def main():
         ]
     ).splitlines()
     if not ids:
+        if args.require_running_selected:
+            print("ERROR selected ML containers are absent", file=sys.stderr)
+            return 1
         if args.identity_only:
             return 0
         print("ML project={} containers=absent".format(args.project))
@@ -542,6 +691,21 @@ def main():
     if unexpected_running:
         print("ERROR unexpected ML containers are running", file=sys.stderr)
         return 1
+    if args.require_running_selected:
+        unavailable = [
+            service
+            for service in services
+            if service not in by_service
+            or not by_service[service].get("State", {}).get("Running")
+        ]
+        if unavailable:
+            print(
+                "ERROR selected ML containers are not all running: {}".format(
+                    ", ".join(unavailable)
+                ),
+                file=sys.stderr,
+            )
+            return 1
     if args.identity_only:
         return 0
 

@@ -155,6 +155,32 @@ def main():
         for key, value in expected_seed_environment.items():
             check.equal(name + " " + key, environment.get(key), value)
 
+    if args.mode == "cpu-smoke":
+        helper_source = (ROOT / "tests" / "support" / "pymtlf-smoke-health.py").resolve()
+        for name in ("pymtlf-a", "pymtlf-b", "pymtlf-c"):
+            service = services.get(name, {})
+            helper_mounts = [
+                item
+                for item in service.get("volumes", [])
+                if item.get("target") == "/opt/app/pymtlf-smoke-health.py"
+            ]
+            check.equal(name + " smoke helper mount count", len(helper_mounts), 1)
+            if helper_mounts:
+                check.equal(
+                    name + " smoke helper source",
+                    Path(helper_mounts[0]["source"]),
+                    helper_source,
+                )
+                check.equal(
+                    name + " smoke helper source type",
+                    helper_mounts[0].get("type"),
+                    "bind",
+                )
+                check.true(
+                    name + " smoke helper must be read-only",
+                    helper_mounts[0].get("read_only") is True,
+                )
+
     if check.errors:
         for error in check.errors:
             print("ERROR: " + error, file=sys.stderr)

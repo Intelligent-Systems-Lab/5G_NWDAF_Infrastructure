@@ -42,7 +42,7 @@ while advanced and developer commands remain available. `TESTBED` defaults to
 | `make services-status CONFIG_DIR=...` | Show manifest-selected guest units plus current-invocation Registration/PDU readiness for six or eight UEs. Read-only. |
 | `make services-stop CONFIG_DIR=...` | Stop manifest-selected guest experiment units in reverse order without halting VMs or deleting persistent data. |
 | `make ml-start CONFIG_DIR=...` | Enforce bind-address and CPU/GPU requirements, build/reuse images, and start the selected five or seven containers. |
-| `make ml-status CONFIG_DIR=...` | Show selected container/device/image identity. Production Flat also renders the A/B/C milestone summary; static milestones remain explicitly unevaluated in Phase 2. |
+| `make ml-status CONFIG_DIR=...` | Show selected container/device/image identity. Production Flat renders the A/B/C milestone summary, static Flat renders the Server/four-Client publication and exact cleanup summary, and static Hierarchical remains explicitly unevaluated until its execution phase. |
 | `make ml-stop CONFIG_DIR=...` | Stop only the Compose project's running containers and retain containers, images, and selected volumes. |
 | `make webconsole-start CONFIG_DIR=...` | If enabled, prepare/reuse the Core artifact and start WebConsole. MongoDB and NRF must be active. |
 | `make webconsole-status` | Show the WebConsole unit and endpoint state. Read-only. |
@@ -50,6 +50,31 @@ while advanced and developer commands remain available. `TESTBED` defaults to
 | `make subscriptions-start` | Start the Core Consumer, discover two distinct path NWDAFs through NRF, and create two subscriptions. |
 | `make subscriptions-status` | Show the Consumer service, local saved resource state, selected providers, exact locations, and independent Path A/B callback request counts/times. Read-only; it does not claim remote GET verification. |
 | `make subscriptions-stop` | Delete the exact saved resources and stop the callback only after successful cleanup. |
+
+## Static Flat controlled flow
+
+These commands accept only a selected `static-flat` deployment and require one
+operator-retained canonical lowercase UUIDv4 `RUN_ID`. They derive the Server,
+four Clients, collection profiles, endpoints, model family, and ownership from
+the selected manifest and native configs. A non-static-Flat topology, a
+selected/active config mismatch, an unhealthy selected container, or a stale
+or contradictory resource fails closed.
+
+| Command | Function and effect |
+| --- | --- |
+| `make fl-collection-start TESTBED=... CONFIG_DIR=... RUN_ID=...` | Create or idempotently recover the four exact private collection requests, wait for all four to collect, and perform bounded exact rollback if a partial create fails. |
+| `make fl-collection-status TESTBED=... CONFIG_DIR=... RUN_ID=...` | Show each owner's request/profile identity, state, resolved UE and active peer counts, stored records/observations, descriptor state, and cleanup state. Read-only. |
+| `make fl-collection-stop TESTBED=... CONFIG_DIR=... RUN_ID=...` | Delete the four exact peer collection resources and succeed only after every request retains its descriptor with zero active/pending peer resources and no cleanup pending. |
+| `make fl-training-start TESTBED=... CONFIG_DIR=... RUN_ID=... [MODEL_FAMILY_ID=...]` | Require four current retained descriptors, resolve the selected Server family, and create or idempotently recover one manual static Flat training request. |
+| `make fl-training-status TESTBED=... CONFIG_DIR=... RUN_ID=... [MODEL_FAMILY_ID=...]` | Show the exact top-level request identity, family, mode, participant source, state, rounds, candidate digest, and bounded failure detail. Read-only. |
+
+Collection stop retains the stored descriptor and data for the configured
+retention window; it is not a data reset. If more than one retained collection
+group matches a Client's training request, dataset preparation rejects the
+ambiguity. Preserve the evidence, then wait for descriptor expiry or use the
+selected guarded reset before starting a fresh run. The commands do not create
+a Host run ledger, automatically generate `RUN_ID`, start traffic, stop the
+experiment, or reset retained state.
 
 ## Subscriber and retained state
 
