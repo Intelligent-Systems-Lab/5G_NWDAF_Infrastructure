@@ -250,23 +250,42 @@ provider_vagrant_up() {
 }
 
 vm_log_sources() {
-  local machine=$1 filter=$2 logical unit
+  local machine=$1 filter=$2 config_dir=${3:-} logical unit unit_lines
   local -a template_units=()
   local -a special_sources=()
   case "$machine" in
     core)
-      template_units=("${CORE_UNITS[@]}" webconsole)
+      if [ -n "$config_dir" ]; then
+        unit_lines=$(config_guest_units "$config_dir" core) || return
+        [ -n "$unit_lines" ] || { echo "selected Guest inventory is empty for core" >&2; return 1; }
+        mapfile -t template_units <<<"$unit_lines"
+        template_units+=(webconsole)
+      else
+        template_units=("${CORE_UNITS[@]}" webconsole)
+      fi
       special_sources=(
         'consumer|5g-nwdaf-consumer.service'
         'network|5g-nwdaf-network.service'
       )
       ;;
     path-a)
-      template_units=("${PATH_A_UNITS[@]}")
+      if [ -n "$config_dir" ]; then
+        unit_lines=$(config_guest_units "$config_dir" path-a) || return
+        [ -n "$unit_lines" ] || { echo "selected Guest inventory is empty for path-a" >&2; return 1; }
+        mapfile -t template_units <<<"$unit_lines"
+      else
+        template_units=("${PATH_A_UNITS[@]}")
+      fi
       special_sources=('network|5g-nwdaf-network.service')
       ;;
     path-b)
-      template_units=("${PATH_B_UNITS[@]}")
+      if [ -n "$config_dir" ]; then
+        unit_lines=$(config_guest_units "$config_dir" path-b) || return
+        [ -n "$unit_lines" ] || { echo "selected Guest inventory is empty for path-b" >&2; return 1; }
+        mapfile -t template_units <<<"$unit_lines"
+      else
+        template_units=("${PATH_B_UNITS[@]}")
+      fi
       special_sources=('network|5g-nwdaf-network.service')
       ;;
     *)
@@ -301,7 +320,6 @@ journal_log_since() {
 }
 
 vm_state_records() {
-  local raw machine state
   if [ -n "${VM_STATE_RECORDS_FILE:-}" ]; then
     [ -r "$VM_STATE_RECORDS_FILE" ] || {
       echo "cached VM state is not readable: $VM_STATE_RECORDS_FILE" >&2
@@ -475,6 +493,115 @@ print(resolve_ml_device_policy(resolve_path(sys.argv[1])))
 PY
 }
 
+config_guest_service_records() {
+  local config_dir=$1
+  PYTHONPATH="$HOST_ROOT/scripts/host" python3 - "$config_dir" <<'PY'
+import sys
+from configlib import runtime_guest_services, resolve_path
+for item in runtime_guest_services(resolve_path(sys.argv[1])):
+    print("{}|{}|{}".format(item["machine"], item["unit"], item["kind"]))
+PY
+}
+
+config_guest_units() {
+  local config_dir=$1 wanted_machine=$2
+  config_guest_service_records "$config_dir" | awk -F'|' -v machine="$wanted_machine" '$1 == machine {print $2}'
+}
+
+config_host_containers() {
+  local config_dir=$1
+  PYTHONPATH="$HOST_ROOT/scripts/host" python3 - "$config_dir" <<'PY'
+import sys
+from configlib import runtime_host_containers, resolve_path
+print(*runtime_host_containers(resolve_path(sys.argv[1])), sep="\n")
+PY
+}
+
+config_ml_build_services() {
+  local config_dir=$1
+  PYTHONPATH="$HOST_ROOT/scripts/host" python3 - "$config_dir" <<'PY'
+import sys
+from configlib import load_runtime_manifest, load_yaml, resolve_path
+directory = resolve_path(sys.argv[1])
+runtime = load_runtime_manifest(directory)["runtime"]
+compose = load_yaml(directory / "compose.yaml")
+seen = set()
+for name in runtime["hostContainers"]:
+    image = compose["services"][name]["image"]
+    if image not in seen:
+        seen.add(image)
+        print(name)
+PY
+}
+
+config_ml_volume_records() {
+  local config_dir=$1
+  PYTHONPATH="$HOST_ROOT/scripts/host" python3 - "$config_dir" <<'PY'
+import sys
+from configlib import runtime_ml_volumes, resolve_path
+for item in runtime_ml_volumes(resolve_path(sys.argv[1])):
+    print("{}|{}".format(item["name"], item["image"]))
+PY
+}
+
+config_subscriptions_mode() {
+  local config_dir=$1
+  PYTHONPATH="$HOST_ROOT/scripts/host" python3 - "$config_dir" <<'PY'
+import sys
+from configlib import runtime_subscriptions, resolve_path
+print(runtime_subscriptions(resolve_path(sys.argv[1])))
+PY
+}
+
+config_coordinator_container() {
+  local config_dir=$1
+  PYTHONPATH="$HOST_ROOT/scripts/host" python3 - "$config_dir" <<'PY'
+import sys
+from configlib import runtime_coordinator_container, resolve_path
+print(runtime_coordinator_container(resolve_path(sys.argv[1])))
+PY
+}
+
+assert_ml_runtime_identity() {
+  local testbed=$1 config_dir=$2 policy=${3:-strict} project services coordinator config_set selected_hash
+  local -a policy_args=()
+  case "$policy" in
+    strict) ;;
+    start) policy_args+=(--allow-stopped-selected-mismatch) ;;
+    *) echo "invalid ML identity policy: $policy" >&2; return 2 ;;
+  esac
+  project=$(ml_project_name)
+  services=$(config_host_containers "$config_dir" | paste -sd, -)
+  [ -n "$services" ] || {
+    echo "selected ML inventory is empty" >&2
+    return 1
+  }
+  coordinator=$(config_coordinator_container "$config_dir")
+  config_set=$(basename "$config_dir")
+  selected_hash=$(config_hash "$config_dir")
+  python3 "$HOST_ROOT/scripts/host/ml-status.py" \
+    --project "$project" --services "$services" --coordinator "$coordinator" \
+    --config-set "$config_set" --config-hash "$selected_hash" --identity-only \
+    "${policy_args[@]}"
+}
+
+wait_no_running_ml_containers() {
+  local project=$1 attempts=${2:-30} attempt running
+  [[ "$attempts" =~ ^[1-9][0-9]*$ ]] || {
+    echo "invalid ML stop wait attempt count: $attempts" >&2
+    return 2
+  }
+  for ((attempt=1; attempt<=attempts; attempt++)); do
+    running=$(docker ps -q --filter "label=com.docker.compose.project=$project") || return
+    [ -z "$running" ] && return 0
+    [ "$attempt" -eq "$attempts" ] || sleep 1
+  done
+  echo "ML stop is incomplete after ${attempts}s; project containers remain running" >&2
+  docker ps --filter "label=com.docker.compose.project=$project" \
+    --format '  {{.Names}} {{.Status}}' >&2 || true
+  return 1
+}
+
 config_webconsole_enabled() {
   local config_dir=$1
   PYTHONPATH="$HOST_ROOT/scripts/host" python3 - "$config_dir" <<'PY'
@@ -498,6 +625,52 @@ print(config["ipv4Address"], config["port"])
 PY
 }
 
+assert_guest_runtime_identity() {
+  local config_dir=$1 selected_hash vm_records machine state snapshot stored_hash actual_hash unit declared
+  selected_hash=$(config_hash "$config_dir")
+  vm_records=$(vm_state_records) || return
+  for machine in "${MACHINES[@]}"; do
+    state=$(awk -F'|' -v wanted="$machine" '$1 == wanted {print $2}' <<<"$vm_records")
+    [ "$state" = running ] || continue
+    snapshot=$(vssh "$machine" "stored=\$(cat /etc/5g-nwdaf-infrastructure/active.sha256 2>/dev/null || true); actual=\$(sudo /usr/local/libexec/5g-nwdaf-infrastructure/config-hash /etc/5g-nwdaf-infrastructure/active 2>/dev/null || true); printf 'IDENTITY|%s|%s\\n' \"\$stored\" \"\$actual\"; systemctl list-units --state=active --no-legend '5g-nwdaf@*.service' | sed -n 's/^[[:space:]]*5g-nwdaf@\([^ ]*\)\.service.*/UNIT|\1/p'" 2>/dev/null | tr -d '\r') || {
+      echo "failed to read active config/process identity from $machine" >&2
+      return 1
+    }
+    IFS='|' read -r _ stored_hash actual_hash <<<"$(sed -n '1p' <<<"$snapshot")"
+    if [ "$stored_hash" != "$selected_hash" ] || [ "$actual_hash" != "$selected_hash" ]; then
+      echo "selected/active config mismatch on $machine: selected=$selected_hash stored=${stored_hash:-missing} actual=${actual_hash:-missing}" >&2
+      return 1
+    fi
+    declared=$(config_guest_units "$config_dir" "$machine") || return
+    [ -n "$declared" ] || { echo "selected Guest inventory is empty for $machine" >&2; return 1; }
+    while IFS='|' read -r record unit; do
+      [ "$record" = UNIT ] || continue
+      if ! grep -Fxq "$unit" <<<"$declared"; then
+        echo "unexpected active Guest unit on $machine: $unit" >&2
+        return 1
+      fi
+    done < <(sed -n '2,$p' <<<"$snapshot")
+  done
+}
+
+assert_no_active_guest_units() {
+  local vm_records machine state active
+  vm_records=$(vm_state_records) || return
+  for machine in "${MACHINES[@]}"; do
+    state=$(awk -F'|' -v wanted="$machine" '$1 == wanted {print $2}' <<<"$vm_records")
+    [ "$state" = running ] || continue
+    active=$(vssh "$machine" "systemctl list-units --state=active --no-legend '5g-nwdaf@*.service' | sed -n 's/^[[:space:]]*5g-nwdaf@\([^ ]*\)\.service.*/\1/p'" 2>/dev/null | tr -d '\r') || {
+      echo "failed to verify stopped Guest units on $machine" >&2
+      return 1
+    }
+    if [ -n "$active" ]; then
+      echo "Guest stop is incomplete on $machine:" >&2
+      printf '%s\n' "$active" >&2
+      return 1
+    fi
+  done
+}
+
 ml_device_policy() {
   local policy=${ML_DEVICE_POLICY:-}
   case "$policy" in
@@ -508,14 +681,17 @@ ml_device_policy() {
 }
 
 ml_compose() {
-  local project policy
+  local project policy config_dir
   local -a command
   project=$(ml_project_name)
   policy=$(ml_device_policy)
-  command=(docker compose -p "$project" -f "$HOST_ROOT/compose.yaml")
-  if [ "$policy" = cpu ]; then
-    command+=(-f "$HOST_ROOT/compose.cpu.yaml")
-  fi
+  config_dir=${CONFIG_DIR:-}
+  [ -n "$config_dir" ] && [ -f "$config_dir/compose.yaml" ] || {
+    echo "CONFIG_DIR must select a generated config with compose.yaml" >&2
+    return 2
+  }
+  export REPOSITORY_ROOT="$HOST_ROOT"
+  command=(docker compose -p "$project" -f "$config_dir/compose.yaml")
   if [ "$(ml_runtime_mode)" = cpu-smoke ]; then
     command+=(-f "$HOST_ROOT/compose.cpu-smoke.yaml")
   fi
@@ -537,19 +713,24 @@ raise SystemExit(0 if target in addresses else 1)
 }
 
 ml_host_resource_gate() {
-  local testbed=$1
-  local reserve_mib swap_policy minimum_swap_mib minimum_storage_gib
-  local available_mib swap_free_mib docker_root docker_free_gib
-  read -r reserve_mib swap_policy minimum_swap_mib minimum_storage_gib < <(
-    PYTHONPATH="$HOST_ROOT/scripts/host" python3 - "$testbed" <<'PY'
+  local testbed=$1 config_dir=$2
+  local reserve_mib swap_policy minimum_swap_mib minimum_storage_gib container_mib build_mib gpu_participants gpu_memory_mib gpu_free_mib
+  local available_mib swap_free_mib docker_root docker_free_gib required_mib
+  read -r reserve_mib swap_policy minimum_swap_mib minimum_storage_gib container_mib build_mib gpu_participants gpu_memory_mib < <(
+    PYTHONPATH="$HOST_ROOT/scripts/host" python3 - "$testbed" "$config_dir" <<'PY'
 import sys
-from configlib import load_yaml, resolve_path
+from configlib import load_runtime_manifest, load_yaml, resolve_path
 safety = load_yaml(resolve_path(sys.argv[1]))["hostSafety"]
+capacity = load_runtime_manifest(resolve_path(sys.argv[2]))["runtime"]["capacity"]
 print(
     safety["reserveMemoryMiB"],
     safety["swapPolicy"],
     safety["minimumFreeSwapMiB"],
     safety["minimumFreeStorageGiB"],
+    capacity["hostContainerMemoryMiB"],
+    capacity["containerBuildOverheadMemoryMiB"],
+    capacity["gpuParticipants"],
+    capacity["minimumGpuMemoryMiB"],
 )
 PY
   )
@@ -558,8 +739,10 @@ PY
   docker_root=$(docker info --format '{{.DockerRootDir}}')
   docker_free_gib=$(df -Pk "$docker_root" | awk 'NR==2 {print int($4/1024/1024)}')
 
-  if [ "$available_mib" -lt "$reserve_mib" ]; then
-    echo "available RAM ${available_mib}MiB is below ML/Host reserve ${reserve_mib}MiB" >&2
+  required_mib=$((container_mib + build_mib))
+  [ "$required_mib" -ge "$reserve_mib" ] || required_mib=$reserve_mib
+  if [ "$available_mib" -lt "$required_mib" ]; then
+    echo "available RAM ${available_mib}MiB is below selected Host requirement ${required_mib}MiB (containers ${container_mib}MiB + build overhead ${build_mib}MiB; reserve floor ${reserve_mib}MiB)" >&2
     return 1
   fi
   if [ "$docker_free_gib" -lt "$minimum_storage_gib" ]; then
@@ -573,7 +756,14 @@ PY
     fi
     echo "WARN free swap ${swap_free_mib}MiB is below ${minimum_swap_mib}MiB" >&2
   fi
-  echo "ML HOST available_ram=${available_mib}MiB reserve=${reserve_mib}MiB docker_free=${docker_free_gib}GiB"
+  if [ "$gpu_participants" -gt 0 ]; then
+    gpu_free_mib=$(nvidia-smi --query-gpu=memory.free --format=csv,noheader,nounits | sort -nr | head -n 1)
+    if [ "${gpu_free_mib:-0}" -lt "$gpu_memory_mib" ]; then
+      echo "GPU free memory ${gpu_free_mib:-0}MiB is below selected minimum ${gpu_memory_mib}MiB" >&2
+      return 1
+    fi
+  fi
+  echo "ML HOST available_ram=${available_mib}MiB required=${required_mib}MiB containers=${container_mib}MiB build_overhead=${build_mib}MiB reserve=${reserve_mib}MiB docker_free=${docker_free_gib}GiB"
 }
 
 ml_runtime_gate() {
@@ -604,7 +794,8 @@ ml_runtime_gate() {
 }
 
 stage_config_all() {
-  local config_dir=$1 hash=$2 name archive temporary machine destination
+  local config_dir=$1 hash=$2 name archive temporary machine destination identity rollback_machine
+  local -A old_target=() old_hash=() activated=()
   name=$(basename "$config_dir")
   destination="/etc/5g-nwdaf-infrastructure/config-sets/${name}-${hash:0:16}"
   temporary=$(mktemp -d)
@@ -612,9 +803,27 @@ stage_config_all() {
   trap 'rm -rf "$temporary"' RETURN
   tar -C "$config_dir" -czf "$archive" .
   for machine in "${MACHINES[@]}"; do
+    identity=$(vssh "$machine" "printf '%s|%s\\n' \"\$(readlink /etc/5g-nwdaf-infrastructure/active 2>/dev/null || true)\" \"\$(cat /etc/5g-nwdaf-infrastructure/active.sha256 2>/dev/null || true)\"" | tr -d '\r')
+    IFS='|' read -r old_target["$machine"] old_hash["$machine"] <<<"$identity"
     echo "STAGE $machine $destination"
     (cd "$HOST_ROOT" && provider_vagrant upload "$archive" "/tmp/5g-nwdaf-config-${hash:0:16}.tgz" "$machine")
-    vssh "$machine" "sudo rm -rf '$destination' && sudo install -d '$destination' && sudo tar -C '$destination' -xzf '/tmp/5g-nwdaf-config-${hash:0:16}.tgz' && sudo rm -f '/tmp/5g-nwdaf-config-${hash:0:16}.tgz' && sudo /usr/local/libexec/5g-nwdaf-infrastructure/config-activate '$machine' '$destination' '$hash'"
+    vssh "$machine" "sudo rm -rf '$destination' && sudo install -d '$destination' && sudo tar -C '$destination' -xzf '/tmp/5g-nwdaf-config-${hash:0:16}.tgz' && sudo rm -f '/tmp/5g-nwdaf-config-${hash:0:16}.tgz'"
+  done
+  for machine in "${MACHINES[@]}"; do
+    if vssh "$machine" "sudo /usr/local/libexec/5g-nwdaf-infrastructure/config-activate '$machine' '$destination' '$hash'"; then
+      activated["$machine"]=true
+      continue
+    fi
+    echo "config activation failed on $machine; restoring previously active identities" >&2
+    for rollback_machine in "${MACHINES[@]}"; do
+      [ "${activated[$rollback_machine]:-false}" = true ] || continue
+      if [ -n "${old_target[$rollback_machine]}" ] && [ -n "${old_hash[$rollback_machine]}" ]; then
+        vssh "$rollback_machine" "sudo /usr/local/libexec/5g-nwdaf-infrastructure/config-activate '$rollback_machine' '${old_target[$rollback_machine]}' '${old_hash[$rollback_machine]}'" || true
+      else
+        vssh "$rollback_machine" "sudo rm -f /etc/5g-nwdaf-infrastructure/active /etc/5g-nwdaf-infrastructure/active.sha256; sudo /usr/local/libexec/5g-nwdaf-infrastructure/network-setup --clear" || true
+      fi
+    done
+    return 1
   done
   trap - RETURN
   rm -rf "$temporary"

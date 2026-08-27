@@ -2,6 +2,7 @@
 """Validate one complete native config set against a testbed definition."""
 
 import argparse
+import copy
 import ipaddress
 import json
 import subprocess
@@ -11,7 +12,8 @@ from pathlib import Path
 
 from configlib import (
     ROOT, SCENARIO_SCHEMA, canonical_sha256, config_generator_source_hash, get_path,
-    guest_network_configs, load_yaml, resolve_config_dir,
+    deployment_kind, expected_runtime_inventory, guest_network_configs,
+    load_runtime_manifest, load_yaml, nwdaf_definitions, resolve_config_dir,
     repository_relative_paths, resolve_config_scenario, resolve_ml_bind_address,
     resolve_mobile_identities, resolve_path, resolve_scenario_profile_paths,
     sha256_tree,
@@ -29,7 +31,30 @@ REQUIRED = {
     "ueransim/ue2.yaml", "ueransim/ue3.yaml", "ueransim/ue4.yaml",
     "ueransim/ue5.yaml", "ueransim/ue6.yaml",
     "network/core.yaml", "network/path-a.yaml", "network/path-b.yaml",
+    "compose.yaml",
+    "subscriber/ue-subscribers.json", "subscriber/group-memberships.json",
 }
+
+
+def required_files(testbed):
+    kind = deployment_kind(testbed)
+    if kind == "production-flat":
+        return set(REQUIRED)
+    required = {
+        "nrfcfg.yaml", "amfcfg.yaml", "ausfcfg.yaml", "nssfcfg.yaml",
+        "pcfcfg.yaml", "smfcfg.yaml", "udmcfg.yaml", "udrcfg.yaml",
+        "uerouting.yaml", "upfcfg-a.yaml", "upfcfg-b.yaml", "adrfcfg.yaml",
+        "webuicfg.yaml", "manifest.yaml", "compose.yaml",
+        "subscriber/ue-subscribers.json", "subscriber/group-memberships.json",
+        "network/core.yaml", "network/path-a.yaml", "network/path-b.yaml",
+        "ueransim/gnb-a.yaml", "ueransim/gnb-b.yaml",
+        "topology/{}.yaml".format(kind),
+    }
+    required.update("ueransim/ue{}.yaml".format(index) for index in range(1, 9))
+    for definition in nwdaf_definitions(testbed):
+        required.add("nwdafcfg-{}.yaml".format(definition["unit"][len("nwdaf-"):]))
+        required.add(definition["backends"]["mtlf"] + ".yaml")
+    return required
 
 
 class Check:
@@ -144,14 +169,18 @@ def check_subscriber_fixtures(check, testbed, config_dir, identities):
     check.equal("subscriber fixture schema", subscribers.get("schemaVersion"), 1)
     check.equal("subscriber fixture PLMN", subscribers.get("servingPlmnId"), expected_plmn)
     check.equal("subscriber fixture SUPIs", fixture_supis, expected_supis)
-    check.true("subscriber fixture GPSIs must be unique", len(fixture_gpsis) == len(set(fixture_gpsis)) == 6)
+    check.true(
+        "subscriber fixture GPSIs must be unique",
+        len(fixture_gpsis) == len(set(fixture_gpsis)) == len(expected_supis),
+    )
     check.equal("subscriber fixture S-NSSAI", defaults.get("snssai"), testbed["mobileNetwork"]["snssai"])
     check.equal("subscriber fixture DNN", defaults.get("dnn"), testbed["mobileNetwork"]["dnn"])
 
     group_records = groups.get("groups", [])
     check.equal("group fixture schema", groups.get("schemaVersion"), 1)
-    check.equal("group fixture count", len(group_records), 1)
-    if len(group_records) == 1:
+    if deployment_kind(testbed) == "production-flat":
+        check.equal("group fixture count", len(group_records), 1)
+    if deployment_kind(testbed) == "production-flat" and len(group_records) == 1:
         check.equal(
             "group fixture ID", group_records[0].get("intGroupId"),
             identities["internalGroupId"],
@@ -160,6 +189,17 @@ def check_subscriber_fixtures(check, testbed, config_dir, identities):
             "group fixture SUPIs",
             [item.get("supi") for item in group_records[0].get("ueIdList", [])],
             expected_supis,
+        )
+    elif deployment_kind(testbed) != "production-flat":
+        expected = expected_runtime_inventory(testbed)["dataOwners"]
+        check.equal("group fixture count", len(group_records), 4)
+        check.equal(
+            "static ownership groups",
+            [{
+                "intGroupId": item.get("intGroupId"),
+                "supis": [entry.get("supi") for entry in item.get("ueIdList", [])],
+            } for item in group_records],
+            [{"intGroupId": item["internalGroupId"], "supis": item["supis"]} for item in expected],
         )
 
     for index, expected_supi in enumerate(expected_supis, 1):
@@ -174,6 +214,193 @@ def check_subscriber_fixtures(check, testbed, config_dir, identities):
         sd = str(ue_snssai.get("sd", ""))
         ue_snssai["sd"] = sd[2:] if sd.startswith("0x") else sd
         check.equal("UE{} fixture S-NSSAI".format(index), ue_snssai, defaults.get("snssai"))
+
+
+def check_manifest_exact(check, testbed_path, testbed, config_dir, actual_files):
+    try:
+        manifest = load_runtime_manifest(config_dir)
+    except (KeyError, OSError, TypeError, ValueError) as exc:
+        check.true("invalid runtime manifest: {}".format(exc), False)
+        return None
+    topology = manifest.get("topology", {})
+    try:
+        definition = testbed_path.relative_to(ROOT).as_posix()
+    except ValueError:
+        definition = str(testbed_path)
+    check.equal("manifest topology name", topology.get("name"), testbed.get("name"))
+    check.equal("manifest topology kind", topology.get("kind"), deployment_kind(testbed))
+    check.equal("manifest topology definition", topology.get("definition"), definition)
+    check.equal("manifest topology hash", topology.get("definitionHash"), canonical_sha256(testbed))
+    policy = manifest.get("renderOptions", {}).get("mlDevicePolicy")
+    check.true("manifest renderOptions.mlDevicePolicy must be cpu or gpu", policy in ("cpu", "gpu"))
+    selected = copy.deepcopy(testbed)
+    if policy == "cpu":
+        for name, service in selected["mlRuntime"]["services"].items():
+            if name.startswith("pymtlf-") and service["device"] != "cpu":
+                service["device"] = "cpu"
+    try:
+        expected = expected_runtime_inventory(selected)
+    except (KeyError, TypeError, ValueError) as exc:
+        check.true("cannot rebuild runtime inventory: {}".format(exc), False)
+        return manifest
+    check.equal("manifest exact runtime inventory", manifest.get("runtime"), expected)
+    coordinator = expected["coordinatorContainer"]
+    descriptor = load_yaml(config_dir / (coordinator + ".yaml")).get(
+        "model_provision", {}
+    ).get("seed_models", [{}])[0]
+    check.equal(
+        "manifest seed restoration identity",
+        manifest.get("seedRestoration"),
+        {
+            "coordinatorContainer": coordinator,
+            "canonicalSource": "/opt/app/seed_models/initial",
+            "modelId": descriptor.get("model_id"),
+            "modelInteroperability": descriptor.get("model_interoperability"),
+            "artifactKey": descriptor.get("artifact_key"),
+        },
+    )
+    generated = manifest.get("generated")
+    if generated is not None:
+        check.equal("manifest baseline hash", generated.get("baselineHash"), sha256_tree(ROOT / "config/default"))
+        check.equal("manifest source definition hash", generated.get("definitionHash"), canonical_sha256(testbed))
+        check.equal("manifest config generator hash", generated.get("generatorSourceHash"), config_generator_source_hash())
+        check.equal(
+            "manifest generated files", generated.get("files"),
+            sorted(path for path in actual_files if path != "manifest.yaml"),
+        )
+    return manifest
+
+
+def check_static_pymtlf_native(check, config_dir, kind, coordinator_id, services):
+    interpreter = ROOT / "ML" / "PyMTLF" / ".venv" / "bin" / "python"
+    if not interpreter.is_file():
+        check.true("PyMTLF project interpreter is unavailable", False)
+        return
+    program = r'''import hashlib
+import sys
+import tempfile
+from pathlib import Path
+from py_mtlf.config import load_settings
+from py_mtlf.core.fl_topology import StaticFlatTopologyPlanner, StaticTopologyPlanner
+from tools.import_seed_model import _build_bundle
+root, kind, coordinator, *names = sys.argv[1:]
+for name in names:
+    load_settings(root + "/" + name + ".yaml")
+settings = load_settings(root + "/" + names[0] + ".yaml")
+path = settings.federated_learning.topology.config_file
+if kind == "static-flat":
+    StaticFlatTopologyPlanner.load(path).build(server_nf_instance_id=coordinator)
+else:
+    StaticTopologyPlanner.load(path).build(root_nf_instance_id=coordinator)
+seed = settings.model_provision.seed_models[0]
+with tempfile.TemporaryDirectory(prefix="static-seed-check-") as temporary:
+    bundle = Path(temporary) / "seed.tar.gz"
+    _build_bundle(Path("seed_models/initial"), bundle, model_id=seed.model_id,
+                  event=seed.event, model_interoperability=seed.model_interoperability)
+    assert hashlib.sha256(bundle.read_bytes()).hexdigest() == seed.artifact_key
+'''
+    result = subprocess.run(
+        [str(interpreter), "-c", program, str(config_dir), kind, coordinator_id] + services,
+        cwd=ROOT / "ML" / "PyMTLF", text=True, capture_output=True, check=False,
+    )
+    detail = (result.stderr or result.stdout).strip()
+    check.true(
+        "PyMTLF native settings/topology validation failed{}".format(
+            ": " + detail if detail else ""
+        ),
+        result.returncode == 0,
+    )
+
+
+def check_static_specific(check, testbed, config_dir, runtime, scenario):
+    kind = deployment_kind(testbed)
+    definitions = nwdaf_definitions(testbed)
+    expected_device = "cpu" if runtime["mlDevicePolicy"] == "cpu" else "cuda:0"
+    owners = {item["position"]: item for item in testbed["analytics"]["dataOwners"]}
+    for item in definitions:
+        suffix = item["unit"][len("nwdaf-"):]
+        native = load_yaml(config_dir / "nwdafcfg-{}.yaml".format(suffix))["configuration"]
+        check.equal(item["unit"] + " identity", native.get("nfInstanceId"), item["nfInstanceId"])
+        check.equal(item["unit"] + " SBI register", native.get("sbi", {}).get("registerIPv4"), item["sbi"]["address"])
+        check.equal(item["unit"] + " SBI bind", native.get("sbi", {}).get("bindingIPv4"), item["sbi"]["address"])
+        check.equal(item["unit"] + " SBI port", native.get("sbi", {}).get("port"), item["sbi"]["port"])
+        for service, port in (("anlf", 8090), ("mtlf", 8091)):
+            internal = native[service]["server"]
+            check.equal(item["unit"] + " " + service + " address", internal.get("registerIPv4"), item["sbi"]["address"])
+            check.equal(item["unit"] + " " + service + " port", internal.get("port"), port)
+        capability = {
+            "server": "FL_SERVER", "root": "FL_SERVER", "branch": "FL_SERVER_AND_CLIENT",
+            "client": "FL_CLIENT", "leaf": "FL_CLIENT",
+        }[item["role"]]
+        check.equal(
+            item["unit"] + " FL capability",
+            native["nwdafInfo"]["mlAnalyticsList"][0].get("flCapabilityType"), capability,
+        )
+        service = item["backends"]["mtlf"]
+        definition = testbed["mlRuntime"]["services"][service]
+        config = load_yaml(config_dir / (service + ".yaml"))
+        fl = config["federated_learning"]
+        check.equal(service + " port", config["server"]["port"], definition["publishedPort"])
+        check.equal(
+            service + " containing NWDAF", config["containing_nwdaf"]["internal_api_root"],
+            uri(item["sbi"]["address"], 8091),
+        )
+        check_pymtlf_data_paths(check, service, config)
+        if item["role"] in ("client", "leaf"):
+            owner = owners[item["dataOwner"]]
+            training_data = fl["client"]["training_data"]
+            check.equal(
+                service + " owned group",
+                training_data["collection_profiles"][0]["target_ue"].get("intGroupIds"),
+                [group_id_for_owner(testbed, owner)],
+            )
+            check.equal(service + " device", fl["client"]["training"].get("device"), expected_device)
+        elif item["role"] == "branch":
+            check.true(service + " must configure FL server", isinstance(fl.get("server"), dict))
+            check.true(service + " must configure FL client", isinstance(fl.get("client"), dict))
+            check.true(service + " must not own a dataset", "dataset" not in config)
+            check.true(service + " must not own orchestration", "orchestration" not in fl)
+        else:
+            check.equal(service + " participant source", fl.get("orchestration", {}).get("participant_source"), "static")
+            check.equal(service + " orchestration mode", fl.get("orchestration", {}).get("mode"), "flat" if kind == "static-flat" else "hierarchical")
+            check.equal(service + " private trigger", fl.get("training_trigger", {}).get("private_api", {}).get("enabled"), True)
+            check.equal(
+                service + " fitting rounds", fl["server"]["round_count"],
+                scenario["training"]["fittingRounds"],
+            )
+    topology = load_yaml(config_dir / "topology" / (kind + ".yaml"))
+    if kind == "static-flat":
+        check.equal(
+            "flat topology clients",
+            [entry.get("nf_instance_id") for entry in topology.get("clients", [])],
+            [item["nfInstanceId"] for item in definitions if item["role"] == "client"],
+        )
+    else:
+        leaves = {item["dataOwner"]: item["nfInstanceId"] for item in definitions if item["role"] == "leaf"}
+        branches = [item for item in definitions if item["role"] == "branch"]
+        check.equal(
+            "hierarchical topology branches",
+            [entry.get("nf_instance_id") for entry in topology.get("branches", [])],
+            [item["nfInstanceId"] for item in branches],
+        )
+        check.equal(
+            "hierarchical Branch-to-Leaf edges",
+            [[leaf.get("nf_instance_id") for leaf in entry.get("leaves", [])] for entry in topology.get("branches", [])],
+            [[leaves[position] for position in item["leaves"]] for item in branches],
+        )
+    coordinator = next(item for item in definitions if item["role"] in ("server", "root"))
+    services = [runtime["coordinatorContainer"]] + [
+        name for name in runtime["hostContainers"] if name != runtime["coordinatorContainer"]
+    ]
+    check_static_pymtlf_native(check, config_dir, kind, coordinator["nfInstanceId"], services)
+
+
+def group_id_for_owner(testbed, owner):
+    mobile = testbed["mobileNetwork"]
+    return "{}-{}-{}-{}".format(
+        mobile["internalGroup"]["serviceId"], mobile["plmn"]["mcc"],
+        mobile["plmn"]["mnc"], owner["groupLocalId"],
+    )
 
 
 def main():
@@ -282,20 +509,20 @@ def main():
         storage_path != runtime_root and runtime_root in storage_path.parents,
     )
 
-    expected_placement = {
-        "core": ["nrf", "nssf", "udr", "udm", "ausf", "pcf", "amf", "smf", "mongodb", "adrf", "nwdaf-c", "nwdaf-consumer"],
-        "path-a": ["upf-a", "gnb-a", "ue1", "ue2", "ue3", "nwdaf-a"],
-        "path-b": ["upf-b", "gnb-b", "ue4", "ue5", "ue6", "nwdaf-b"],
-        "host-containers": ["pyanlf-a", "pymtlf-a", "pyanlf-b", "pymtlf-b", "pymtlf-c"],
-    }
-    check.equal("placement groups", sorted(testbed.get("placement", {})), sorted(expected_placement))
-    for group, expected in expected_placement.items():
-        check.equal("placement.{}".format(group), testbed.get("placement", {}).get(group), expected)
+    try:
+        selected_runtime = expected_runtime_inventory(testbed)
+    except (KeyError, TypeError, ValueError) as exc:
+        check.true("invalid TESTBED runtime inventory: {}".format(exc), False)
+        return finish(check, testbed_path, config_dir)
+    check.equal(
+        "placement groups", sorted(testbed.get("placement", {})),
+        ["core", "host-containers", "path-a", "path-b"],
+    )
 
     ml_runtime = testbed.get("mlRuntime", {})
     check.equal("ML runtime engine", ml_runtime.get("engine"), "docker-compose-v2")
     check.equal("ML runtime network", ml_runtime.get("networkMode"), "bridge")
-    expected_ml_names = sorted(expected_placement["host-containers"])
+    expected_ml_names = sorted(selected_runtime["hostContainers"])
     check.equal("ML runtime services", sorted(ml_runtime.get("services", {})), expected_ml_names)
     advertised_address = ml_runtime.get("advertisedAddress")
     bind_address = resolve_ml_bind_address(testbed)
@@ -324,10 +551,21 @@ def main():
         published_endpoints.append((advertised_address, service.get("publishedPort")))
     check.true("duplicate ML published endpoint", len(published_endpoints) == len(set(published_endpoints)))
 
-    missing = sorted(name for name in REQUIRED if not (config_dir / name).is_file())
+    selected_required = required_files(testbed)
+    missing = sorted(name for name in selected_required if not (config_dir / name).is_file())
     check.true("missing config files: {}".format(", ".join(missing)), not missing)
     if missing:
         return finish(check, testbed_path, config_dir)
+    actual_files = {
+        path.relative_to(config_dir).as_posix()
+        for path in config_dir.rglob("*") if path.is_file()
+    }
+    check.true(
+        "generated config file set differs: missing={} extra={}".format(
+            sorted(selected_required - actual_files), sorted(actual_files - selected_required)
+        ),
+        actual_files == selected_required,
+    )
 
     manifest = load_yaml(config_dir / "manifest.yaml")
     ml_device_policy = manifest.get("runtime", {}).get("mlDevicePolicy")
@@ -425,7 +663,9 @@ def main():
             )
             all_addresses.append(("machine {} {}".format(machine_name, network_name), address))
 
-    expected_network_configs = guest_network_configs(testbed)
+    expected_network_configs = guest_network_configs(
+        testbed, include_consumer=deployment_kind(testbed) == "production-flat"
+    )
     for machine_name, expected in expected_network_configs.items():
         actual = load_yaml(config_dir / "network" / (machine_name + ".yaml"))
         check.equal("{} network aliases".format(machine_name), actual, expected)
@@ -560,10 +800,15 @@ def main():
     )
 
     udm = load_yaml(config_dir / "udmcfg.yaml")["configuration"]
+    if deployment_kind(testbed) == "production-flat":
+        expected_group_ranges = [{"start": group_id, "end": group_id}]
+    else:
+        group_ids = [item["internalGroupId"] for item in selected_runtime["dataOwners"]]
+        expected_group_ranges = [{"start": min(group_ids), "end": max(group_ids)}]
     check.equal(
         "UDM Internal Group range",
         udm.get("internalGroupIdentifiersRanges"),
-        [{"start": group_id, "end": group_id}],
+        expected_group_ranges,
     )
 
     ausf = load_yaml(config_dir / "ausfcfg.yaml")["configuration"]
@@ -678,7 +923,7 @@ def main():
 
     for index, expected_supi in enumerate(expected_supis, 1):
         ue = load_yaml(config_dir / "ueransim" / ("ue{}.yaml".format(index)))
-        path_name = "a" if index <= 3 else "b"
+        path_name = "a" if index <= len(path_supis["a"]) else "b"
         check.equal("UE{} SUPI".format(index), ue["supi"], expected_supi)
         check.equal("UE{} MCC".format(index), ue.get("mcc"), plmn["mcc"])
         check.equal("UE{} MNC".format(index), ue.get("mnc"), plmn["mnc"])
@@ -698,6 +943,13 @@ def main():
                 "class13": False, "class14": False, "class15": False,
             },
         )
+
+    manifest = check_manifest_exact(check, testbed_path, testbed, config_dir, actual_files)
+    if manifest is None:
+        return finish(check, testbed_path, config_dir)
+    if deployment_kind(testbed) != "production-flat":
+        check_static_specific(check, testbed, config_dir, manifest["runtime"], scenario)
+        return finish(check, testbed_path, config_dir)
 
     nwdaf_native = {}
     for name in ("a", "b", "c"):

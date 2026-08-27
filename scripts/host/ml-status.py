@@ -13,7 +13,7 @@ from pathlib import Path
 import yaml
 
 
-SERVICES = ("pyanlf-a", "pyanlf-b", "pymtlf-a", "pymtlf-b", "pymtlf-c")
+DEFAULT_SERVICES = ("pyanlf-a", "pyanlf-b", "pymtlf-a", "pymtlf-b", "pymtlf-c")
 PROJECT_PATTERN = re.compile(r"^[a-z0-9][a-z0-9_-]*$")
 CONFIG_TARGET = "/etc/5g-nwdaf/config.yaml"
 TIMESTAMP_PATTERN = re.compile(r"^(\d{4}-\d{2}-\d{2}T\S+)\s+(.*)$")
@@ -387,17 +387,35 @@ def container_logs_since(container, service=None, cache_dir=None, until=None):
     return combined
 
 
-def print_fl_summary(by_service, cache_dir=None):
-    coordinator = by_service.get("pymtlf-c")
+def print_fl_summary(by_service, coordinator_name="pymtlf-c", cache_dir=None):
+    coordinator = by_service.get(coordinator_name)
     if coordinator is None:
-        print("FL CURRENT RUN container=absent milestones=not-seen")
-        print("FL RESULT {}".format(fl_result(parse_fl_milestones({}), "absent")))
+        print("FL CURRENT RUN coordinator={} container=absent milestones=not-seen".format(coordinator_name))
+        if coordinator_name == "pymtlf-c":
+            print("FL RESULT {}".format(fl_result(parse_fl_milestones({}), "absent")))
+        else:
+            print("FL RESULT outcome=not-started reason=coordinator-absent")
         return
     labels = coordinator.get("Config", {}).get("Labels", {})
     identity = "{}:{}".format(
         labels.get("io.5g-nwdaf.config-set", "unknown"),
         labels.get("io.5g-nwdaf.config-hash", "unknown")[:12],
     )
+    if coordinator_name != "pymtlf-c":
+        started_at = coordinator.get("State", {}).get("StartedAt", "unknown")
+        state = (
+            "running" if coordinator.get("State", {}).get("Running")
+            else coordinator.get("State", {}).get("Status", "stopped")
+        )
+        print(
+            "FL CURRENT RUN config={} coordinator={} coordinator_started_at={}".format(
+                identity, coordinator_name, started_at
+            )
+        )
+        print("FL RESULT outcome={} topology=static milestones=not-evaluated".format(
+            "in-progress" if state == "running" else "not-started"
+        ))
+        return
     for service in ("pymtlf-a", "pymtlf-b"):
         container = by_service.get(service)
         if container is None:
@@ -448,10 +466,23 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--project", default="5g-nwdaf-infrastructure")
     parser.add_argument("--cache-dir")
+    parser.add_argument("--services", default=",".join(DEFAULT_SERVICES))
+    parser.add_argument("--coordinator", default="pymtlf-c")
+    parser.add_argument("--config-set", required=True)
+    parser.add_argument("--config-hash", required=True)
+    parser.add_argument("--identity-only", action="store_true")
+    parser.add_argument("--allow-stopped-selected-mismatch", action="store_true")
     args = parser.parse_args()
+    if args.allow_stopped_selected_mismatch and not args.identity_only:
+        parser.error("--allow-stopped-selected-mismatch requires --identity-only")
     if not PROJECT_PATTERN.fullmatch(args.project):
         raise SystemExit("invalid project name")
     cache_dir = Path(args.cache_dir).resolve() if args.cache_dir else None
+    services = tuple(item for item in args.services.split(",") if item)
+    if not services or len(services) != len(set(services)):
+        raise SystemExit("services must be a non-empty unique comma-separated list")
+    if args.coordinator not in services:
+        raise SystemExit("coordinator must be selected by services")
 
     ids = output(
         [
@@ -463,29 +494,62 @@ def main():
         ]
     ).splitlines()
     if not ids:
+        if args.identity_only:
+            return 0
         print("ML project={} containers=absent".format(args.project))
         print()
-        print_fl_summary({})
+        print_fl_summary({}, args.coordinator)
         return 0
 
     containers = json.loads(output(["docker", "inspect", *ids]))
     by_service = {}
     duplicates = set()
+    unexpected = []
+    identity_mismatches = []
     for container in containers:
-        service = container.get("Config", {}).get("Labels", {}).get(
-            "com.docker.compose.service"
-        )
-        if service not in SERVICES:
+        labels = container.get("Config", {}).get("Labels", {})
+        service = labels.get("com.docker.compose.service")
+        if service not in services:
+            unexpected.append(container)
             continue
         if service in by_service:
             duplicates.add(service)
         by_service[service] = container
+        identity_mismatch = (
+            labels.get("io.5g-nwdaf.config-set") != args.config_set
+            or labels.get("io.5g-nwdaf.config-hash") != args.config_hash
+        )
+        if identity_mismatch and not (
+            args.allow_stopped_selected_mismatch
+            and not container.get("State", {}).get("Running")
+        ):
+            identity_mismatches.append(service)
+
+    if duplicates:
+        print("ERROR duplicate services: {}".format(", ".join(sorted(duplicates))), file=sys.stderr)
+        return 1
+    if identity_mismatches:
+        print(
+            "ERROR selected container config identity mismatch: {}".format(
+                ", ".join(sorted(identity_mismatches))
+            ),
+            file=sys.stderr,
+        )
+        return 1
+    unexpected_running = [
+        item for item in unexpected if item.get("State", {}).get("Running")
+    ]
+    if unexpected_running:
+        print("ERROR unexpected ML containers are running", file=sys.stderr)
+        return 1
+    if args.identity_only:
+        return 0
 
     images = image_metadata({value["Image"] for value in by_service.values()})
     memory = memory_usage(list(by_service.values()))
     print("ML project={}".format(args.project))
     print(
-        "{:<10} {:<9} {:<9} {:<7} {:<8} {:<20} {:<6} {:<21} {:<12} {:<12} {}".format(
+        "{:<20} {:<9} {:<9} {:<7} {:<8} {:<20} {:<6} {:<21} {:<12} {:<12} {}".format(
             "SERVICE",
             "STATE",
             "HEALTH",
@@ -499,10 +563,10 @@ def main():
             "CONFIG",
         )
     )
-    for service in SERVICES:
+    for service in services:
         container = by_service.get(service)
         if container is None:
-            print("{:<10} absent".format(service))
+            print("{:<20} absent".format(service))
             continue
         state = container["State"]
         health = (
@@ -516,7 +580,7 @@ def main():
             labels.get("io.5g-nwdaf.config-hash", "unknown")[:12],
         )
         print(
-            "{:<10} {:<9} {:<9} {:<7} {:<8} {:<20} {:<6} {:<21} {:<12} {:<12} {}".format(
+            "{:<20} {:<9} {:<9} {:<7} {:<8} {:<20} {:<6} {:<21} {:<12} {:<12} {}".format(
                 service,
                 state["Status"],
                 health,
@@ -531,11 +595,19 @@ def main():
             )
         )
 
-    if duplicates:
-        print("ERROR duplicate services: {}".format(", ".join(sorted(duplicates))), file=sys.stderr)
-        return 1
+    for container in unexpected:
+        labels = container.get("Config", {}).get("Labels", {})
+        print(
+            "UNEXPECTED service={} state={} config={}:{}".format(
+                labels.get("com.docker.compose.service", "unknown"),
+                container.get("State", {}).get("Status", "unknown"),
+                labels.get("io.5g-nwdaf.config-set", "unknown"),
+                labels.get("io.5g-nwdaf.config-hash", "unknown")[:12],
+            )
+        )
+
     print()
-    print_fl_summary(by_service, cache_dir)
+    print_fl_summary(by_service, args.coordinator, cache_dir)
     return 0
 
 

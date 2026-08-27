@@ -7,6 +7,5 @@ ConditionPathExists=/etc/5g-nwdaf-infrastructure/active/network
 
 [Service]
 Type=oneshot
-ExecStartPre=/lib/systemd/systemd-networkd-wait-online --quiet --timeout=30
 ExecStart=/usr/local/libexec/5g-nwdaf-infrastructure/network-setup
 RemainAfterExit=yes

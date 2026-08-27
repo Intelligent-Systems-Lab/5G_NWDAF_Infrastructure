@@ -27,6 +27,15 @@ Use `DEVICE=cpu` when GPU execution is not required. Validation is read-only
 and reports all known findings without changing state. It is recommended before
 a run but is not called by startup and is not an execution gate.
 
+The rest of this section describes the default production Flat business flow.
+For a static environment, render with
+`TESTBED=testbed.static-flat.yaml` or
+`TESTBED=testbed.static-hierarchical.yaml` and keep that `TESTBED` plus the
+resulting `CONFIG_DIR` on every lifecycle command. Static startup creates the
+manifest's five or seven
+NWDAF/PyMTLF pairs and eight UEs, and intentionally skips the production
+Consumer subscription chain.
+
 ### 2. Start or resume the VMs
 
 ```sh
@@ -99,21 +108,21 @@ observe logs as well as the compact state view.
 
 ```sh
 make experiment-status CONFIG_DIR=config/local/my-experiment
-make services-status
-make observe
-make logs SERVICE=pymtlf-c
+make services-status CONFIG_DIR=config/local/my-experiment
+make observe CONFIG_DIR=config/local/my-experiment
+make logs CONFIG_DIR=config/local/my-experiment SERVICE=pymtlf-c
 ```
 
 `experiment-status` is a snapshot covering config identity, Host headroom, VM
 power, guest units, container health/device state, and subscriptions.
-`services-status` keeps the 23-unit process table and adds a six-UE readiness
-table. Each UE row distinguishes service state, Registration, and PDU Session;
+`services-status` reads the selected manifest's process table and adds a six-
+or eight-UE readiness table. Each UE row distinguishes service state,
+Registration, and PDU Session;
 only journal records carrying the service's current systemd invocation ID are
 considered. An active UE without the corresponding success evidence is
 `pending`, so a previous run cannot make a fresh process appear ready. `make
-observe` does not require `CONFIG_DIR`: it reads the active Guest config,
-container identity/mounts, and saved Consumer state. Use `experiment-status`
-when a selected config must be compared with that runtime.
+observe` uses the selected `CONFIG_DIR` to match Guest inventory with container
+identity/mounts and saved Consumer state.
 
 Continuous observation keeps the previous complete screen visible while the
 next VM, Guest, Docker, and subscription snapshot is collected in parallel.
@@ -210,7 +219,7 @@ invalid values fail before any log follower starts.
 ### 5. Stop without deleting state
 
 ```sh
-make experiment-stop
+make experiment-stop CONFIG_DIR=config/local/my-experiment
 make vm-halt
 ```
 
@@ -238,7 +247,7 @@ make reset-show CONFIG_DIR=config/local/my-experiment
 ```
 
 The plan prints the expected scenario and a copyable confirmation command. All
-five ML containers and guest experiment services must be stopped; Core must be
+selected ML containers and guest experiment services must be stopped; Core must be
 running for deletion. Apply and verify with the exact scenario name:
 
 ```sh
@@ -247,10 +256,10 @@ make reset \
   RESET_CONFIRM=full-core-cat-transition
 ```
 
-The reset empties the five project-owned ML state volumes, ADRF record
+The reset empties every project-owned ML state volume declared by the selected manifest, ADRF record
 collections and model directory, and only ADRF-type NRF registration records.
 It retains container and volume objects, images, networks, VMs, datasets,
-configs, and the six subscriber/one Internal Group fixtures. It never invokes a
+configs, and the selected subscriber/Internal Group fixtures. It never invokes a
 global Docker cleanup or drops an entire database.
 
 ## Independent domain operations
@@ -264,8 +273,8 @@ make ml-start CONFIG_DIR=config/local/my-experiment
 make subscriptions-start
 make subscriptions-status
 make subscriptions-stop
-make ml-stop
-make services-stop
+make ml-stop CONFIG_DIR=config/local/my-experiment
+make services-stop CONFIG_DIR=config/local/my-experiment
 ```
 
 The order matters: Guest NWDAFs must exist before the Consumer subscribes, and
@@ -298,8 +307,8 @@ make subscriber-data-clear CONFIG_DIR=config/local/my-experiment
 
 `show` compares expected fixtures with the scoped MongoDB records and reports
 matching, missing, different, and extra records. `apply` performs idempotent
-upserts. `clear` deletes only the six declared SUPIs and one declared Internal
-Group; it does not drop collections. Normal `services-start` already applies
+upserts. `clear` deletes only the declared SUPIs and Internal Groups (6/1 for
+production Flat or 8/4 for static deployments); it does not drop collections. Normal `services-start` already applies
 the selected records.
 
 ## Optional WebConsole

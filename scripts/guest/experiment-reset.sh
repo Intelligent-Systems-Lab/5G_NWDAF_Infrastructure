@@ -1,13 +1,16 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-action=${1:?usage: experiment-reset.sh plan|apply|verify mongo-uri nrf-db adrf-db storage-dir instance-id js-file}
+action=${1:?usage: experiment-reset.sh plan|apply|verify mongo-uri nrf-db nrf-collections nrf-type adrf-db adrf-collections storage-dir instance-id js-file}
 mongo_uri=${2:?missing MongoDB URI}
 nrf_database=${3:?missing NRF database}
-adrf_database=${4:?missing ADRF database}
-storage_dir=${5:?missing ADRF model storage directory}
-adrf_instance_id=${6:?missing ADRF NF instance ID}
-js_file=${7:?missing reset JavaScript}
+nrf_collections=${4:?missing NRF collections}
+nrf_nf_type=${5:?missing NRF NF type}
+adrf_database=${6:?missing ADRF database}
+adrf_collections=${7:?missing ADRF collections}
+storage_dir=${8:?missing ADRF model storage directory}
+adrf_instance_id=${9:?missing ADRF NF instance ID}
+js_file=${10:?missing reset JavaScript}
 
 case "$action" in plan|apply|verify) ;; *) echo "invalid reset action: $action" >&2; exit 2;; esac
 [[ "$nrf_database" =~ ^[A-Za-z0-9_-]+$ ]] || { echo "invalid NRF database name" >&2; exit 2; }
@@ -28,9 +31,11 @@ fi
 
 if [ "$action" != plan ]; then
   active=()
-  for unit in nrf nssf udr udm ausf pcf amf smf adrf nwdaf-c; do
-    systemctl is-active --quiet "5g-nwdaf@$unit.service" && active+=("$unit")
-  done
+  active_units=$(systemctl list-units --state=active --no-legend '5g-nwdaf@*.service' |
+    sed -n 's/^[[:space:]]*5g-nwdaf@\([^ ]*\)\.service.*/\1/p')
+  if [ -n "$active_units" ]; then
+    mapfile -t active <<<"$active_units"
+  fi
   systemctl is-active --quiet 5g-nwdaf-consumer.service && active+=("consumer")
   if [ "${#active[@]}" -ne 0 ]; then
     echo "refusing reset while Core services are active: ${active[*]}" >&2
@@ -66,7 +71,9 @@ if ! mongosh --quiet "$mongo_uri/$nrf_database" --eval 'quit(db.runCommand({ping
   exit 1
 fi
 
-ACTION="$action" ADRF_DATABASE="$adrf_database" ADRF_INSTANCE_ID="$adrf_instance_id" \
+ACTION="$action" NRF_COLLECTIONS="$nrf_collections" NRF_NF_TYPE="$nrf_nf_type" \
+  ADRF_DATABASE="$adrf_database" ADRF_COLLECTIONS="$adrf_collections" \
+  ADRF_INSTANCE_ID="$adrf_instance_id" \
   mongosh --quiet "$mongo_uri/$nrf_database" --file "$js_file"
 
 model_entries=0

@@ -5,6 +5,8 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 OBSERVE_ACTIVE_PIDS=()
 OBSERVE_ACTIVE_DIR=''
 OBSERVE_CACHE_DIR=''
+OBSERVE_TESTBED=testbed.yaml
+OBSERVE_CONFIG_DIR=''
 
 observe_section() {
   local label=$1; shift
@@ -24,6 +26,17 @@ vm_status_summary() {
   while IFS='|' read -r machine state; do
     printf '%-8s vm=%s\n' "$machine" "$state"
   done <<<"$records"
+}
+
+selected_subscription_status() {
+  local config_dir mode
+  config_dir=$(effective_config_dir "$OBSERVE_TESTBED" "$OBSERVE_CONFIG_DIR")
+  mode=$(config_subscriptions_mode "$config_dir")
+  if [ "$mode" = none ]; then
+    echo "SUBSCRIPTIONS mode=none state=disabled"
+  else
+    "$HOST_ROOT/scripts/host/subscriptions-status.sh"
+  fi
 }
 
 observe_cleanup() {
@@ -51,11 +64,30 @@ observe_collect_vm_records() {
   ' observe-vm-state "$HOST_ROOT/scripts/host/lib.sh"
 }
 
+observe_collect_subscription_status() {
+  local timeout_seconds=$1
+  timeout --foreground "$timeout_seconds" bash -c '
+    source "$1"
+    OBSERVE_TESTBED=$2
+    OBSERVE_CONFIG_DIR=$3
+    selected_subscription_status
+  ' observe-subscription "$HOST_ROOT/scripts/host/observe.sh" \
+    "$OBSERVE_TESTBED" "$OBSERVE_CONFIG_DIR"
+}
+
 observe_start_section() {
   local label=$1 output_file=$2 timeout_seconds=$3
   shift 3
   (
     observe_section "$label" timeout --foreground "$timeout_seconds" "$@"
+  ) >"$output_file" 2>&1 &
+  OBSERVE_ACTIVE_PIDS+=("$!")
+}
+
+observe_start_subscription_section() {
+  local label=$1 output_file=$2 timeout_seconds=$3
+  (
+    observe_section "$label" observe_collect_subscription_status "$timeout_seconds"
   ) >"$output_file" 2>&1 &
   OBSERVE_ACTIVE_PIDS+=("$!")
 }
@@ -86,11 +118,11 @@ observe_snapshot() {
     export VM_STATE_RECORDS_FILE="$vm_records_file"
     observe_section VM vm_status_summary >"$OBSERVE_ACTIVE_DIR/vm" 2>&1 || failures=$((failures + 1))
     observe_start_section SERVICE "$OBSERVE_ACTIVE_DIR/service" "$timeout_seconds" \
-      "$HOST_ROOT/scripts/host/services-status.sh"
+      "$HOST_ROOT/scripts/host/services-status.sh" "$OBSERVE_TESTBED" "$OBSERVE_CONFIG_DIR"
     observe_start_section WEBCONSOLE "$OBSERVE_ACTIVE_DIR/webconsole" "$timeout_seconds" \
       "$HOST_ROOT/scripts/host/webconsole-status.sh"
-    observe_start_section SUBSCRIPTION "$OBSERVE_ACTIVE_DIR/subscription" "$timeout_seconds" \
-      "$HOST_ROOT/scripts/host/subscriptions-status.sh"
+    observe_start_subscription_section SUBSCRIPTION \
+      "$OBSERVE_ACTIVE_DIR/subscription" "$timeout_seconds"
   else
     cat "$vm_error_file" >"$OBSERVE_ACTIVE_DIR/vm"
     printf '%s\n' 'VM status unavailable' >>"$OBSERVE_ACTIVE_DIR/vm"
@@ -103,7 +135,7 @@ observe_snapshot() {
 
   export ML_STATUS_CACHE_DIR="$OBSERVE_CACHE_DIR/ml"
   observe_start_section ML "$OBSERVE_ACTIVE_DIR/ml" "$timeout_seconds" \
-    "$HOST_ROOT/scripts/host/ml-status.sh"
+    "$HOST_ROOT/scripts/host/ml-status.sh" "$OBSERVE_TESTBED" "$OBSERVE_CONFIG_DIR"
   unset ML_STATUS_CACHE_DIR
 
   observe_wait_sections || failures=$((failures + 1))
@@ -127,7 +159,12 @@ observe_main() {
     echo "OBSERVE_INTERVAL must be a non-negative number" >&2
     return 2
   }
-  [ "${1:-}" = "--once" ] && once=true
+  if [ "${1:-}" = "--once" ]; then
+    once=true
+    shift
+  fi
+  OBSERVE_TESTBED=${1:-testbed.yaml}
+  OBSERVE_CONFIG_DIR=${2:-}
   OBSERVE_CACHE_DIR=$(mktemp -d -t 5g-nwdaf-observe-cache.XXXXXX)
   snapshot_file="$OBSERVE_CACHE_DIR/snapshot"
   trap 'observe_cleanup; exit 130' INT TERM

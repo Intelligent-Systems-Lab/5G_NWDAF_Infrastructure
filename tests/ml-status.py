@@ -226,6 +226,83 @@ def main():
         assert "config identity mismatch" in str(error), error
     else:
         raise AssertionError("FL summary accepted mixed config identities")
+
+    original_output = MODULE.output
+    original_argv = MODULE.sys.argv
+    identity_commands = []
+    try:
+        def identity_output(command, timeout=30):
+            identity_commands.append(command)
+            if command[1:3] == ["ps", "-aq"]:
+                return "container-client"
+            if command[1] == "inspect":
+                return MODULE.json.dumps([{
+                    "Id": "container-client",
+                    "Config": {"Labels": {
+                        "com.docker.compose.service": "pymtlf-client-1",
+                        "io.5g-nwdaf.config-set": "static-flat",
+                        "io.5g-nwdaf.config-hash": "selected-hash",
+                    }},
+                    "State": {"Running": True, "Status": "running"},
+                }])
+            raise AssertionError("identity-only mode performed extra Docker work: {}".format(command))
+
+        MODULE.output = identity_output
+        MODULE.sys.argv = [
+            "ml-status.py", "--services", "pymtlf-client-1",
+            "--coordinator", "pymtlf-client-1", "--config-set", "static-flat",
+            "--config-hash", "selected-hash", "--identity-only",
+        ]
+        assert MODULE.main() == 0
+        assert [command[1] for command in identity_commands] == ["ps", "inspect"]
+
+        MODULE.sys.argv[-2] = "wrong-hash"
+        assert MODULE.main() == 1
+
+        MODULE.sys.argv.append("--allow-stopped-selected-mismatch")
+        assert MODULE.main() == 1
+
+        def stopped_mismatch_output(command, timeout=30):
+            if command[1:3] == ["ps", "-aq"]:
+                return "container-client"
+            if command[1] == "inspect":
+                return MODULE.json.dumps([{
+                    "Id": "container-client",
+                    "Config": {"Labels": {
+                        "com.docker.compose.service": "pymtlf-client-1",
+                        "io.5g-nwdaf.config-set": "previous-static-flat",
+                        "io.5g-nwdaf.config-hash": "previous-hash",
+                    }},
+                    "State": {"Running": False, "Status": "exited"},
+                }])
+            raise AssertionError("stopped-mismatch check performed extra Docker work")
+
+        MODULE.output = stopped_mismatch_output
+        assert MODULE.main() == 0
+        MODULE.sys.argv.pop()
+        assert MODULE.main() == 1
+
+        def unexpected_output(command, timeout=30):
+            if command[1:3] == ["ps", "-aq"]:
+                return "container-foreign"
+            if command[1] == "inspect":
+                return MODULE.json.dumps([{
+                    "Id": "container-foreign",
+                    "Config": {"Labels": {
+                        "com.docker.compose.service": "pymtlf-foreign",
+                        "io.5g-nwdaf.config-set": "other-topology",
+                        "io.5g-nwdaf.config-hash": "other-hash",
+                    }},
+                    "State": {"Running": True, "Status": "running"},
+                }])
+            raise AssertionError("unexpected-container check performed extra work")
+
+        MODULE.output = unexpected_output
+        MODULE.sys.argv[-2] = "selected-hash"
+        assert MODULE.main() == 1
+    finally:
+        MODULE.output = original_output
+        MODULE.sys.argv = original_argv
     print("ML_STATUS_TEST status=passed milestones={}".format(len(summary)))
 
 

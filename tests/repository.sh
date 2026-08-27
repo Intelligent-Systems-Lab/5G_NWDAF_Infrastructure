@@ -87,6 +87,18 @@ echo "PASS provider host-context guard and mock wrapper"
 )
 echo "PASS manifest-driven service loop stdin isolation"
 
+network_unit="$HOST_ROOT/scripts/guest/systemd/5g-nwdaf-network.service"
+if grep -Fq 'systemd-networkd-wait-online' "$network_unit"; then
+  echo "network service still depends on global interface readiness instead of selected alias reconciliation" >&2
+  exit 1
+fi
+grep -Fx 'ExecStart=/usr/local/libexec/5g-nwdaf-infrastructure/network-setup' \
+  "$network_unit" >/dev/null
+echo "PASS selected-topology network readiness contract"
+
+grep -F 'observe_collect_subscription_status()' "$HOST_ROOT/scripts/host/observe.sh" >/dev/null
+grep -F 'observe_start_subscription_section ' "$HOST_ROOT/scripts/host/observe.sh" >/dev/null
+echo "PASS observable subscription-mode collection"
 
 if make --no-print-directory -C "$HOST_ROOT" config-create \
   NAME=repository-interface-test FROM= DEVICE=cpu >/dev/null 2>&1; then
@@ -253,6 +265,7 @@ assert_ue_readiness 'successful|successful' active \
   $'Initial Registration failed [TEMPORARY]\nPDU Session Establishment procedure failure\nInitial Registration is successful\nPDU Session establishment is successful PSI[1]' recovered
 (
   source "$HOST_ROOT/scripts/host/services-status.sh"
+  assert_guest_runtime_identity() { :; }
   vssh() {
     local machine=$1 remote_script=$2
     [ "$machine" = path-a ]
@@ -368,6 +381,113 @@ echo "PASS cached VM state snapshot"
 )
 echo "PASS Consumer lifecycle state detection"
 
+(
+  source "$HOST_ROOT/scripts/host/lib.sh"
+  config_hash() { printf '%s\n' selected-hash; }
+  vm_state_records() { printf '%s\n' 'core|running' 'path-a|poweroff' 'path-b|poweroff'; }
+  config_guest_units() { printf '%s\n' nrf; }
+  vssh() { printf '%s\n' 'IDENTITY|stale-hash|stale-hash'; }
+  if assert_guest_runtime_identity ignored; then
+    echo "Guest identity guard accepted a wrong active config" >&2
+    exit 1
+  fi
+  vssh() { printf '%s\n' 'IDENTITY|selected-hash|selected-hash' 'UNIT|nwdaf-unexpected'; }
+  if assert_guest_runtime_identity ignored; then
+    echo "Guest identity guard accepted an unexpected active unit" >&2
+    exit 1
+  fi
+  vssh() { printf '%s\n' 'IDENTITY|selected-hash|selected-hash' 'UNIT|nrf'; }
+  assert_guest_runtime_identity ignored
+)
+echo "PASS selected/active Guest identity fail-closed guards"
+
+(
+  source "$HOST_ROOT/scripts/host/lib.sh"
+  vm_state_records() { printf '%s\n' 'core|running' 'path-a|poweroff' 'path-b|poweroff'; }
+  vssh() { printf '%s\n' nwdaf-still-active; }
+  if assert_no_active_guest_units; then
+    echo "Guest stop verification accepted a partially stopped stack" >&2
+    exit 1
+  fi
+  vssh() { return 17; }
+  if assert_no_active_guest_units; then
+    echo "Guest stop verification hid an inventory read failure" >&2
+    exit 1
+  fi
+)
+echo "PASS partial Guest stop and inventory failure detection"
+
+(
+  source "$HOST_ROOT/scripts/host/lib.sh"
+  activation_fixture=$(mktemp -d)
+  activation_log="$activation_fixture/activation.log"
+  trap 'rm -rf "$activation_fixture"' EXIT
+  printf '%s\n' fixture >"$activation_fixture/payload"
+  provider_vagrant() { printf 'UPLOAD|%s\n' "$*" >>"$activation_log"; }
+  vssh() {
+    local machine=$1 command=$2
+    case "$command" in
+      printf*) printf '/old/%s|old-%s\n' "$machine" "$machine" ;;
+      *"config-activate '$machine' '/etc/5g-nwdaf-infrastructure/config-sets/"*)
+        printf 'ACTIVATE|%s\n' "$machine" >>"$activation_log"
+        [ "$machine" != path-a ]
+        ;;
+      *"config-activate '$machine' '/old/$machine' 'old-$machine'"*)
+        printf 'ROLLBACK|%s\n' "$machine" >>"$activation_log"
+        ;;
+      *) printf 'REMOTE|%s\n' "$machine" >>"$activation_log" ;;
+    esac
+  }
+  if stage_config_all "$activation_fixture" selected-hash; then
+    echo "partial config activation unexpectedly succeeded" >&2
+    exit 1
+  fi
+  grep -Fx 'ACTIVATE|core' "$activation_log" >/dev/null
+  grep -Fx 'ACTIVATE|path-a' "$activation_log" >/dev/null
+  grep -Fx 'ROLLBACK|core' "$activation_log" >/dev/null
+  if grep -Fq 'ACTIVATE|path-b' "$activation_log"; then
+    echo "config activation continued after a partial failure" >&2
+    exit 1
+  fi
+)
+echo "PASS partial Guest config activation rollback"
+
+(
+  source "$HOST_ROOT/scripts/host/lib.sh"
+  wait_fixture=$(mktemp)
+  trap 'rm -f "$wait_fixture"' EXIT
+  printf '0\n' >"$wait_fixture"
+  docker() {
+    checks=$(<"$wait_fixture")
+    checks=$((checks + 1))
+    printf '%s\n' "$checks" >"$wait_fixture"
+    if [ "$checks" -lt 3 ]; then
+      printf '%s\n' container-stopping
+    fi
+    return 0
+  }
+  sleep() { :; }
+  wait_no_running_ml_containers test-project 5
+  checks=$(<"$wait_fixture")
+  [ "$checks" -eq 3 ] || {
+    echo "ML stop wait did not observe Docker state convergence" >&2
+    exit 1
+  }
+
+  docker() {
+    if [ "$1" = ps ] && [[ " $* " == *" --format "* ]]; then
+      printf '%s\n' 'container-stuck Up 1 minute' >&2
+    else
+      printf '%s\n' container-stuck
+    fi
+  }
+  if wait_no_running_ml_containers test-project 2 >/dev/null 2>&1; then
+    echo "ML stop wait accepted a permanently running container" >&2
+    exit 1
+  fi
+)
+echo "PASS bounded ML stop convergence and timeout detection"
+
 python3 - "$HOST_ROOT" <<'PY'
 from pathlib import Path
 import sys
@@ -383,6 +503,8 @@ python3 "$HOST_ROOT/tests/config-contract.py" "${check_args[@]}"
 python3 "$HOST_ROOT/tests/execution-policy.py"
 python3 "$HOST_ROOT/tests/dataset-summary.py"
 python3 "$HOST_ROOT/tests/mobile-identity.py"
+python3 "$HOST_ROOT/tests/static-topologies.py"
+python3 "$HOST_ROOT/tests/runtime-inventory.py"
 python3 "$HOST_ROOT/tests/consumer-state.py"
 python3 "$HOST_ROOT/tests/ml-status.py"
 (

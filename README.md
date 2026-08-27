@@ -1,9 +1,9 @@
 # 5G NWDAF Infrastructure
 
-Reproducible infrastructure for a three-NWDAF, dual-TAI federated-learning
-experiment. The reference environment uses three Ubuntu 22.04 VirtualBox VMs
-for the 5G core, two paths, and six UEs, plus five independently managed Docker
-containers for PyAnLF and PyMTLF.
+Reproducible infrastructure for production Flat and controlled static
+Flat/Hierarchical federated-learning deployments. All deployments reuse three
+Ubuntu 22.04 VirtualBox VMs; the selected complete config owns the exact NWDAF,
+UE, PyAnLF/PyMTLF, volume, and subscription inventory.
 
 The repository owns topology, component revision locks, native configuration,
 guest provisioning, process lifecycle, deterministic PseudoDriver datasets,
@@ -37,7 +37,7 @@ For a first complete reading, use this order:
 build ownership. It is useful when updating or diagnosing a component, but is
 not required before the first run.
 
-## Topology
+## Default production topology
 
 | Location | Main processes |
 | --- | --- |
@@ -90,6 +90,13 @@ read-only diagnostic: review its findings, but startup does not invoke or
 require it to pass. See [Configuration](docs/configuration.md) for scenario,
 identity, topology, native config, and dataset choices.
 
+To prepare a controlled comparison layout, select the complete
+`TESTBED=testbed.static-flat.yaml` or
+`TESTBED=testbed.static-hierarchical.yaml` definition when rendering and on
+every later lifecycle command. They keep the same three VMs, use eight UEs
+and four two-UE data owners, and render five or seven independent NWDAF/PyMTLF
+pairs. Static configs do not start the production Consumer subscription chain.
+
 ### 3. Create the three VMs
 
 ```sh
@@ -99,7 +106,10 @@ make vm-status
 
 The first `vm-up` creates, provisions, and builds Core, Path A, and Path B. It
 does not start 5GC, RAN, NWDAF, ML, or Consumer processes. Later invocations
-only boot existing VMs.
+only boot existing VMs. Before Vagrant can start a VM, the repository guard
+checks the Host context and exact `VBoxHeadless` process/Vagrant UUID inventory;
+duplicate, orphaned, changing, or unparseable state fails closed. `vm-status`
+still starts a provider client and must only run from the approved Host context.
 
 ### 4. Start and observe the experiment
 
@@ -114,13 +124,13 @@ Use the continuously refreshed overview in another terminal when monitoring the
 whole environment:
 
 ```sh
-make observe
+make observe CONFIG_DIR=config/local/my-experiment
 ```
 
 Follow one component's detailed events when needed:
 
 ```sh
-make logs SERVICE=pymtlf-c
+make logs CONFIG_DIR=config/local/my-experiment SERVICE=pymtlf-c
 ```
 
 The aggregate start stages the selected inputs, starts Guest services and the
@@ -134,7 +144,7 @@ when one combined VM and ML event stream is explicitly wanted.
 Stop experiment processes while retaining VM disks and experiment state:
 
 ```sh
-make experiment-stop
+make experiment-stop CONFIG_DIR=config/local/my-experiment
 ```
 
 Power off the retained VMs when they are no longer needed immediately:

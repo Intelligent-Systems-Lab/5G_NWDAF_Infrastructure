@@ -1,9 +1,10 @@
 # Configuration
 
-An experiment is built from three layers. `TESTBED` describes where software
-runs, a scenario describes what experiment should happen, and `config-create`
-renders the native files consumed by each process. Traffic profiles belong to
-the scenario and generated Parquet belongs to neither source tree.
+An experiment is built from three inputs. One complete `TESTBED` owns the
+three-machine environment and process/topology contract, a scenario owns
+experiment timing and traffic, and render-time options select the ML device
+policy. `config-create` combines them into native process files and an exact
+runtime manifest/Compose artifact.
 
 ## Create one experiment
 
@@ -26,6 +27,19 @@ make config-create \
 `NAME` creates `config/local/NAME`, `DEVICE` is `cpu` or `gpu`, and
 `WEBCONSOLE` is `true` or `false`. The renderer refuses to overwrite an
 existing directory; choose a new name or remove an unwanted local set yourself.
+
+The committed complete topology definitions are `testbed.yaml`,
+`testbed.static-flat.yaml`, and `testbed.static-hierarchical.yaml`. Select one
+with `TESTBED`; there is no second deployment selector or overlay. The static
+definitions provide:
+
+- `static-flat`: one Server, four Clients, eight UEs, four two-UE ownership
+  groups, and five PyMTLF containers;
+- `static-hierarchical`: one Root, two Branches, four Leaves, the same logical
+  UE ownership, and seven PyMTLF containers.
+
+Every node has its own NWDAF NF identity, Go process, endpoint, config, log
+identity, PyMTLF process, and state volume. The topology does not add VMs.
 
 ### Customize the dataset pattern
 
@@ -99,6 +113,7 @@ the selected testbed's directory is used.
 | Desired change | Authoritative input |
 | --- | --- |
 | VM size, network, IP, NF placement, PLMN, UE identity, service endpoint | `testbed.yaml` or a complete local testbed YAML |
+| Production/static mode, NWDAF identities, Branch/Leaf edges, static UE ownership | selected complete `TESTBED` |
 | Sampling, monitoring policy, FL rounds, preparation/closure budget | selected `scenario.yaml` |
 | Raw traffic rows, warm-start boundary, stable/degraded stimulus | scenario-relative `traffic/*.json` |
 | CPU/GPU choice or optional WebConsole | `DEVICE` and `WEBCONSOLE` at render time |

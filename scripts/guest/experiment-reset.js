@@ -3,19 +3,27 @@
 const action = process.env.ACTION;
 const adrfDatabaseName = process.env.ADRF_DATABASE;
 const expectedInstanceId = process.env.ADRF_INSTANCE_ID;
+const nrfCollections = (process.env.NRF_COLLECTIONS || "").split(",").filter(Boolean);
+const nrfNfType = process.env.NRF_NF_TYPE;
+const adrfCollections = (process.env.ADRF_COLLECTIONS || "").split(",").filter(Boolean);
 
 if (!["plan", "apply", "verify"].includes(action)) {
   throw new Error("ACTION must be plan, apply, or verify");
 }
-if (!adrfDatabaseName || !expectedInstanceId) {
-  throw new Error("ADRF_DATABASE and ADRF_INSTANCE_ID are required");
+if (!adrfDatabaseName || !expectedInstanceId || !nrfNfType) {
+  throw new Error("reset identity inputs are required");
+}
+if (JSON.stringify(nrfCollections) !== JSON.stringify(["NfProfile", "urilist"])) {
+  throw new Error("unexpected NRF reset collection scope");
+}
+if (JSON.stringify(adrfCollections) !== JSON.stringify(["data_store_records", "mlmodel_store_records"])) {
+  throw new Error("unexpected ADRF reset collection scope");
 }
 
 const nrfDatabase = db;
 const adrfDatabase = db.getSiblingDB(adrfDatabaseName);
-const profileFilter = {nfType: "ADRF"};
-const uriListFilter = {nfType: "ADRF"};
-const adrfCollections = ["data_store_records", "mlmodel_store_records"];
+const profileFilter = {nfType: nrfNfType};
+const uriListFilter = {nfType: nrfNfType};
 
 function snapshot() {
   const profiles = nrfDatabase.getCollection("NfProfile")

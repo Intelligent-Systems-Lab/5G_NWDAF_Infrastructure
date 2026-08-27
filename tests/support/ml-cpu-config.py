@@ -3,6 +3,7 @@
 
 import argparse
 import shutil
+import subprocess
 import sys
 from pathlib import Path
 
@@ -32,7 +33,20 @@ def main():
         if not args.force:
             raise SystemExit("output exists; pass --force to replace it: {}".format(output))
         shutil.rmtree(str(output))
-    shutil.copytree(str(source), str(output))
+    source_manifest = load_yaml(source / "manifest.yaml")
+    topology = source_manifest["topology"]
+    topology_definition = topology["definition"] if isinstance(topology, dict) else topology
+    subprocess.run(
+        [
+            sys.executable, str(ROOT / "scripts/host/config-render.py"),
+            "--testbed", topology_definition,
+            "--name", output.name,
+            "--scenario", source_manifest["scenario"]["definition"],
+            "--output-root", str(output.parent),
+            "--ml-device", "cpu", "--webconsole", "false",
+        ],
+        cwd=ROOT, check=True, stdout=subprocess.DEVNULL,
+    )
 
     for name in ("pymtlf-a.yaml", "pymtlf-b.yaml"):
         config = load_yaml(output / name)
@@ -45,7 +59,6 @@ def main():
         dump_yaml(output / name, config)
 
     manifest = load_yaml(output / "manifest.yaml")
-    manifest.setdefault("runtime", {})["mlDevicePolicy"] = "cpu"
     manifest["smoke"] = {
         "purpose": "cpu-container-health",
         "sourceConfigHash": sha256_tree(source),

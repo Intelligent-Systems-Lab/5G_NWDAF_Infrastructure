@@ -14,17 +14,17 @@ while advanced and developer commands remain available. `TESTBED` defaults to
 | `make help-dev` | Show repository and disposable-container tests. Read-only. |
 | `make help-all` | Print all three help layers. Read-only. |
 | `make experiment-validate CONFIG_DIR=...` | Run source, config, dataset, Host resource, Compose, GPU-if-requested, and Vagrant diagnostics without starting runtime state. Findings return non-zero but do not gate a later start. |
-| `make experiment-start CONFIG_DIR=...` | Generate/reuse data, then start Guest services, enabled WebConsole, ML containers, Consumer, and two subscriptions. Requires running VMs and stopped domains; it does not invoke diagnostic validation. |
+| `make experiment-start CONFIG_DIR=...` | Generate/reuse data, then start the manifest-selected Guest and ML inventories. Production Flat also starts enabled WebConsole, Consumer, and two subscriptions; static deployments skip that chain. |
 | `make experiment-status CONFIG_DIR=...` | Show config identity, Host headroom, VM, guest service, ML, FL result, and subscription state. Read-only; rejects an incomplete running-backend snapshot while powered-off services appear as `not-running` and Core-owned saved state appears as `not-readable`. |
-| `make experiment-stop` | Delete exact subscriptions, leave the NWDAFs and ML backends available for a fixed 40-second asynchronous cleanup grace, then stop process domains while retaining state and VMs. |
-| `make observe` | Continuously display the active VM/service/container/subscription state without requiring `CONFIG_DIR`. It keeps the previous complete screen while collecting the next bounded parallel snapshot, then replaces it once; failed sections retain their error and are marked unavailable while later intervals continue. Read-only with respect to experiment state. |
+| `make experiment-stop CONFIG_DIR=...` | For production Flat, delete exact subscriptions and allow asynchronous cleanup; then stop the selected process inventories while retaining state and VMs. |
+| `make observe CONFIG_DIR=...` | Continuously display the selected VM/service/container/subscription state. It keeps the previous complete screen while collecting the next bounded parallel snapshot. Read-only. |
 | `make logs [SOURCE=...] [VM=...] [SERVICE=...] [SINCE=...] [TAIL=...] [FOLLOW=...]` | Follow filtered owned VM journals and project ML container logs with UTC timestamps. Source selectors default to all components and the time window defaults to the last ten minutes; `FOLLOW=false` prints a bounded snapshot. Read-only. |
 
 ## Configuration and datasets
 
 | Command | Function and effect |
 | --- | --- |
-| `make config-create NAME=... FROM=experiments/.../scenario.yaml DEVICE=... WEBCONSOLE=...` | Render a complete ignored config under `config/local/NAME`. `FROM` is a required repository-relative scenario YAML path; existing output is not overwritten. |
+| `make config-create TESTBED=... NAME=... FROM=experiments/.../scenario.yaml DEVICE=... WEBCONSOLE=...` | Render an ignored config under `config/local/NAME`. `TESTBED` selects one complete production Flat, static Flat, or static Hierarchical definition; static definitions require `WEBCONSOLE=false`. |
 | `make config-validate CONFIG_DIR=...` | Diagnose native fields plus cross-file topology, endpoint, identity, timing, fixture, and manifest relationships against `TESTBED`. Read-only; findings do not block startup. |
 | `make dataset-generate CONFIG_DIR=...` | Generate or reuse the content-addressed Path A/B Parquet set described by the selected config. Writes ignored artifacts. |
 | `make dataset-validate CONFIG_DIR=...` | Audit actual Parquet files and their manifest, schema, hashes, rows, IPs, timestamps, and scenario capacity. Read-only. |
@@ -39,11 +39,11 @@ while advanced and developer commands remain available. `TESTBED` defaults to
 | `make vm-status` | Show Vagrant VM power state from an approved Host context; this provider query does not prove that no orphan process exists. |
 | `make vm-halt` | Gracefully power off all three VMs without deleting them. |
 | `make services-start CONFIG_DIR=...` | Sync helpers, stage config/data, apply subscriber fixtures, and start guest units in dependency order. Does not start ML or subscriptions. |
-| `make services-status` | Show all 23 guest unit states plus current-invocation Registration/PDU readiness for six UEs. Read-only; readiness is `inactive`, `pending`, `successful`, or `failed`. |
-| `make services-stop` | Stop guest experiment units in reverse order without halting VMs or deleting persistent data. |
-| `make ml-start CONFIG_DIR=...` | Resolve the selected config, enforce actual bind-address and CPU/GPU runtime requirements, build/reuse images, and start the five production containers. |
-| `make ml-status` | Show container/device/image identity plus a `StartedAt`-scoped FL milestone summary and result from matching-config PyMTLF-A/B/C logs. Read-only; unseen milestones remain `not-seen`. |
-| `make ml-stop` | Stop only the production Compose project's running containers and retain containers, images, and volumes. It does not modify VM or subscription state. |
+| `make services-status CONFIG_DIR=...` | Show manifest-selected guest units plus current-invocation Registration/PDU readiness for six or eight UEs. Read-only. |
+| `make services-stop CONFIG_DIR=...` | Stop manifest-selected guest experiment units in reverse order without halting VMs or deleting persistent data. |
+| `make ml-start CONFIG_DIR=...` | Enforce bind-address and CPU/GPU requirements, build/reuse images, and start the selected five or seven containers. |
+| `make ml-status CONFIG_DIR=...` | Show selected container/device/image identity. Production Flat also renders the A/B/C milestone summary; static milestones remain explicitly unevaluated in Phase 2. |
+| `make ml-stop CONFIG_DIR=...` | Stop only the Compose project's running containers and retain containers, images, and selected volumes. |
 | `make webconsole-start CONFIG_DIR=...` | If enabled, prepare/reuse the Core artifact and start WebConsole. MongoDB and NRF must be active. |
 | `make webconsole-status` | Show the WebConsole unit and endpoint state. Read-only. |
 | `make webconsole-stop` | Stop only WebConsole and retain its build artifacts and other services. |
@@ -56,7 +56,7 @@ while advanced and developer commands remain available. `TESTBED` defaults to
 | Command | Function and effect |
 | --- | --- |
 | `make subscriber-data-show CONFIG_DIR=...` | Compare expected fixtures with current scoped records and display matching/missing/different/extra. Read-only. |
-| `make subscriber-data-apply CONFIG_DIR=...` | Idempotently upsert the selected six subscriber and one Internal Group records. |
+| `make subscriber-data-apply CONFIG_DIR=...` | Idempotently upsert selected subscriber/Internal Group records (6/1 production or 8/4 static). |
 | `make subscriber-data-clear CONFIG_DIR=...` | Delete only the selected subscriber/group scope. |
 | `make reset-show CONFIG_DIR=...` | Display retained experiment state, reset scope, and the required scenario confirmation. Read-only. |
 | `make reset CONFIG_DIR=... RESET_CONFIRM=...` | Apply the scoped reset and immediately verify it. `RESET_CONFIRM` must equal the selected scenario name, such as `full-core-cat-transition`. |

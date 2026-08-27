@@ -26,7 +26,17 @@ native YAML/JSON, while `manifest.yaml` records provenance and runtime choices.
 | `ueransim/ue1.yaml` … `ue6.yaml` | six UEs | derived SUPI, authentication, gNB, DNN and S-NSSAI |
 | `subscriber/*.json` | MongoDB fixture loader | same derived SUPIs, authentication, DNN, slice and Internal Group |
 | `network/*.yaml` | Guest network reconciler | VM base interfaces and service aliases |
-| `manifest.yaml` | Host tooling | topology/scenario provenance, runtime policy, fixture and dataset paths |
+| `compose.yaml` | Host Docker Compose | only the selected ML services, limits, ports, config mounts, volumes, labels and device policy |
+| `manifest.yaml` | Host tooling | topology/scenario provenance plus exact Guest/NF/UE/data-owner/container/volume/reset/capacity inventories |
+
+Static configs replace the A/B/C-specific NWDAF and ML files with role-named
+files such as `nwdafcfg-server.yaml`, `pymtlf-client-1.yaml`,
+`nwdafcfg-root.yaml`, `pymtlf-branch-1.yaml`, and `pymtlf-leaf-1.yaml`. They add
+`topology/static-flat.yaml` or `topology/static-hierarchical.yaml`, render
+`ue1.yaml` through `ue8.yaml`, omit `consumer.yaml` and PyAnLF, and declare the
+exact unit/container/volume inventory in `manifest.yaml`.
+The strict checker reconstructs that inventory from the selected complete
+`TESTBED` and rejects omissions, additions, or a stale definition hash.
 
 ## Production Flat PyMTLF ownership
 
@@ -47,6 +57,19 @@ For each round, C writes its client-training directive into the typed
 artifact's `mLModelUrl`. A/B validate the artifact and use the embedded epochs;
 epochs are not an extra ad-hoc field in the public training request. Adding a
 Client-local epochs value is therefore a schema error, not an override.
+
+## Static role ownership
+
+- Flat Server and HFL Root own autonomous static orchestration and the private
+  training trigger. Flat omits the hierarchy strategy (FedAvg); HFL explicitly
+  selects FedProx.
+- Branch configures both FL server and client engines, but no autonomous
+  orchestration and no private collection.
+- Client/Leaf configures one private collection profile selecting exactly one
+  two-SUPI Internal Group. The four profiles are disjoint and cover all eight
+  static UEs.
+- Every role has an independent NWDAF NF Instance ID, endpoint, PyMTLF config,
+  and state volume even when several processes share one VM and binary.
 
 ## Renderer-owned and advanced values
 

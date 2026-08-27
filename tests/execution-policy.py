@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Prove diagnostics are explicit and do not gate experiment start paths."""
+"""Prove diagnostics stay explicit while selected capacity gates ML start."""
 
 import re
 import shutil
@@ -79,13 +79,27 @@ def main():
     reject_startup_gate("scripts/host/services-start.sh", ("config-check.py",))
     reject_startup_gate(
         "scripts/host/ml-start.sh",
-        ("config-check.py", "ml-compose-check.py", "ml_host_resource_gate"),
+        ("config-check.py", "ml-compose-check.py"),
     )
     ml_start_source = (ROOT / "scripts" / "host" / "ml-start.sh").read_text(
         encoding="utf-8"
     )
-    if 'ml_compose up --detach --no-build --wait --wait-timeout 240 || rollback "$?"' not in ml_start_source:
+    if (
+        'ml_compose up --detach --no-build --wait --wait-timeout 240 "${ml_services[@]}" || rollback "$?"'
+        not in ml_start_source
+    ):
         raise SystemExit("ML startup must explicitly stop its project after Compose wait failure")
+    if 'ml_host_resource_gate "$testbed" "$config_dir"' not in ml_start_source:
+        raise SystemExit("ML startup lost the selected runtime capacity gate")
+    if 'assert_ml_runtime_identity "$testbed" "$config_dir" start' not in ml_start_source:
+        raise SystemExit("ML startup lost the start-safe selected/actual identity guard")
+    logs_source = (ROOT / "scripts" / "host" / "logs.sh").read_text(
+        encoding="utf-8"
+    )
+    if 'assert_ml_runtime_identity "$testbed" "$config_dir"' not in logs_source:
+        raise SystemExit("ML logs lost the selected/actual identity guard")
+    if "< <(vm_log_sources" in logs_source or "< <(\n    docker ps" in logs_source:
+        raise SystemExit("log inventory readers can hide subprocess failure")
     reject_startup_gate("scripts/host/webconsole-start.sh", ("config-check.py",))
     reject_startup_gate("scripts/host/subscriber-data.sh", ("config-check.py",))
 
@@ -94,6 +108,8 @@ def main():
     )
     if "config-check.py" not in reset_source:
         raise SystemExit("destructive reset lost its exact-scope config validation")
+    if "< <(" in reset_source:
+        raise SystemExit("reset inventory readers can hide subprocess failure")
 
     preflight_source = (ROOT / "scripts" / "host" / "preflight.sh").read_text(
         encoding="utf-8"
@@ -155,6 +171,27 @@ def main():
         artifact = output_root / spec["datasetSetId"] / "path-a" / "traffic.parquet"
         if not artifact.is_file():
             raise SystemExit("diagnostic mismatch prevented dataset generation")
+
+        capacity_testbed = temporary_root / "capacity-testbed.yaml"
+        constrained = load_yaml(ROOT / "testbed.yaml")
+        constrained["hostSafety"]["reserveMemoryMiB"] = 999999999
+        dump_yaml(capacity_testbed, constrained)
+        capacity = subprocess.run(
+            [
+                "bash", "-c",
+                'source "$1"; docker() { [ "$1" = info ] && printf "/tmp\\n"; }; '
+                'ml_host_resource_gate "$2" "$3"',
+                "capacity-gate", str(ROOT / "scripts" / "host" / "lib.sh"),
+                str(capacity_testbed), str(ROOT / "config" / "default"),
+            ],
+            cwd=ROOT,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        capacity_evidence = capacity.stdout + capacity.stderr
+        if capacity.returncode == 0 or "below selected Host requirement" not in capacity_evidence:
+            raise SystemExit("selected runtime capacity shortage was not rejected")
 
     print("EXECUTION_POLICY_TEST status=passed diagnostic=reported generation=allowed")
     return 0

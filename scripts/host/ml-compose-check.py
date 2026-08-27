@@ -10,6 +10,7 @@ from pathlib import Path
 
 from configlib import (
     ROOT,
+    load_runtime_manifest,
     load_yaml,
     resolve_config_dir,
     resolve_ml_bind_address,
@@ -32,9 +33,9 @@ class Check:
 
 
 def compose_config(mode, device_policy, config_dir, bind_address):
-    command = ["docker", "compose", "-f", str(ROOT / "compose.yaml")]
-    if device_policy == "cpu":
-        command.extend(["-f", str(ROOT / "compose.cpu.yaml")])
+    command = [
+        "docker", "compose", "-f", str(config_dir / "compose.yaml"),
+    ]
     if mode == "cpu-smoke":
         command.extend(["-f", str(ROOT / "compose.cpu-smoke.yaml")])
     command.extend(["config", "--format", "json"])
@@ -45,6 +46,7 @@ def compose_config(mode, device_policy, config_dir, bind_address):
             "CONFIG_SET_NAME": mode,
             "CONFIG_HASH": "static-check",
             "ML_BIND_ADDRESS": bind_address,
+            "REPOSITORY_ROOT": str(ROOT),
         }
     )
     return json.loads(subprocess.check_output(command, text=True, env=environment))
@@ -62,7 +64,10 @@ def main():
     device_policy = resolve_ml_device_policy(config_dir)
     bind_address = "127.0.0.1" if args.mode == "cpu-smoke" else resolve_ml_bind_address(testbed)
     resolved = compose_config(args.mode, device_policy, config_dir, bind_address)
-    services = resolved.get("services", {})
+    all_services = resolved.get("services", {})
+    manifest = load_runtime_manifest(config_dir)
+    selected_names = manifest["runtime"]["hostContainers"]
+    services = {name: all_services.get(name, {}) for name in selected_names}
     expected_services = testbed["mlRuntime"]["services"]
     component_locks = {
         item["path"]: item["commit"] for item in load_yaml(ROOT / "components.lock.yaml")["components"]
@@ -71,14 +76,8 @@ def main():
         "pyanlf": component_locks["ML/PyAnLF"],
         "pymtlf": component_locks["ML/PyMTLF"],
     }
-    data_targets = {
-        "pyanlf-a": "/opt/app/artifacts",
-        "pyanlf-b": "/opt/app/artifacts",
-        "pymtlf-a": "/var/lib/5g-nwdaf-infrastructure/pymtlf-a",
-        "pymtlf-b": "/var/lib/5g-nwdaf-infrastructure/pymtlf-b",
-        "pymtlf-c": "/var/lib/5g-nwdaf-infrastructure/pymtlf-c",
-    }
     check = Check()
+    check.equal("Compose exact service set", sorted(all_services), sorted(selected_names))
     check.equal("Compose service set", sorted(services), sorted(expected_services))
     check.equal("Compose ML network driver", resolved.get("networks", {}).get("ml", {}).get("driver"), "bridge")
 
@@ -122,19 +121,25 @@ def main():
             check.true(name + " config must be read-only", config_mounts[0].get("read_only") is True)
         check.true(
             name + " writable data volume missing",
-            any(item.get("type") == "volume" and item.get("target") == data_targets[name] for item in mounts),
+            any(
+                item.get("type") == "volume"
+                and item.get("target") == (
+                    "/opt/app/artifacts" if name.startswith("pyanlf-")
+                    else "/var/lib/5g-nwdaf-infrastructure/" + name
+                )
+                for item in mounts
+            ),
         )
 
         expected_gpu = configured_device.startswith("cuda")
-        cpu_override = device_policy == "cpu" and expected["device"].startswith("cuda")
-        expected_runtime = "nvidia" if expected_gpu else ("runc" if cpu_override else None)
+        expected_runtime = "nvidia" if expected_gpu else None
         check.equal(name + " OCI runtime", service.get("runtime"), expected_runtime)
         environment = service.get("environment", {})
         expected_visible_devices = (
-            "nvidia.com/gpu=all" if expected_gpu else ("void" if cpu_override else None)
+            "nvidia.com/gpu=all" if expected_gpu else None
         )
         expected_driver_capabilities = (
-            "compute,utility" if expected_gpu else ("void" if cpu_override else None)
+            "compute,utility" if expected_gpu else None
         )
         check.equal(name + " CDI selector", environment.get("NVIDIA_VISIBLE_DEVICES"), expected_visible_devices)
         check.equal(name + " NVIDIA driver capabilities", environment.get("NVIDIA_DRIVER_CAPABILITIES"), expected_driver_capabilities)
@@ -146,7 +151,7 @@ def main():
             "PYMTLF_SEED_MODEL_ID": "1",
             "PYMTLF_SEED_INTEROPERABILITY": "001122",
             "PYMTLF_SEED_ARTIFACT_KEY": "a2c796a001e2da2461418f80b01d7d1e33f0e3349c2817d92286f09e67aa6bef",
-        } if name == "pymtlf-c" else {}
+        } if name == manifest["runtime"]["coordinatorContainer"] else {}
         for key, value in expected_seed_environment.items():
             check.equal(name + " " + key, environment.get(key), value)
 

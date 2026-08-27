@@ -3,26 +3,40 @@
 ## Runtime placement
 
 The testbed separates 5G network functions from GPU-capable ML runtimes without
-making the topology look like a single Host process tree.
+making the topology look like a single Host process tree. One selected complete
+`TESTBED` defines the logical NWDAF, UE, and Host ML inventory, while every
+committed topology reuses the same three VMs.
 
 | Domain | Placement | Responsibility |
 | --- | --- | --- |
-| Core | Core VM | AMF, AUSF, NRF, NSSF, PCF, SMF, UDM, UDR, MongoDB, ADRF, NWDAF-C, Consumer |
-| Path A | Path A VM | UPF-A, gNB-A, UE1-3, NWDAF-A |
-| Path B | Path B VM | UPF-B, gNB-B, UE4-6, NWDAF-B |
-| Analytics ML | Host containers | PyAnLF-A and PyAnLF-B |
-| Model training ML | Host containers | PyMTLF-A, PyMTLF-B, and PyMTLF-C |
+| Core | Core VM | Control-plane NFs, MongoDB, ADRF, selected Core NWDAF instances, and the production Consumer |
+| Path A | Path A VM | UPF-A, gNB-A, selected Path A UEs, and selected Path A NWDAF instances |
+| Path B | Path B VM | UPF-B, gNB-B, selected Path B UEs, and selected Path B NWDAF instances |
+| Analytics ML | Host containers | Production PyAnLF-A and PyAnLF-B |
+| Model training ML | Host containers | One independently configured PyMTLF container for each selected NWDAF |
+
+The three committed definitions place their logical inventory as follows:
+
+| Selected topology | Core VM | Path A VM | Path B VM | Host ML runtime |
+| --- | --- | --- | --- | --- |
+| Production Flat | NWDAF-C | NWDAF-A, UE1-3 | NWDAF-B, UE4-6 | PyAnLF-A/B and PyMTLF-A/B/C |
+| Static Flat | Server | Clients 1-2, four UEs | Clients 3-4, four UEs | five PyMTLF containers |
+| Static Hierarchical | Root and Branches 1-2 | Leaves 1-2, four UEs | Leaves 3-4, four UEs | seven PyMTLF containers |
 
 The VMs keep the 5GC paths intuitive and provide the Linux kernel environment
-needed by gtp5g. Host containers allow PyMTLF-A/B to use the physical GPU
-without PCI passthrough and isolate each Python service, dependency set, state
-volume, health check, and log stream.
+needed by gtp5g. Each Guest installs one NWDAF binary and the selected manifest
+starts the required independent systemd instances with separate identity,
+config, endpoint, runtime directory, and log stream. Host containers give the
+selected GPU participants access to the physical GPU without PCI passthrough
+and isolate each Python service, dependency set, state volume, health check,
+and log stream. Static deployments do not start PyAnLF or the production
+Consumer subscription chain.
 
 ## Networks
 
-`testbed.yaml` defines eight isolated `/24` VirtualBox networks. The first
-three octets identify the function of a plane; the final octet identifies the
-Host or VM endpoint.
+The committed complete `TESTBED` definitions share eight isolated `/24`
+VirtualBox networks. The first three octets identify the function of a plane;
+the final octet identifies the Host or VM endpoint.
 
 | Plane | Subnet | Purpose |
 | --- | --- | --- |
@@ -51,12 +65,14 @@ Six domains can be inspected and operated independently:
 6. Retained experiment data: `reset-*` and `subscriber-data-*`
 
 `experiment-start`, `experiment-status`, and `experiment-stop` are aggregate
-operator commands over these domains. Starting an aggregate experiment does
+operator commands over the domains declared by the selected manifest.
+Production Flat includes WebConsole and subscription handling when enabled;
+static deployments omit those domains. Starting an aggregate experiment does
 not tie the experiment lifetime to VM creation, and stopping it does not delete
 VMs, containers, volumes, generated datasets, subscriber fixtures, or retained
 model/data state.
 
-## Reference experiment flow
+## Production reference experiment flow
 
 The full-core example exercises the following closed loop:
 
@@ -90,7 +106,9 @@ not a claim of real application throughput or a user-plane benchmark.
 ## State ownership
 
 Native config and generated dataset manifests are repository-owned inputs.
-Subscriber/Internal Group records, ADRF records and files, NRF ADRF records,
-and five ML state volumes persist across ordinary stops. Consumer subscription
-locations persist only so exact resources can be retried and deleted. See
+The selected subscriber/Internal Group records, ADRF records and files, NRF
+ADRF records, and five or seven selected ML state volumes persist across
+ordinary stops. Production Consumer subscription locations persist only so
+exact resources can be retried and deleted. Reset derives its exact scope from
+the selected manifest and retains the other topology's state. See
 [Operations](operations.md) before deliberately clearing retained state.

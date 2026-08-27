@@ -32,7 +32,8 @@ help-advanced:
 	@echo "5G NWDAF Infrastructure — advanced operations"
 	@echo ""
 	@echo "Configuration and datasets"
-	@echo "  make config-create NAME=... FROM=experiments/.../scenario.yaml [DEVICE=gpu|cpu] [WEBCONSOLE=false|true]"
+	@echo "  make config-create TESTBED=... NAME=... FROM=experiments/.../scenario.yaml"
+	@echo "                     [DEVICE=gpu|cpu] [WEBCONSOLE=false|true]"
 	@echo "  make config-validate CONFIG_DIR=...  Diagnose cross-config inconsistencies"
 	@echo "  make dataset-generate | dataset-validate | dataset-show | dataset-load CONFIG_DIR=..."
 	@echo ""
@@ -71,7 +72,7 @@ experiment-status:
 	@scripts/host/experiment-status.sh "$(TESTBED)" "$(CONFIG_DIR)"
 
 experiment-stop:
-	@scripts/host/experiment-stop.sh
+	@scripts/host/experiment-stop.sh "$(TESTBED)" "$(CONFIG_DIR)"
 
 config-create:
 	@test -n "$(FROM)" || { echo "FROM=<repository-relative-scenario.yaml> is required" >&2; exit 2; }
@@ -114,10 +115,10 @@ ml-start:
 	@scripts/host/ml-start.sh "$(TESTBED)" "$(CONFIG_DIR)"
 
 ml-status:
-	@scripts/host/ml-status.sh
+	@scripts/host/ml-status.sh "$(TESTBED)" "$(CONFIG_DIR)"
 
 ml-stop:
-	@scripts/host/ml-stop.sh
+	@scripts/host/ml-stop.sh "$(TESTBED)" "$(CONFIG_DIR)"
 
 webconsole-start:
 	@scripts/host/webconsole-start.sh "$(TESTBED)" "$(CONFIG_DIR)"
@@ -141,10 +142,10 @@ services-start:
 	@scripts/host/services-start.sh "$(TESTBED)" "$(CONFIG_DIR)"
 
 services-status:
-	@scripts/host/services-status.sh
+	@scripts/host/services-status.sh "$(TESTBED)" "$(CONFIG_DIR)"
 
 services-stop:
-	@scripts/host/services-stop.sh
+	@scripts/host/services-stop.sh "$(TESTBED)" "$(CONFIG_DIR)"
 
 subscriber-data-apply:
 	@scripts/host/subscriber-data.sh apply "$(TESTBED)" "$(CONFIG_DIR)"
@@ -165,7 +166,7 @@ subscriptions-stop:
 	@scripts/host/subscriptions-stop.sh
 
 observe:
-	@scripts/host/observe.sh
+	@scripts/host/observe.sh "$(TESTBED)" "$(CONFIG_DIR)"
 
 logs: SOURCE ?= all
 logs: VM ?= all
@@ -180,6 +181,8 @@ logs:
 		*) echo "FOLLOW must be true or false" >&2; exit 2 ;; \
 	esac; \
 	scripts/host/logs.sh \
+		--testbed "$(TESTBED)" \
+		--config-dir "$(CONFIG_DIR)" \
 		--source "$(SOURCE)" \
 		--vm "$(VM)" \
 		--service "$(SERVICE)" \

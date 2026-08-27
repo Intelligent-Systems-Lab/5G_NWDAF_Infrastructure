@@ -8,7 +8,7 @@ import math
 from pathlib import Path
 
 from configlib import (
-    ROOT, load_yaml, repository_relative_paths, resolve_config_scenario,
+    ROOT, load_runtime_manifest, load_yaml, repository_relative_paths, resolve_config_scenario,
     resolve_mobile_identities, resolve_scenario_profile_paths,
 )
 
@@ -94,7 +94,12 @@ def resolve_dataset_spec(testbed, config_dir, diagnostics=None):
             diagnostics.append(message)
 
     config_dir = Path(config_dir)
-    path_supis = resolve_mobile_identities(testbed)["pathSupis"]
+    manifest = load_runtime_manifest(config_dir)
+    static_deployment = manifest["runtime"]["deploymentKind"] in (
+        "static-flat", "static-hierarchical"
+    )
+    selected_testbed = testbed
+    path_supis = resolve_mobile_identities(selected_testbed)["pathSupis"]
     scenario_path, scenario = resolve_config_scenario(config_dir)
     profile_paths = resolve_scenario_profile_paths(scenario_path, scenario)
     profile_sources = repository_relative_paths(profile_paths)
@@ -126,7 +131,8 @@ def resolve_dataset_spec(testbed, config_dir, diagnostics=None):
     seed = load_json(ROOT / "ML" / "PyMTLF" / "seed_models" / "initial" / "config.json")
     sequence_length = _positive_int(seed["inference"]["seq_length"], "seed seq_length")
     output_length = _positive_int(seed["inference"]["out_seq_len"], "seed out_seq_len")
-    coordinator = load_yaml(config_dir / "pymtlf-c.yaml")
+    coordinator_name = manifest["runtime"]["coordinatorContainer"]
+    coordinator = load_yaml(config_dir / (coordinator_name + ".yaml"))
     monitor_period = _positive_int(
         coordinator["model_monitor"]["report_period_seconds"],
         "model monitor report period",
@@ -211,17 +217,99 @@ def resolve_dataset_spec(testbed, config_dir, diagnostics=None):
             _positive_int(profile.get(field), "{} {}".format(profile_source, field))
         if profile["postBoundaryMode"] not in ("stable", "degraded"):
             raise ValueError("{} postBoundaryMode must be stable or degraded".format(profile_source))
-        anlf = load_yaml(config_dir / "pyanlf-{}.yaml".format(path_name))
-        mtlf = load_yaml(config_dir / "pymtlf-{}.yaml".format(path_name))
+        if static_deployment:
+            matching_clients = []
+            wanted_tac = selected_testbed["paths"][path_name]["tai"]["tac"]
+            for service_name in manifest["runtime"]["hostContainers"]:
+                candidate = load_yaml(config_dir / (service_name + ".yaml"))
+                training_data = (
+                    candidate.get("federated_learning", {}).get("client", {})
+                    .get("training_data", {})
+                )
+                profiles = training_data.get("collection_profiles", [])
+                tais = [
+                    tai
+                    for profile_item in profiles
+                    for tai in profile_item.get("network_area", {}).get("tais", [])
+                ]
+                if any(tai.get("tac") == wanted_tac for tai in tais):
+                    matching_clients.append(candidate)
+            if not matching_clients:
+                raise ValueError("path {} has no static private-training client".format(path_name))
+            expected_owner_count = sum(
+                owner["path"] == path_name
+                for owner in manifest["runtime"]["dataOwners"]
+            )
+            if len(matching_clients) != expected_owner_count:
+                raise ValueError(
+                    "path {} private-training clients do not match declared data owners".format(
+                        path_name
+                    )
+                )
+            sampling = sampling_contract
+            min_matched = minimum_reference
+            expected_groups = sorted(
+                owner["internalGroupId"]
+                for owner in manifest["runtime"]["dataOwners"]
+                if owner["path"] == path_name
+            )
+            actual_groups = []
+            validation_ratios = {
+                candidate["federated_learning"]["client"]["training"]["validation_ratio"]
+                for candidate in matching_clients
+            }
+            if len(validation_ratios) != 1:
+                raise ValueError(
+                    "path {} private-training clients disagree on validation_ratio".format(
+                        path_name
+                    )
+                )
+            validation_ratio = next(iter(validation_ratios))
+            for candidate in matching_clients:
+                profiles = (
+                    candidate["federated_learning"]["client"]["training_data"]
+                    .get("collection_profiles", [])
+                )
+                if len(profiles) != 1:
+                    raise ValueError(
+                        "path {} data owner must declare exactly one collection profile".format(
+                            path_name
+                        )
+                    )
+                groups = profiles[0].get("target_ue", {}).get("intGroupIds", [])
+                if len(groups) != 1:
+                    raise ValueError(
+                        "path {} data owner must select exactly one internal group".format(
+                            path_name
+                        )
+                    )
+                actual_groups.append(groups[0])
+                diagnose(
+                    candidate.get("dataset", {}).get("retrieval_window_seconds")
+                    == preparation_window,
+                    "path {} data-owner retrieval fallback differs from the scenario".format(
+                        path_name
+                    ),
+                )
+            if sorted(actual_groups) != expected_groups:
+                raise ValueError(
+                    "path {} private-training clients do not exactly cover declared data-owner groups".format(
+                        path_name
+                    )
+                )
+        else:
+            anlf = load_yaml(config_dir / "pyanlf-{}.yaml".format(path_name))
+            mtlf = load_yaml(config_dir / "pymtlf-{}.yaml".format(path_name))
+            sampling = _positive_int(
+                anlf["analytics"]["ue_communication"]["sampling_interval_seconds"],
+                "path {} sampling interval".format(path_name),
+            )
+            min_matched = _positive_int(
+                anlf["accuracy_monitor"]["min_matched_predictions"],
+                "path {} minimum matched predictions".format(path_name),
+            )
+            validation_ratio = mtlf["federated_learning"]["client"]["training"]["validation_ratio"]
         upf = load_yaml(config_dir / "upfcfg-{}.yaml".format(path_name))
-        sampling = _positive_int(
-            anlf["analytics"]["ue_communication"]["sampling_interval_seconds"],
-            "path {} sampling interval".format(path_name),
-        )
-        min_matched = _positive_int(
-            anlf["accuracy_monitor"]["min_matched_predictions"],
-            "path {} minimum matched predictions".format(path_name),
-        )
         diagnose(
             sampling == sampling_contract,
             "path {} sampling differs from the scenario".format(path_name),
@@ -239,17 +327,17 @@ def resolve_dataset_spec(testbed, config_dir, diagnostics=None):
                 path_name
             ),
         )
-        validation_ratio = mtlf["federated_learning"]["client"]["training"]["validation_ratio"]
         if not isinstance(validation_ratio, (int, float)) or not 0 < validation_ratio < 1:
             raise ValueError("path {} validation_ratio must be between 0 and 1".format(path_name))
         diagnose(
             upf["ees"]["periodSec"] == sampling,
             "path {} UPF period and AnLF sampling interval differ".format(path_name),
         )
-        diagnose(
-            mtlf["dataset"].get("retrieval_window_seconds") == preparation_window,
-            "path {} retrieval fallback differs from the scenario".format(path_name),
-        )
+        if not static_deployment:
+            diagnose(
+                mtlf["dataset"].get("retrieval_window_seconds") == preparation_window,
+                "path {} retrieval fallback differs from the scenario".format(path_name),
+            )
         diagnose(
             not any(
             duration % sampling
@@ -348,7 +436,7 @@ def resolve_dataset_spec(testbed, config_dir, diagnostics=None):
             "profileSource": profile_source,
             "profileHash": canonical_hash(profile),
             "ueIps": _expected_ue_ips(
-                testbed["paths"][path_name]["upf"]["uePool"],
+                selected_testbed["paths"][path_name]["upf"]["uePool"],
                 len(path_supis[path_name]),
             ),
             "artifactFile": pseudo["dataset"]["file"],

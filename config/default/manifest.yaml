@@ -1,6 +1,10 @@
 schemaVersion: 1
-name: full-core-cat-transition
-topology: testbed.yaml
+name: default
+topology:
+  name: dual-tai-default
+  kind: production-flat
+  definition: testbed.yaml
+  definitionHash: e3a0c316c7777f88befbd23393092383ed871a00fa6a97bee2dc35fe76272b6a
 scenario:
   name: full-core-cat-transition
   kind: business-acceptance
@@ -17,11 +21,275 @@ constraints:
   pseudoDriverProfiles:
     a: experiments/examples/full-core-cat-transition/traffic/path-a.json
     b: experiments/examples/full-core-cat-transition/traffic/path-b.json
-  gtp5g: ">=0.9.5,<0.10.0"
+  gtp5g: '>=0.9.5,<0.10.0'
 runtime:
-  guestMachines: [core, path-a, path-b]
-  hostContainers: [pyanlf-a, pymtlf-a, pyanlf-b, pymtlf-b, pymtlf-c]
+  deploymentKind: production-flat
+  guestMachines:
+  - core
+  - path-a
+  - path-b
+  guestServices:
+  - &id001
+    machine: core
+    unit: mongodb
+    kind: core
+  - &id002
+    machine: core
+    unit: nrf
+    kind: core
+  - &id003
+    machine: core
+    unit: nssf
+    kind: core
+  - &id004
+    machine: core
+    unit: udr
+    kind: core
+  - &id005
+    machine: core
+    unit: udm
+    kind: core
+  - &id006
+    machine: core
+    unit: ausf
+    kind: core
+  - &id007
+    machine: core
+    unit: pcf
+    kind: core
+  - &id008
+    machine: core
+    unit: amf
+    kind: core
+  - &id009
+    machine: path-a
+    unit: upf-a
+    kind: upf
+  - &id010
+    machine: path-b
+    unit: upf-b
+    kind: upf
+  - &id011
+    machine: core
+    unit: smf
+    kind: core
+  - &id012
+    machine: core
+    unit: adrf
+    kind: core
+  - &id013
+    machine: core
+    unit: nwdaf-c
+    kind: nwdaf
+  - &id014
+    machine: path-a
+    unit: nwdaf-a
+    kind: nwdaf
+  - &id015
+    machine: path-b
+    unit: nwdaf-b
+    kind: nwdaf
+  - &id016
+    machine: path-a
+    unit: gnb-a
+    kind: gnb
+  - &id017
+    machine: path-b
+    unit: gnb-b
+    kind: gnb
+  - &id018
+    machine: path-a
+    unit: ue1
+    kind: ue
+  - &id019
+    machine: path-a
+    unit: ue2
+    kind: ue
+  - &id020
+    machine: path-a
+    unit: ue3
+    kind: ue
+  - &id021
+    machine: path-b
+    unit: ue4
+    kind: ue
+  - &id022
+    machine: path-b
+    unit: ue5
+    kind: ue
+  - &id023
+    machine: path-b
+    unit: ue6
+    kind: ue
+  nwdafs:
+  - unit: nwdaf-a
+    machine: path-a
+    role: fl-client
+    nfInstanceId: 11111111-1111-4111-8111-111111111111
+    sbi:
+      network: sbi
+      address: 192.168.57.41
+      port: 8080
+    internalApi:
+      anlf:
+        address: 192.168.57.41
+        port: 8090
+      mtlf:
+        address: 192.168.57.41
+        port: 8091
+    backends:
+      anlf: pyanlf-a
+      mtlf: pymtlf-a
+  - unit: nwdaf-b
+    machine: path-b
+    role: fl-client
+    nfInstanceId: 22222222-2222-4222-8222-222222222222
+    sbi:
+      network: sbi
+      address: 192.168.57.51
+      port: 8080
+    internalApi:
+      anlf:
+        address: 192.168.57.51
+        port: 8090
+      mtlf:
+        address: 192.168.57.51
+        port: 8091
+    backends:
+      anlf: pyanlf-b
+      mtlf: pymtlf-b
+  - unit: nwdaf-c
+    machine: core
+    role: fl-server
+    nfInstanceId: 33333333-3333-4333-8333-333333333333
+    sbi:
+      network: sbi
+      address: 192.168.57.30
+      port: 8080
+    internalApi:
+      anlf:
+        address: 192.168.57.30
+        port: 8090
+      mtlf:
+        address: 192.168.57.30
+        port: 8091
+    backends:
+      mtlf: pymtlf-c
+  ues:
+  - unit: ue1
+    machine: path-a
+    path: a
+    supi: imsi-466920000000001
+  - unit: ue2
+    machine: path-a
+    path: a
+    supi: imsi-466920000000002
+  - unit: ue3
+    machine: path-a
+    path: a
+    supi: imsi-466920000000003
+  - unit: ue4
+    machine: path-b
+    path: b
+    supi: imsi-466920000000004
+  - unit: ue5
+    machine: path-b
+    path: b
+    supi: imsi-466920000000005
+  - unit: ue6
+    machine: path-b
+    path: b
+    supi: imsi-466920000000006
+  dataOwners: []
+  hostContainers:
+  - pyanlf-a
+  - pymtlf-a
+  - pyanlf-b
+  - pymtlf-b
+  - pymtlf-c
+  mlVolumes:
+  - &id024
+    name: pyanlf-a-artifacts
+    image: 5g-nwdaf-infrastructure/pyanlf:local
+  - &id025
+    name: pymtlf-a-data
+    image: 5g-nwdaf-infrastructure/pymtlf:local
+  - &id026
+    name: pyanlf-b-artifacts
+    image: 5g-nwdaf-infrastructure/pyanlf:local
+  - &id027
+    name: pymtlf-b-data
+    image: 5g-nwdaf-infrastructure/pymtlf:local
+  - &id028
+    name: pymtlf-c-data
+    image: 5g-nwdaf-infrastructure/pymtlf:local
+  subscriptions: consumer
+  coordinatorContainer: pymtlf-c
   mlDevicePolicy: gpu
+  capacity:
+    guestCpus: 10
+    guestMemoryMiB: 10240
+    hostContainerCpus: 7.0
+    hostContainerMemoryMiB: 5632
+    containerBuildOverheadMemoryMiB: 2048
+    gpuParticipants: 2
+    minimumGpuMemoryMiB: 8192
+    publishedPorts:
+    - 9091
+    - 9092
+    - 9093
+    - 9094
+    - 9292
+  resetScope:
+    guestServices:
+    - *id001
+    - *id002
+    - *id003
+    - *id004
+    - *id005
+    - *id006
+    - *id007
+    - *id008
+    - *id009
+    - *id010
+    - *id011
+    - *id012
+    - *id013
+    - *id014
+    - *id015
+    - *id016
+    - *id017
+    - *id018
+    - *id019
+    - *id020
+    - *id021
+    - *id022
+    - *id023
+    hostContainers:
+    - pyanlf-a
+    - pymtlf-a
+    - pyanlf-b
+    - pymtlf-b
+    - pymtlf-c
+    mlVolumes:
+    - *id024
+    - *id025
+    - *id026
+    - *id027
+    - *id028
+    nrf:
+      database: free5gc
+      collections:
+      - NfProfile
+      - urilist
+      nfType: ADRF
+    adrf:
+      database: adrf
+      collections:
+      - data_store_records
+      - mlmodel_store_records
+      modelStorage: /var/lib/5g-nwdaf-infrastructure/adrf/models
+      nfInstanceId: a0494f77-36db-4639-9f6f-e3e71fb5bfe6
 optionalServices:
   webconsole:
     enabled: false
@@ -35,3 +303,11 @@ datasets:
   path-b:
     profile: experiments/examples/full-core-cat-transition/traffic/path-b.json
     guestDirectory: /var/lib/5g-nwdaf-infrastructure/datasets/active
+renderOptions:
+  mlDevicePolicy: gpu
+seedRestoration:
+  coordinatorContainer: pymtlf-c
+  canonicalSource: /opt/app/seed_models/initial
+  modelId: 1
+  modelInteroperability: '001122'
+  artifactKey: a2c796a001e2da2461418f80b01d7d1e33f0e3349c2817d92286f09e67aa6bef

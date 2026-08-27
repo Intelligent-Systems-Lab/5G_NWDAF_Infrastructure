@@ -7,6 +7,7 @@ explicit_config=${2:-}
 failures=0
 warnings=0
 virtualbox_storage=
+config_dir=$(effective_config_dir "$testbed" "$explicit_config")
 
 ok() { echo "OK   $*"; }
 fail() { echo "FAIL $*" >&2; failures=$((failures + 1)); }
@@ -90,10 +91,11 @@ else
   docker_free_gib=0
 fi
 
-read -r required_mib disk_gib host_reserve_mib swap_policy minimum_swap_mib minimum_free_storage_gib ml_bind_address < <(PYTHONPATH="$HOST_ROOT/scripts/host" python3 - "$testbed" <<'PY'
+read -r required_mib disk_gib host_reserve_mib swap_policy minimum_swap_mib minimum_free_storage_gib ml_bind_address guest_cpus container_cpus container_memory_mib build_overhead_mib gpu_participants gpu_memory_mib < <(PYTHONPATH="$HOST_ROOT/scripts/host" python3 - "$testbed" "$config_dir" <<'PY'
 import sys
-from configlib import load_yaml, resolve_ml_bind_address, resolve_path
+from configlib import load_runtime_manifest, load_yaml, resolve_ml_bind_address, resolve_path
 d = load_yaml(resolve_path(sys.argv[1]))
+capacity = load_runtime_manifest(resolve_path(sys.argv[2]))["runtime"]["capacity"]
 safety = d["hostSafety"]
 print(
     sum(m["resources"]["memoryMiB"] for m in d["machines"].values()),
@@ -103,14 +105,36 @@ print(
     safety["minimumFreeSwapMiB"],
     safety["minimumFreeStorageGiB"],
     resolve_ml_bind_address(d),
+    capacity["guestCpus"],
+    capacity["hostContainerCpus"],
+    capacity["hostContainerMemoryMiB"],
+    capacity["containerBuildOverheadMemoryMiB"],
+    capacity["gpuParticipants"],
+    capacity["minimumGpuMemoryMiB"],
 )
 PY
 )
+container_cpus=${container_cpus%.*}
 available_mib=$(awk '/MemAvailable:/ {print int($2/1024)}' /proc/meminfo)
+total_mib=$(awk '/MemTotal:/ {print int($2/1024)}' /proc/meminfo)
+host_cpus=$(getconf _NPROCESSORS_ONLN)
 swap_free_mib=$(awk '/SwapFree:/ {print int($2/1024)}' /proc/meminfo)
 free_gib=$(df -Pk "$HOST_ROOT" | awk 'NR==2 {print int($4/1024/1024)}')
-required_with_reserve=$((required_mib + host_reserve_mib))
-[ "$available_mib" -ge "$required_with_reserve" ] && ok "available RAM ${available_mib}MiB >= VM allocation ${required_mib}MiB + host reserve ${host_reserve_mib}MiB" || fail "available RAM ${available_mib}MiB < VM allocation ${required_mib}MiB + host reserve ${host_reserve_mib}MiB"
+selected_host_mib=$((container_memory_mib + build_overhead_mib))
+[ "$selected_host_mib" -ge "$host_reserve_mib" ] || selected_host_mib=$host_reserve_mib
+required_with_reserve=$((required_mib + selected_host_mib))
+[ "$total_mib" -ge "$required_with_reserve" ] && ok "total RAM ${total_mib}MiB >= VM ${required_mib}MiB + selected Host requirement ${selected_host_mib}MiB (containers ${container_memory_mib}MiB + build overhead ${build_overhead_mib}MiB; reserve floor ${host_reserve_mib}MiB)" || fail "total RAM ${total_mib}MiB < selected runtime requirement ${required_with_reserve}MiB"
+required_cpus=$((guest_cpus + container_cpus))
+[ "$host_cpus" -ge "$required_cpus" ] && ok "online CPUs ${host_cpus} >= selected Guest/container limits ${required_cpus}" || fail "online CPUs ${host_cpus} < selected Guest/container limits ${required_cpus}"
+ok "current available RAM ${available_mib}MiB (runtime transition headroom is checked again before ML start)"
+if [ "$gpu_participants" -gt 0 ]; then
+  if command -v nvidia-smi >/dev/null 2>&1; then
+    gpu_free_mib=$(nvidia-smi --query-gpu=memory.free --format=csv,noheader,nounits | sort -nr | head -n 1)
+    [ "${gpu_free_mib:-0}" -ge "$gpu_memory_mib" ] && ok "GPU free memory ${gpu_free_mib}MiB >= selected minimum ${gpu_memory_mib}MiB for ${gpu_participants} participants" || fail "GPU free memory ${gpu_free_mib:-0}MiB < selected minimum ${gpu_memory_mib}MiB"
+  else
+    fail "selected runtime requires ${gpu_participants} GPU participants but nvidia-smi is unavailable"
+  fi
+fi
 if [ "$swap_free_mib" -ge "$minimum_swap_mib" ]; then
   ok "free swap ${swap_free_mib}MiB >= ${minimum_swap_mib}MiB"
 elif [ "$swap_policy" = "warn" ]; then
@@ -133,11 +157,15 @@ else
   warn "Host ML bind address $ml_bind_address is not present yet; the provider must create/expose it before ml-start"
 fi
 
-mapfile -t ml_ports < <(PYTHONPATH="$HOST_ROOT/scripts/host" python3 - "$testbed" <<'PY'
+mapfile -t ml_ports < <(PYTHONPATH="$HOST_ROOT/scripts/host" python3 - "$config_dir" <<'PY'
 import sys
-from configlib import load_yaml, resolve_path
-d = load_yaml(resolve_path(sys.argv[1]))
-for port in sorted({service["publishedPort"] for service in d["mlRuntime"]["services"].values()}):
+from configlib import load_runtime_manifest, load_yaml, resolve_path
+directory = resolve_path(sys.argv[1])
+manifest = load_runtime_manifest(directory)
+for port in sorted({
+    load_yaml(directory / (service + ".yaml"))["server"]["port"]
+    for service in manifest["runtime"]["hostContainers"]
+}):
     print(port)
 PY
 )
@@ -172,7 +200,6 @@ for item in lock["components"]:
 print("OK   {} component locks match".format(len(lock["components"])))
 PY
 
-config_dir=$(effective_config_dir "$testbed" "$explicit_config")
 if python3 "$HOST_ROOT/scripts/host/config-check.py" --testbed "$testbed" --config-dir "$config_dir"; then
   ok "effective config check"
 else

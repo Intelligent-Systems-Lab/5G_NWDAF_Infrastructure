@@ -6,6 +6,7 @@ testbed=${1:-testbed.yaml}
 explicit_config=${2:-}
 config_dir=$(effective_config_dir "$testbed" "$explicit_config")
 webconsole_enabled=$(config_webconsole_enabled "$config_dir")
+subscriptions_mode=$(config_subscriptions_mode "$config_dir")
 dataset_args=(--testbed "$testbed")
 if [ -n "$explicit_config" ]; then
   dataset_args+=(--config-dir "$explicit_config")
@@ -60,13 +61,13 @@ rollback() {
     fi
   fi
   if $ml_started; then
-    "$HOST_ROOT/scripts/host/ml-stop.sh" || true
+    "$HOST_ROOT/scripts/host/ml-stop.sh" "$testbed" "$explicit_config" || true
   fi
   if $webconsole_started; then
     "$HOST_ROOT/scripts/host/webconsole-stop.sh" || true
   fi
   if $services_started; then
-    "$HOST_ROOT/scripts/host/services-stop.sh" || true
+    "$HOST_ROOT/scripts/host/services-stop.sh" "$testbed" "$explicit_config" || true
   fi
   exit "$status"
 }
@@ -83,8 +84,12 @@ if [ "$webconsole_enabled" = true ]; then
 fi
 "$HOST_ROOT/scripts/host/ml-start.sh" "$testbed" "$explicit_config"
 ml_started=true
-subscriptions_attempted=true
-"$HOST_ROOT/scripts/host/subscriptions-start.sh"
+if [ "$subscriptions_mode" = consumer ]; then
+  subscriptions_attempted=true
+  "$HOST_ROOT/scripts/host/subscriptions-start.sh"
+else
+  echo "SUBSCRIPTIONS skipped (mode=$subscriptions_mode)"
+fi
 trap - EXIT
 
 echo "Experiment processes are active; VM lifecycle and retained state were not changed."

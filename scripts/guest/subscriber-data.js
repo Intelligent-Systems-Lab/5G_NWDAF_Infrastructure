@@ -45,12 +45,18 @@ const groupIds = groups.map(item => item.intGroupId);
 
 requireValue(fixture.schemaVersion === 1, "unsupported subscriber fixture schema");
 requireValue(groupFixture.schemaVersion === 1, "unsupported group fixture schema");
-requireValue(subscribers.length === 6, "full-core fixture must contain six subscribers");
+requireValue(subscribers.length > 0, "subscriber fixture must not be empty");
 requireValue(new Set(supis).size === supis.length, "subscriber SUPIs must be unique");
-requireValue(groups.length === 1, "full-core fixture must contain one Internal Group");
+requireValue(groups.length > 0, "group fixture must not be empty");
+requireValue(new Set(groupIds).size === groupIds.length, "Internal Group IDs must be unique");
+const memberSupis = groups.flatMap(group => group.ueIdList.map(item => item.supi));
 requireValue(
-  JSON.stringify(groups[0].ueIdList.map(item => item.supi).sort()) === JSON.stringify([...supis].sort()),
-  "Internal Group membership must match subscriber SUPIs"
+  new Set(memberSupis).size === memberSupis.length,
+  "Internal Group membership must not repeat a subscriber"
+);
+requireValue(
+  JSON.stringify([...memberSupis].sort()) === JSON.stringify([...supis].sort()),
+  "Internal Group memberships must cover subscriber SUPIs exactly once"
 );
 
 const snssai = defaults.snssai;

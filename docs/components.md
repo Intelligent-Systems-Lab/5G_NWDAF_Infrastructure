@@ -46,10 +46,18 @@ binary that was previously installed inside an existing VM.
 Vagrant syncs the parent-pinned source snapshot into each VM. Guests never
 clone or select branches:
 
-- Core builds its assigned free5GC NFs, ADRF, and NWDAF-C.
-- Each Path builds UPF, UERANSIM, and its path NWDAF.
+- Core builds its assigned free5GC NFs, ADRF, and one NWDAF binary used by all
+  selected Core NWDAF instances.
+- Each Path builds UPF, UERANSIM, and one NWDAF binary used by all selected
+  NWDAF instances on that Path.
 - Each Path builds gtp5g against its own running kernel.
 - PyAnLF and PyMTLF are built into Host images, not guest Python environments.
+
+Production A/B/C, Static Flat Server/Clients, and Static Hierarchical
+Root/Branches/Leaves are runtime roles, not separate Guest builds. The selected
+manifest starts the shared binary as independently configured systemd instances;
+each instance keeps its own NF identity, endpoint, runtime directory, and log
+identity.
 
 Runtime helper scripts and systemd definitions are hash-synced before config
 activation, so helper changes can reach existing VMs without rebuilding every

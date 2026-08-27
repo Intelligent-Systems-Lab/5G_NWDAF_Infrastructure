@@ -2,24 +2,23 @@
 set -euo pipefail
 source "$(dirname "$0")/lib.sh"
 
-stop_machine_units() {
-  local machine=$1 state=$2 unit
-  shift 2
-  if [ "$state" != running ]; then
-    echo "SKIP  $machine services (VM state=$state)"
-    return
-  fi
-  for unit in "$@"; do
-    stop_unit "$machine" "$unit"
-  done
-}
+testbed=${1:-testbed.yaml}
+explicit_config=${2:-}
+config_dir=$(effective_config_dir "$testbed" "$explicit_config")
 
+assert_guest_runtime_identity "$config_dir"
 vm_records=$(vm_state_records)
-path_b_state=$(awk -F'|' '$1 == "path-b" {print $2}' <<<"$vm_records")
-path_a_state=$(awk -F'|' '$1 == "path-a" {print $2}' <<<"$vm_records")
-core_state=$(awk -F'|' '$1 == "core" {print $2}' <<<"$vm_records")
-
-stop_machine_units path-b "$path_b_state" ue6 ue5 ue4 gnb-b nwdaf-b upf-b
-stop_machine_units path-a "$path_a_state" ue3 ue2 ue1 gnb-a nwdaf-a upf-a
-stop_machine_units core "$core_state" nwdaf-c adrf smf amf pcf ausf udm udr nssf nrf mongodb
+service_record_lines=$(config_guest_service_records "$config_dir")
+[ -n "$service_record_lines" ] || { echo "selected Guest service inventory is empty" >&2; exit 1; }
+mapfile -t service_records <<<"$service_record_lines"
+for ((index=${#service_records[@]}-1; index>=0; index--)); do
+  IFS='|' read -r machine unit _ <<<"${service_records[$index]}"
+  state=$(awk -F'|' -v wanted="$machine" '$1 == wanted {print $2}' <<<"$vm_records")
+  if [ "$state" = running ]; then
+    stop_unit "$machine" "$unit"
+  else
+    echo "SKIP  $machine/$unit (VM state=${state:-unknown})"
+  fi
+done
+assert_no_active_guest_units
 echo "Experiment services stopped; VM power state was not changed."

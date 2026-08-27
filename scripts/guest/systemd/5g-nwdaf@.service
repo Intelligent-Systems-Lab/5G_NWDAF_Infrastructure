@@ -13,6 +13,11 @@ RestartSec=2s
 TimeoutStopSec=30s
 KillSignal=SIGTERM
 LimitNOFILE=65536
+RuntimeDirectory=5g-nwdaf-infrastructure/%i
+RuntimeDirectoryMode=0750
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=5g-nwdaf-%i
 
 [Install]
 WantedBy=5g-nwdaf-stack.target

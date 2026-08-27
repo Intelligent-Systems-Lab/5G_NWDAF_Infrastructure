@@ -9,34 +9,40 @@ case "$action" in plan|apply|verify) ;; *) echo "usage: experiment-reset.sh plan
 
 config_dir=$(effective_config_dir "$testbed" "$explicit_config")
 python3 "$HOST_ROOT/scripts/host/config-check.py" --testbed "$testbed" --config-dir "$config_dir"
-read -r scenario mongo_uri nrf_database adrf_database storage_dir adrf_instance_id < <(
+reset_identity=$(
   PYTHONPATH="$HOST_ROOT/scripts/host" python3 - "$testbed" "$config_dir" <<'PY'
 import sys
-from configlib import load_yaml, resolve_path
+from configlib import load_runtime_manifest, load_yaml, resolve_path
 
 testbed = load_yaml(resolve_path(sys.argv[1]))
-manifest = load_yaml(resolve_path(sys.argv[2]) / "manifest.yaml")
+manifest = load_runtime_manifest(resolve_path(sys.argv[2]))
+scope = manifest["runtime"]["resetScope"]
 endpoint = testbed["coreServices"]["mongodb"]["endpoint"]
-adrf = testbed["coreServices"]["adrf"]
 print(
     manifest["scenario"]["name"],
     "mongodb://{}:{}".format(endpoint["address"], endpoint["port"]),
-    testbed["coreServices"]["mongodb"]["database"],
-    adrf["mongodb"]["database"],
-    adrf["modelStorage"]["localDirectory"],
-    adrf["nfInstanceId"],
+    scope["nrf"]["database"],
+    ",".join(scope["nrf"]["collections"]),
+    scope["nrf"]["nfType"],
+    scope["adrf"]["database"],
+    ",".join(scope["adrf"]["collections"]),
+    scope["adrf"]["modelStorage"],
+    scope["adrf"]["nfInstanceId"],
+    manifest["seedRestoration"]["coordinatorContainer"],
+    manifest["seedRestoration"]["artifactKey"],
 )
 PY
 )
+read -r scenario mongo_uri nrf_database nrf_collections nrf_nf_type adrf_database adrf_collections storage_dir adrf_instance_id seed_coordinator seed_artifact_key <<<"$reset_identity"
 project=$(ml_project_name)
-services=(pyanlf-a pyanlf-b pymtlf-a pymtlf-b pymtlf-c)
-volume_specs=(
-  "pyanlf-a-artifacts:5g-nwdaf-infrastructure/pyanlf:local"
-  "pyanlf-b-artifacts:5g-nwdaf-infrastructure/pyanlf:local"
-  "pymtlf-a-data:5g-nwdaf-infrastructure/pymtlf:local"
-  "pymtlf-b-data:5g-nwdaf-infrastructure/pymtlf:local"
-  "pymtlf-c-data:5g-nwdaf-infrastructure/pymtlf:local"
-)
+service_lines=$(config_host_containers "$config_dir")
+volume_lines=$(config_ml_volume_records "$config_dir")
+[ -n "$service_lines" ] && [ -n "$volume_lines" ] || {
+  echo "selected reset inventory is empty" >&2
+  exit 1
+}
+mapfile -t services <<<"$service_lines"
+mapfile -t volume_specs <<<"$volume_lines"
 
 vm_state() {
   local machine=$1
@@ -96,12 +102,11 @@ assert_runtime_stopped() {
   fi
   for machine in "${MACHINES[@]}"; do
     state=$(vm_state "$machine")
-    [ "$state" = running ] || continue
-    if [ "$machine" = core ]; then
-      active=$(vssh core "for unit in mongodb nrf nssf udr udm ausf pcf amf smf adrf nwdaf-c; do systemctl is-active --quiet 5g-nwdaf@\$unit.service && echo \$unit; done; systemctl is-active --quiet 5g-nwdaf-consumer.service && echo consumer; true" 2>/dev/null | tr -d '\r')
-    else
-      active=$(vssh "$machine" "systemctl list-units --state=active --no-legend '5g-nwdaf@*.service' | awk '{print \$1}'" 2>/dev/null | tr -d '\r')
+    if [ "$state" != running ]; then
+      echo "refusing reset because $machine is not running (state=${state:-unknown})" >&2
+      return 1
     fi
+    active=$(vssh "$machine" "systemctl list-units --state=active --no-legend '5g-nwdaf@*.service' | awk '{print \$1}'; if [ '$machine' = core ]; then systemctl is-active --quiet 5g-nwdaf-consumer.service && echo consumer; fi; true" 2>/dev/null | tr -d '\r')
     if [ -n "$active" ]; then
       echo "refusing reset while $machine experiment services are active:" >&2
       printf '%s\n' "$active" >&2
@@ -114,25 +119,46 @@ guest_reset() {
   local guest_action=$1 remote_shell=/tmp/5g-nwdaf-experiment-reset.sh remote_js=/tmp/5g-nwdaf-experiment-reset.js
   (cd "$HOST_ROOT" && provider_vagrant upload "$HOST_ROOT/scripts/guest/experiment-reset.sh" "$remote_shell" core)
   (cd "$HOST_ROOT" && provider_vagrant upload "$HOST_ROOT/scripts/guest/experiment-reset.js" "$remote_js" core)
-  vssh core "sudo bash '$remote_shell' '$guest_action' '$mongo_uri' '$nrf_database' '$adrf_database' '$storage_dir' '$adrf_instance_id' '$remote_js'; status=\$?; rm -f '$remote_shell' '$remote_js'; exit \$status"
+  vssh core "sudo bash '$remote_shell' '$guest_action' '$mongo_uri' '$nrf_database' '$nrf_collections' '$nrf_nf_type' '$adrf_database' '$adrf_collections' '$storage_dir' '$adrf_instance_id' '$remote_js'; status=\$?; rm -f '$remote_shell' '$remote_js'; exit \$status"
 }
 
 echo "EXPERIMENT RESET action=$action scenario=$scenario config=$config_dir project=$project"
 echo "SCOPE containers=retained images=retained network=retained volumes=retained"
+echo "SEED coordinator=$seed_coordinator artifact_key=$seed_artifact_key canonical_source=retained"
 for service in "${services[@]}"; do
   status=$(docker ps -a --filter "label=com.docker.compose.project=$project" --filter "label=com.docker.compose.service=$service" --format '{{.Status}}')
   echo "CONTAINER service=$service status=${status:-absent} retained=yes"
 done
+container_inventory=$(docker ps -a --filter "label=com.docker.compose.project=$project" \
+  --format '{{.Label "com.docker.compose.service"}}|{{.Status}}')
+if [ -n "$container_inventory" ]; then
+  while IFS='|' read -r actual_service actual_status; do
+    [ -n "$actual_service" ] || continue
+    if ! printf '%s\n' "${services[@]}" | grep -Fxq "$actual_service"; then
+      echo "CONTAINER_UNEXPECTED service=$actual_service status=${actual_status:-unknown} retained=yes selected=no"
+    fi
+  done <<<"$container_inventory"
+fi
 for spec in "${volume_specs[@]}"; do
-  IFS=: read -r logical image <<<"$spec"
+  IFS='|' read -r logical image <<<"$spec"
   volume_state "$logical" "$image"
 done
+volume_inventory=$(docker volume ls --filter "label=com.docker.compose.project=$project" \
+  --format '{{.Name}}|{{.Label "com.docker.compose.volume"}}')
+if [ -n "$volume_inventory" ]; then
+  while IFS='|' read -r physical logical; do
+    [ -n "$physical" ] || continue
+    if ! printf '%s\n' "${volume_specs[@]%%|*}" | grep -Fxq "$logical"; then
+      echo "VOLUME_UNEXPECTED logical=${logical:-unknown} physical=$physical retained=yes selected=no"
+    fi
+  done <<<"$volume_inventory"
+fi
 
 core_state=$(vm_state core)
 echo "GUEST machine=core state=${core_state:-unknown}"
 if [ "$action" = plan ]; then
-  echo "GUEST_SCOPE adrf_database=$adrf_database collections=data_store_records,mlmodel_store_records"
-  echo "GUEST_SCOPE nrf_database=$nrf_database collections=NfProfile,urilist filter=nfType:ADRF"
+  echo "GUEST_SCOPE adrf_database=$adrf_database collections=$adrf_collections"
+  echo "GUEST_SCOPE nrf_database=$nrf_database collections=$nrf_collections filter=nfType:$nrf_nf_type"
   echo "GUEST_SCOPE model_storage=$storage_dir"
   if [ "$core_state" = running ]; then
     guest_reset plan
@@ -145,6 +171,7 @@ if [ "$action" = plan ]; then
 fi
 
 assert_runtime_stopped
+assert_guest_runtime_identity "$config_dir"
 if [ "$core_state" != running ]; then
   echo "Core VM must be running for $action" >&2
   exit 1
@@ -157,14 +184,14 @@ if [ "$action" = apply ]; then
   fi
   guest_reset apply
   for spec in "${volume_specs[@]}"; do
-    IFS=: read -r logical image <<<"$spec"
+    IFS='|' read -r logical image <<<"$spec"
     clear_volume "$logical" "$image"
   done
   echo "RESET_APPLIED scenario=$scenario; run experiment-reset-verify before startup"
 else
   guest_reset verify
   for spec in "${volume_specs[@]}"; do
-    IFS=: read -r logical image <<<"$spec"
+    IFS='|' read -r logical image <<<"$spec"
     physical="${project}_${logical}"
     if docker volume inspect "$physical" >/dev/null 2>&1; then
       assert_volume_identity "$logical" "$physical"

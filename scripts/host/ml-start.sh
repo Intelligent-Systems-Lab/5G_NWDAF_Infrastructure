@@ -9,6 +9,14 @@ project=$(ml_project_name)
 config_dir=$(effective_config_dir "$testbed" "$explicit_config")
 hash=$(config_hash "$config_dir")
 config_name=$(basename "$config_dir")
+ml_service_lines=$(config_host_containers "$config_dir")
+ml_build_lines=$(config_ml_build_services "$config_dir")
+mapfile -t ml_services <<<"$ml_service_lines"
+mapfile -t ml_build_services <<<"$ml_build_lines"
+[ "${#ml_services[@]}" -gt 0 ] && [ "${#ml_build_services[@]}" -gt 0 ] || {
+  echo "selected ML inventory is empty" >&2
+  exit 1
+}
 
 if [ "$mode" = cpu-smoke ]; then
   bind_address=127.0.0.1
@@ -19,10 +27,13 @@ fi
 device_policy=$(config_ml_device_policy "$config_dir")
 export ML_DEVICE_POLICY="$device_policy"
 
+# Compose may recreate stopped containers from a previous selected config while retaining their volumes.
+assert_ml_runtime_identity "$testbed" "$config_dir" start
 if ! host_has_address "$bind_address"; then
   echo "ML bind address is not present on the Host: $bind_address" >&2
   exit 1
 fi
+ml_host_resource_gate "$testbed" "$config_dir"
 ml_runtime_gate
 
 export CONFIG_DIR="$config_dir"
@@ -31,7 +42,7 @@ export CONFIG_HASH="$hash"
 export ML_BIND_ADDRESS="$bind_address"
 
 echo "ML CONFIG project=$project mode=$mode device_policy=$device_policy set=$config_name hash=$hash bind=$bind_address"
-ml_compose build pyanlf-a pymtlf-a
+ml_compose build "${ml_build_services[@]}"
 
 if [ "$device_policy" = gpu ]; then
   cdi_device=nvidia.com/gpu=all
@@ -58,8 +69,8 @@ trap rollback ERR
 trap 'rollback 130' INT
 trap 'rollback 143' TERM
 rollback_needed=true
-ml_compose up --detach --no-build --wait --wait-timeout 240 || rollback "$?"
-"$HOST_ROOT/scripts/host/ml-status.sh"
+ml_compose up --detach --no-build --wait --wait-timeout 240 "${ml_services[@]}" || rollback "$?"
+"$HOST_ROOT/scripts/host/ml-status.sh" "$testbed" "$explicit_config"
 rollback_needed=false
 trap - ERR INT TERM
 

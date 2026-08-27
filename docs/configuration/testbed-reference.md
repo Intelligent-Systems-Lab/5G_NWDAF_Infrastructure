@@ -1,9 +1,11 @@
 # Testbed Reference
 
 `TESTBED` selects one complete topology document. The committed
-`testbed.yaml` is both the reference deployment and the source used to render
-`config/default`. Copy the entire file for a site-specific environment; partial
-overlays are not supported.
+`testbed.yaml` is the production Flat reference and the source used to render
+`config/default`. `testbed.static-flat.yaml` and
+`testbed.static-hierarchical.yaml` are complete static definitions using the
+same schema. Copy an entire file for a site-specific environment; partial
+overlays and a second deployment selector are not supported.
 
 ## Root and Guest identity
 
@@ -31,13 +33,16 @@ status commands:
 | Field | Unit and effect |
 | --- | --- |
 | `reserveMemoryMiB` | Desired Host memory left outside the VM allocation. |
+| `containerBuildOverheadMemoryMiB` | Additional selected-runtime memory budget for image build and Docker overhead. |
+| `minimumGpuMemoryMiB` | Minimum free accelerator memory when the selected inventory contains GPU participants. |
 | `minimumFreeStorageGiB` | Desired free space on workspace, VirtualBox, and Docker filesystems. |
 | `minimumFreeSwapMiB` | Desired free swap. |
 | `swapPolicy` | `warn` or `require` classification in validation output. |
 
-These thresholds do not reserve resources and no longer gate
-`experiment-start`; the operating system, VirtualBox, Docker, or an individual
-process may still fail if real resources are exhausted.
+Validation combines the VM allocation with the selected Compose CPU/memory
+limits, build overhead, GPU participant count, accelerator memory, and the Host
+reserve floor. `ml-start` repeats the available Host/GPU check before starting
+containers. Insufficient selected capacity is a hard safety failure.
 
 ## Networks and interfaces
 
@@ -82,10 +87,9 @@ not derived from PLMN.
 
 ## Placement and endpoints
 
-`placement` is the expected ownership inventory: Core Guest units, Path A/B
-Guest units, and the five Host containers. It is checked as a fixed reference
-contract; moving a process requires corresponding provisioning, systemd,
-network, Compose, and lifecycle work.
+`placement` is the exact ownership inventory: Core Guest units, Path A/B Guest
+units, and the selected five or seven Host containers. The generated manifest
+must be exactly reconstructible from it and the other `TESTBED` fields.
 
 Endpoint objects use `network`, `address`, and usually `port`:
 
@@ -94,9 +98,14 @@ Endpoint objects use `network`, `address`, and usually `port`:
 - `paths.<a|b>.gnb` owns N2/N3 addresses.
 - `paths.<a|b>.upf` owns N3/N4/N6, Event Exposure, GTP interface name, and UE
   pool.
+- `analytics.topology` selects `production-flat`, `static-flat`, or
+  `static-hierarchical` inside the complete definition.
 - `analytics.nwdaf-*` owns stable lowercase UUIDv4 NF instance IDs, SBI
-  addresses, TAI scope for A/B, and FL role.
-- `analytics.backends` maps each NWDAF to a Host-container endpoint.
+  addresses, FL role, Host backend mapping, and static data-owner/Branch edges
+  where applicable.
+- `analytics.dataOwners` assigns the four static logical positions to disjoint
+  two-SUPI partitions. Production Flat continues to use `analytics.backends`
+  for its legacy A/B/C native endpoint mapping.
 
 ADRF's `nfInstanceId` is stable so retained NRF and model state can be scoped
 exactly. `modelStorage.localDirectory` must remain an absolute directory below
@@ -120,6 +129,8 @@ section selects how the matching artifact is used by go-upf.
 | `services.<name>.image` | `pyanlf` or `pymtlf` build target. |
 | `publishedPort`, `containerPort` | Host-side and container-side service ports. |
 | `device` | Native desired device (`cpu` or `cuda:0`); render-time `DEVICE=cpu` creates the coordinated CPU override. |
+| `cpus`, `memoryMiB` | Per-container limits included in the selected capacity gate. |
+| `volume.name`, `volume.target` | Exact project volume identity and its writable container mount. |
 
 `optionalServices.webconsole` owns its Core placement and management endpoint;
 whether it starts is stored in the generated manifest from `WEBCONSOLE`.

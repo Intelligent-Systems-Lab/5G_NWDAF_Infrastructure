@@ -53,6 +53,9 @@ services_status_main() {
   local -a ue_records=()
   local -A vm_states=()
   local -A snapshot_pids=()
+  local testbed=${1:-testbed.yaml} explicit_config=${2:-} config_dir
+  config_dir=$(effective_config_dir "$testbed" "$explicit_config")
+  assert_guest_runtime_identity "$config_dir" || return
   vm_records=$(vm_state_records) || return
   while IFS='|' read -r machine state; do
     vm_states["$machine"]=$state
@@ -61,11 +64,13 @@ services_status_main() {
   snapshot_dir=$(mktemp -d -t 5g-nwdaf-service-status.XXXXXX)
   SERVICE_STATUS_ACTIVE_DIR=$snapshot_dir
   for machine in core path-a path-b; do
-    case "$machine" in
-      core) units=("${CORE_UNITS[@]}");;
-      path-a) units=("${PATH_A_UNITS[@]}");;
-      path-b) units=("${PATH_B_UNITS[@]}");;
-    esac
+    unit_lines=$(config_guest_units "$config_dir" "$machine")
+    [ -n "$unit_lines" ] || {
+      echo "selected Guest service inventory is empty for $machine" >&2
+      services_status_cleanup
+      return 1
+    }
+    mapfile -t units <<<"$unit_lines"
     if [ "${vm_states[$machine]:-unknown}" != running ]; then
       for unit in "${units[@]}"; do
         service_records+=("SERVICE|$machine|$unit|not-running")

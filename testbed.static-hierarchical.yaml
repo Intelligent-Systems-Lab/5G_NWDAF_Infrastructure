@@ -1,0 +1,496 @@
+
+schemaVersion: 1
+name: static-hierarchical
+config:
+  directory: config/local/static-hierarchical
+guest:
+  box: ubuntu/jammy64
+  boxVersion: 20241002.0.0
+  os: ubuntu
+  release: '22.04'
+hostSafety:
+  reserveMemoryMiB: 6144
+  containerBuildOverheadMemoryMiB: 2048
+  minimumGpuMemoryMiB: 8192
+  swapPolicy: warn
+  minimumFreeSwapMiB: 1024
+  minimumFreeStorageGiB: 120
+machines:
+  core:
+    resources:
+      memoryMiB: 4096
+      cpus: 4
+      diskGiB: 40
+    interfaces:
+      management: 192.168.56.10
+      sbi: 192.168.57.2
+      n2: 192.168.58.2
+      n4: 192.168.61.2
+  path-a:
+    resources:
+      memoryMiB: 3072
+      cpus: 3
+      diskGiB: 40
+    interfaces:
+      management: 192.168.56.11
+      sbi: 192.168.57.3
+      n2: 192.168.58.3
+      n3-a: 192.168.59.2
+      n4: 192.168.61.3
+      n6-a: 192.168.62.2
+  path-b:
+    resources:
+      memoryMiB: 3072
+      cpus: 3
+      diskGiB: 40
+    interfaces:
+      management: 192.168.56.12
+      sbi: 192.168.57.4
+      n2: 192.168.58.4
+      n3-b: 192.168.60.2
+      n4: 192.168.61.4
+      n6-b: 192.168.63.2
+networks:
+  management:
+    cidr: 192.168.56.0/24
+    mode: private
+  sbi:
+    cidr: 192.168.57.0/24
+    mode: private
+  n2:
+    cidr: 192.168.58.0/24
+    mode: private
+  n3-a:
+    cidr: 192.168.59.0/24
+    mode: private
+  n3-b:
+    cidr: 192.168.60.0/24
+    mode: private
+  n4:
+    cidr: 192.168.61.0/24
+    mode: private
+  n6-a:
+    cidr: 192.168.62.0/24
+    mode: private
+    egress: nat
+  n6-b:
+    cidr: 192.168.63.0/24
+    mode: private
+    egress: nat
+mobileNetwork:
+  plmn:
+    mcc: '466'
+    mnc: '92'
+  snssai:
+    sst: 1
+    sd: '010203'
+  dnn: internet
+  internalGroup:
+    serviceId: '00000001'
+    localId: '01'
+placement:
+  core:
+  - nrf
+  - nssf
+  - udr
+  - udm
+  - ausf
+  - pcf
+  - amf
+  - smf
+  - mongodb
+  - adrf
+  - nwdaf-root
+  - nwdaf-branch-1
+  - nwdaf-branch-2
+  path-a:
+  - upf-a
+  - gnb-a
+  - ue1
+  - ue2
+  - ue3
+  - ue4
+  - nwdaf-leaf-1
+  - nwdaf-leaf-2
+  path-b:
+  - upf-b
+  - gnb-b
+  - ue5
+  - ue6
+  - ue7
+  - ue8
+  - nwdaf-leaf-3
+  - nwdaf-leaf-4
+  host-containers:
+  - pymtlf-root
+  - pymtlf-branch-1
+  - pymtlf-branch-2
+  - pymtlf-leaf-1
+  - pymtlf-leaf-2
+  - pymtlf-leaf-3
+  - pymtlf-leaf-4
+optionalServices:
+  webconsole:
+    machine: core
+    endpoint:
+      network: management
+      address: 192.168.56.10
+      port: 5000
+mlRuntime:
+  engine: docker-compose-v2
+  networkMode: bridge
+  bindAddress: 192.168.57.1
+  advertisedAddress: 192.168.57.1
+  services:
+    pymtlf-root:
+      image: pymtlf
+      publishedPort: 9292
+      containerPort: 9292
+      device: cpu
+      cpus: 1.0
+      memoryMiB: 1024
+      volume:
+        name: pymtlf-root-data
+        target: /var/lib/5g-nwdaf-infrastructure/pymtlf-root
+    pymtlf-branch-1:
+      image: pymtlf
+      publishedPort: 9293
+      containerPort: 9293
+      device: cpu
+      cpus: 1.0
+      memoryMiB: 1024
+      volume:
+        name: pymtlf-branch-1-data
+        target: /var/lib/5g-nwdaf-infrastructure/pymtlf-branch-1
+    pymtlf-branch-2:
+      image: pymtlf
+      publishedPort: 9294
+      containerPort: 9294
+      device: cpu
+      cpus: 1.0
+      memoryMiB: 1024
+      volume:
+        name: pymtlf-branch-2-data
+        target: /var/lib/5g-nwdaf-infrastructure/pymtlf-branch-2
+    pymtlf-leaf-1:
+      image: pymtlf
+      publishedPort: 9092
+      containerPort: 9092
+      device: cuda:0
+      cpus: 1.5
+      memoryMiB: 1280
+      volume:
+        name: pymtlf-leaf-1-data
+        target: /var/lib/5g-nwdaf-infrastructure/pymtlf-leaf-1
+    pymtlf-leaf-2:
+      image: pymtlf
+      publishedPort: 9095
+      containerPort: 9095
+      device: cuda:0
+      cpus: 1.5
+      memoryMiB: 1280
+      volume:
+        name: pymtlf-leaf-2-data
+        target: /var/lib/5g-nwdaf-infrastructure/pymtlf-leaf-2
+    pymtlf-leaf-3:
+      image: pymtlf
+      publishedPort: 9091
+      containerPort: 9091
+      device: cuda:0
+      cpus: 1.5
+      memoryMiB: 1280
+      volume:
+        name: pymtlf-leaf-3-data
+        target: /var/lib/5g-nwdaf-infrastructure/pymtlf-leaf-3
+    pymtlf-leaf-4:
+      image: pymtlf
+      publishedPort: 9096
+      containerPort: 9096
+      device: cuda:0
+      cpus: 1.5
+      memoryMiB: 1280
+      volume:
+        name: pymtlf-leaf-4-data
+        target: /var/lib/5g-nwdaf-infrastructure/pymtlf-leaf-4
+coreServices:
+  nrf:
+    sbi:
+      network: sbi
+      address: 192.168.57.10
+      port: 8000
+  nssf:
+    sbi:
+      network: sbi
+      address: 192.168.57.11
+      port: 8000
+  udr:
+    sbi:
+      network: sbi
+      address: 192.168.57.12
+      port: 8000
+  udm:
+    sbi:
+      network: sbi
+      address: 192.168.57.13
+      port: 8000
+  ausf:
+    sbi:
+      network: sbi
+      address: 192.168.57.14
+      port: 8000
+  pcf:
+    sbi:
+      network: sbi
+      address: 192.168.57.15
+      port: 8000
+  amf:
+    sbi:
+      network: sbi
+      address: 192.168.57.16
+      port: 8000
+    n2:
+      network: n2
+      address: 192.168.58.10
+      port: 38412
+  smf:
+    sbi:
+      network: sbi
+      address: 192.168.57.17
+      port: 8000
+    n4:
+      network: n4
+      address: 192.168.61.10
+      port: 8805
+  mongodb:
+    endpoint:
+      network: sbi
+      address: 192.168.57.18
+      port: 27017
+    database: free5gc
+  adrf:
+    nfInstanceId: a0494f77-36db-4639-9f6f-e3e71fb5bfe6
+    sbi:
+      network: sbi
+      address: 192.168.57.19
+      port: 9888
+    mongodb:
+      database: adrf
+    modelStorage:
+      localDirectory: /var/lib/5g-nwdaf-infrastructure/adrf/models
+paths:
+  a:
+    machine: path-a
+    tai:
+      tac: '000001'
+    gnb:
+      n2:
+        network: n2
+        address: 192.168.58.20
+      n3:
+        network: n3-a
+        address: 192.168.59.20
+    upf:
+      n3:
+        network: n3-a
+        address: 192.168.59.10
+      n4:
+        network: n4
+        address: 192.168.61.20
+      n6:
+        network: n6-a
+        address: 192.168.62.10
+      eventExposure:
+        network: sbi
+        address: 192.168.57.40
+        port: 8088
+      gtpInterface: upfgtp-a
+      uePool: 10.60.0.0/16
+      pseudoDriver:
+        enabled: true
+        mode: hybrid
+        dataset:
+          file: traffic.parquet
+          guestDirectory: /var/lib/5g-nwdaf-infrastructure/datasets/active
+          minimumReplayHeadroomMiB: 512
+    subscriberNumbers:
+    - 1
+    - 2
+    - 3
+    - 4
+  b:
+    machine: path-b
+    tai:
+      tac: '000002'
+    gnb:
+      n2:
+        network: n2
+        address: 192.168.58.30
+      n3:
+        network: n3-b
+        address: 192.168.60.20
+    upf:
+      n3:
+        network: n3-b
+        address: 192.168.60.10
+      n4:
+        network: n4
+        address: 192.168.61.30
+      n6:
+        network: n6-b
+        address: 192.168.63.10
+      eventExposure:
+        network: sbi
+        address: 192.168.57.50
+        port: 8088
+      gtpInterface: upfgtp-b
+      uePool: 10.61.0.0/16
+      pseudoDriver:
+        enabled: true
+        mode: hybrid
+        dataset:
+          file: traffic.parquet
+          guestDirectory: /var/lib/5g-nwdaf-infrastructure/datasets/active
+          minimumReplayHeadroomMiB: 512
+    subscriberNumbers:
+    - 5
+    - 6
+    - 7
+    - 8
+analytics:
+  topology: static-hierarchical
+  nwdaf-root:
+    machine: core
+    nfInstanceId: 33333333-3333-4333-8333-333333333333
+    sbi:
+      network: sbi
+      address: 192.168.57.30
+      port: 8080
+    role: root
+    backends:
+      mtlf: pymtlf-root
+  nwdaf-branch-1:
+    machine: core
+    nfInstanceId: 66666666-6666-4666-8666-666666666666
+    sbi:
+      network: sbi
+      address: 192.168.57.31
+      port: 8080
+    role: branch
+    backends:
+      mtlf: pymtlf-branch-1
+    leaves:
+    - 1
+    - 2
+  nwdaf-branch-2:
+    machine: core
+    nfInstanceId: 77777777-7777-4777-8777-777777777777
+    sbi:
+      network: sbi
+      address: 192.168.57.33
+      port: 8080
+    role: branch
+    backends:
+      mtlf: pymtlf-branch-2
+    leaves:
+    - 3
+    - 4
+  nwdaf-leaf-1:
+    machine: path-a
+    nfInstanceId: 11111111-1111-4111-8111-111111111111
+    sbi:
+      network: sbi
+      address: 192.168.57.41
+      port: 8080
+    role: leaf
+    backends:
+      mtlf: pymtlf-leaf-1
+    dataOwner: 1
+  nwdaf-leaf-2:
+    machine: path-a
+    nfInstanceId: 44444444-4444-4444-8444-444444444444
+    sbi:
+      network: sbi
+      address: 192.168.57.42
+      port: 8080
+    role: leaf
+    backends:
+      mtlf: pymtlf-leaf-2
+    dataOwner: 2
+  nwdaf-leaf-3:
+    machine: path-b
+    nfInstanceId: 22222222-2222-4222-8222-222222222222
+    sbi:
+      network: sbi
+      address: 192.168.57.51
+      port: 8080
+    role: leaf
+    backends:
+      mtlf: pymtlf-leaf-3
+    dataOwner: 3
+  nwdaf-leaf-4:
+    machine: path-b
+    nfInstanceId: 55555555-5555-4555-8555-555555555555
+    sbi:
+      network: sbi
+      address: 192.168.57.52
+      port: 8080
+    role: leaf
+    backends:
+      mtlf: pymtlf-leaf-4
+    dataOwner: 4
+  dataOwners:
+  - position: 1
+    path: a
+    groupLocalId: '01'
+    subscriberNumbers:
+    - 1
+    - 2
+  - position: 2
+    path: a
+    groupLocalId: '02'
+    subscriberNumbers:
+    - 3
+    - 4
+  - position: 3
+    path: b
+    groupLocalId: '03'
+    subscriberNumbers:
+    - 5
+    - 6
+  - position: 4
+    path: b
+    groupLocalId: '04'
+    subscriberNumbers:
+    - 7
+    - 8
+consumer:
+  machine: core
+  requesterNfType: AF
+  discovery:
+    nrf: nrf
+    serviceName: nnwdaf-eventssubscription
+    event: UE_COMMUNICATION
+  target:
+    paths:
+    - a
+    - b
+  callback:
+    network: sbi
+    bindAddress: 192.168.57.32
+    advertisedAddress: 192.168.57.32
+    port: 9090
+    path: /callbacks/nwdaf
+  reporting:
+    method: PERIODIC
+    periodSeconds: 30
+security:
+  tls: false
+  oauth: false
+operations:
+  clockSkewToleranceMs: 1000
+  journalMaxUseMiB: 512
+  pyanlfDelivery:
+    analyticsReportTimeoutSeconds: 120
+    analyticsWorkerStopTimeoutSeconds: 300
+    accuracyReportTimeoutSeconds: 120
+    runtimeCompletionTimeoutSeconds: 30

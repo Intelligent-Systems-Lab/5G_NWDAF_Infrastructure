@@ -12,6 +12,8 @@ guest:
 
 hostSafety:
   reserveMemoryMiB: 6144
+  containerBuildOverheadMemoryMiB: 2048
+  minimumGpuMemoryMiB: 8192
   swapPolicy: warn
   minimumFreeSwapMiB: 1024
   minimumFreeStorageGiB: 120
@@ -92,11 +94,11 @@ mlRuntime:
   bindAddress: 192.168.57.1
   advertisedAddress: 192.168.57.1
   services:
-    pyanlf-a: {image: pyanlf, publishedPort: 9093, containerPort: 9093, device: cpu}
-    pyanlf-b: {image: pyanlf, publishedPort: 9094, containerPort: 9093, device: cpu}
-    pymtlf-a: {image: pymtlf, publishedPort: 9092, containerPort: 9092, device: "cuda:0"}
-    pymtlf-b: {image: pymtlf, publishedPort: 9091, containerPort: 9092, device: "cuda:0"}
-    pymtlf-c: {image: pymtlf, publishedPort: 9292, containerPort: 9292, device: cpu}
+    pyanlf-a: {image: pyanlf, publishedPort: 9093, containerPort: 9093, device: cpu, cpus: 1.0, memoryMiB: 768, volume: {name: pyanlf-a-artifacts, target: /opt/app/artifacts}}
+    pyanlf-b: {image: pyanlf, publishedPort: 9094, containerPort: 9093, device: cpu, cpus: 1.0, memoryMiB: 768, volume: {name: pyanlf-b-artifacts, target: /opt/app/artifacts}}
+    pymtlf-a: {image: pymtlf, publishedPort: 9092, containerPort: 9092, device: "cuda:0", cpus: 2.0, memoryMiB: 1536, volume: {name: pymtlf-a-data, target: /var/lib/5g-nwdaf-infrastructure/pymtlf-a}}
+    pymtlf-b: {image: pymtlf, publishedPort: 9091, containerPort: 9092, device: "cuda:0", cpus: 2.0, memoryMiB: 1536, volume: {name: pymtlf-b-data, target: /var/lib/5g-nwdaf-infrastructure/pymtlf-b}}
+    pymtlf-c: {image: pymtlf, publishedPort: 9292, containerPort: 9292, device: cpu, cpus: 1.0, memoryMiB: 1024, volume: {name: pymtlf-c-data, target: /var/lib/5g-nwdaf-infrastructure/pymtlf-c}}
 
 coreServices:
   nrf:
@@ -174,23 +176,27 @@ paths:
     subscriberNumbers: [4, 5, 6]
 
 analytics:
+  topology: production-flat
   nwdaf-a:
     machine: path-a
     nfInstanceId: "11111111-1111-4111-8111-111111111111"
     sbi: {network: sbi, address: 192.168.57.41, port: 8080}
     tai: "000001"
     role: fl-client
+    backends: {anlf: pyanlf-a, mtlf: pymtlf-a}
   nwdaf-b:
     machine: path-b
     nfInstanceId: "22222222-2222-4222-8222-222222222222"
     sbi: {network: sbi, address: 192.168.57.51, port: 8080}
     tai: "000002"
     role: fl-client
+    backends: {anlf: pyanlf-b, mtlf: pymtlf-b}
   nwdaf-c:
     machine: core
     nfInstanceId: "33333333-3333-4333-8333-333333333333"
     sbi: {network: sbi, address: 192.168.57.30, port: 8080}
     role: fl-server
+    backends: {mtlf: pymtlf-c}
   backends:
     pyanlf-a: {runtime: host-container, address: 192.168.57.1, port: 9093}
     pyanlf-b: {runtime: host-container, address: 192.168.57.1, port: 9094}
