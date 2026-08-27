@@ -10,7 +10,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "scripts" / "host"))
 
-from configlib import ROOT, dump_yaml, load_yaml, resolve_path, sha256_tree
+from configlib import ROOT, dump_yaml, load_yaml, resolve_path, sha256_tree  # noqa: E402
 
 
 def main():
@@ -48,22 +48,48 @@ def main():
         cwd=ROOT, check=True, stdout=subprocess.DEVNULL,
     )
 
-    for name in ("pymtlf-a.yaml", "pymtlf-b.yaml"):
-        config = load_yaml(output / name)
-        config["federated_learning"]["client"]["training"]["device"] = "cpu"
-        dump_yaml(output / name, config)
-
-    for name in ("pyanlf-a.yaml", "pyanlf-b.yaml"):
-        config = load_yaml(output / name)
-        config["mongodb"]["enabled"] = False
-        dump_yaml(output / name, config)
-
     manifest = load_yaml(output / "manifest.yaml")
+    services = manifest["runtime"]["hostContainers"]
+    device_overrides = {}
+    persistence_overrides = {}
+    smoke_services = {}
+    for name in services:
+        config_path = output / (name + ".yaml")
+        config = load_yaml(config_path)
+        if name.startswith("pymtlf-"):
+            client = config.get("federated_learning", {}).get("client")
+            if isinstance(client, dict):
+                client["training"]["device"] = "cpu"
+                device_overrides[name] = "cpu"
+            smoke_services[name] = {
+                "volumes": [
+                    {
+                        "type": "bind",
+                        "source": "${REPOSITORY_ROOT:?REPOSITORY_ROOT must be set}"
+                        "/tests/support/pymtlf-smoke-health.py",
+                        "target": "/opt/app/pymtlf-smoke-health.py",
+                        "read_only": True,
+                    }
+                ],
+                "healthcheck": {
+                    "test": ["CMD", "python", "/opt/app/pymtlf-smoke-health.py"]
+                },
+            }
+        elif name.startswith("pyanlf-"):
+            config["mongodb"]["enabled"] = False
+            persistence_overrides[name + ".mongodb"] = False
+        dump_yaml(config_path, config)
+
+    # This is generated test output, not a second operator-maintained Compose source.
+    dump_yaml(
+        Path(str(output) + ".cpu-smoke.yaml"),
+        {"services": smoke_services},
+    )
     manifest["smoke"] = {
         "purpose": "cpu-container-health",
         "sourceConfigHash": sha256_tree(source),
-        "deviceOverrides": {"pymtlf-a": "cpu", "pymtlf-b": "cpu"},
-        "persistenceOverrides": {"pyanlf-a.mongodb": False, "pyanlf-b.mongodb": False},
+        "deviceOverrides": device_overrides,
+        "persistenceOverrides": persistence_overrides,
     }
     dump_yaml(output / "manifest.yaml", manifest)
     print(output)

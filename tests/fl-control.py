@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Synthetic contract tests for static Flat operator lifecycle control."""
+"""Synthetic contract tests for static Flat and Hierarchical FL control."""
 
 import datetime as dt
 import importlib.util
@@ -64,6 +64,8 @@ def contract():
         config_dir=ROOT / "config/local/test",
         config_set="test",
         config_hash="a" * 64,
+        deployment_kind="static-flat",
+        training_mode="flat",
         services=("pymtlf-server",) + tuple(owner.service for owner in owners),
         coordinator_service="pymtlf-server",
         coordinator_endpoint="http://server",
@@ -262,7 +264,7 @@ def test_training_preflight_start_status_and_family_rejection():
         "modelFamilyId": "ue-communication-default",
         "mode": "flat",
         "participantSource": "static",
-        "triggerSource": "manual",
+        "triggerSource": "private_api",
         "state": "PREPARING",
     }
     http.add("POST", "http://server" + MODULE.TRAINING_PATH, response(202, **training))
@@ -302,7 +304,7 @@ def test_training_ambiguous_retry_and_http_failures():
         "modelFamilyId": "ue-communication-default",
         "mode": "flat",
         "participantSource": "static",
-        "triggerSource": "manual",
+        "triggerSource": "private_api",
         "state": "PREPARING",
     }
 
@@ -433,32 +435,39 @@ def test_runtime_identity_and_generated_contract_tampering_fail_closed():
             raise AssertionError("unknown collection profile was accepted")
 
 
-def test_contract_is_manifest_driven_and_rejects_other_topologies():
+def _render(output, testbed, name):
+    subprocess.run(
+        [
+            sys.executable,
+            str(ROOT / "scripts/host/config-render.py"),
+            "--testbed",
+            testbed,
+            "--name",
+            name,
+            "--scenario",
+            "experiments/examples/fl-closure-smoke/scenario.yaml",
+            "--output-root",
+            str(output),
+            "--ml-device",
+            "cpu",
+            "--webconsole",
+            "false",
+        ],
+        cwd=ROOT,
+        check=True,
+        text=True,
+        capture_output=True,
+    )
+
+
+def test_contract_is_manifest_driven_for_both_static_topologies():
     with tempfile.TemporaryDirectory(prefix="fl-control-") as temporary:
         output = Path(temporary)
-        subprocess.run(
-            [
-                sys.executable,
-                str(ROOT / "scripts/host/config-render.py"),
-                "--testbed",
-                "testbed.static-flat.yaml",
-                "--name",
-                "flat",
-                "--scenario",
-                "experiments/examples/fl-closure-smoke/scenario.yaml",
-                "--output-root",
-                str(output),
-                "--ml-device",
-                "cpu",
-                "--webconsole",
-                "false",
-            ],
-            cwd=ROOT,
-            check=True,
-            text=True,
-            capture_output=True,
-        )
+        _render(output, "testbed.static-flat.yaml", "flat")
+        _render(output, "testbed.static-hierarchical.yaml", "hierarchical")
         selected = MODULE.load_contract("testbed.static-flat.yaml", str(output / "flat"))
+        assert selected.deployment_kind == "static-flat"
+        assert selected.training_mode == "flat"
         assert [owner.profile_id for owner in selected.owners] == [
             "data-owner-1",
             "data-owner-2",
@@ -466,14 +475,166 @@ def test_contract_is_manifest_driven_and_rejects_other_topologies():
             "data-owner-4",
         ]
         assert len({supi for owner in selected.owners for supi in owner.supis}) == 8
-        try:
-            MODULE.load_contract(
-                "testbed.static-hierarchical.yaml", "config/local/phase2-static-hfl-v4"
+
+        selected = MODULE.load_contract(
+            "testbed.static-hierarchical.yaml", str(output / "hierarchical")
+        )
+        assert selected.deployment_kind == "static-hierarchical"
+        assert selected.training_mode == "hierarchical"
+        assert selected.coordinator_service == "pymtlf-root"
+        assert selected.services == (
+            "pymtlf-root",
+            "pymtlf-branch-1",
+            "pymtlf-branch-2",
+            "pymtlf-leaf-1",
+            "pymtlf-leaf-2",
+            "pymtlf-leaf-3",
+            "pymtlf-leaf-4",
+        )
+        assert [owner.service for owner in selected.owners] == [
+            "pymtlf-leaf-1",
+            "pymtlf-leaf-2",
+            "pymtlf-leaf-3",
+            "pymtlf-leaf-4",
+        ]
+        http = FakeHttp()
+        for owner in selected.owners:
+            http.add(
+                "GET",
+                owner.endpoint + MODULE.COLLECTION_PATH + "/" + RUN_ID,
+                response(200, **collection(owner)),
             )
+        MODULE.Controller(selected, http).collection_status(RUN_ID)
+        assert [url for _method, url, _payload in http.calls] == [
+            owner.endpoint + MODULE.COLLECTION_PATH + "/" + RUN_ID
+            for owner in selected.owners
+        ]
+        assert all(":9293/" not in url and ":9294/" not in url for _, url, _ in http.calls)
+
+        http = FakeHttp()
+        http.add(
+            "GET",
+            selected.coordinator_endpoint + MODULE.TRAINING_PATH + "/" + RUN_ID,
+            response(
+                200,
+                requestId=RUN_ID,
+                modelFamilyId="ue-communication-default",
+                mode="hierarchical",
+                participantSource="static",
+                triggerSource="private_api",
+                state="PREPARING",
+            ),
+        )
+        MODULE.Controller(selected, http).training_status(RUN_ID)
+        assert http.calls[0][1].startswith("http://192.168.57.1:9292/")
+
+        try:
+            MODULE.load_contract("testbed.yaml")
         except (MODULE.ControlError, ValueError) as error:
-            assert "static-flat" in str(error)
+            assert "static-flat or static-hierarchical" in str(error)
         else:
-            raise AssertionError("static HFL config was accepted by Phase 3 control")
+            raise AssertionError("production Flat config was accepted by static FL control")
+
+
+def test_hierarchical_contract_tampering_fails_closed():
+    with tempfile.TemporaryDirectory(prefix="fl-control-hfl-tamper-") as temporary:
+        output = Path(temporary)
+        _render(output, "testbed.static-hierarchical.yaml", "hierarchical")
+        config_dir = output / "hierarchical"
+        manifest_path = config_dir / "manifest.yaml"
+        original_manifest = manifest_path.read_text(encoding="utf-8")
+
+        cases = (
+            ("wrong role", lambda value: value["runtime"]["nwdafs"][1].update(role="leaf")),
+            ("missing owner", lambda value: value["runtime"]["dataOwners"].pop()),
+            (
+                "duplicate owner",
+                lambda value: value["runtime"]["dataOwners"].__setitem__(
+                    3, dict(value["runtime"]["dataOwners"][2])
+                ),
+            ),
+            ("empty inventory", lambda value: value["runtime"].update(hostContainers=[])),
+        )
+        for label, mutate in cases:
+            manifest = yaml.safe_load(original_manifest)
+            mutate(manifest)
+            manifest_path.write_text(
+                yaml.safe_dump(manifest, sort_keys=False), encoding="utf-8"
+            )
+            try:
+                MODULE.load_contract("testbed.static-hierarchical.yaml", str(config_dir))
+            except (MODULE.ControlError, ValueError):
+                pass
+            else:
+                raise AssertionError("{} was accepted".format(label))
+
+        manifest_path.write_text(original_manifest, encoding="utf-8")
+        branch_path = config_dir / "pymtlf-branch-1.yaml"
+        original_branch = branch_path.read_text(encoding="utf-8")
+        branch = yaml.safe_load(original_branch)
+        branch["federated_learning"]["client"]["training_data"] = {
+            "collection_trigger": "private_api",
+            "collection_profiles": [{"profile_id": "data-owner-1"}],
+        }
+        branch_path.write_text(yaml.safe_dump(branch, sort_keys=False), encoding="utf-8")
+        try:
+            MODULE.load_contract("testbed.static-hierarchical.yaml", str(config_dir))
+        except MODULE.ControlError as error:
+            assert "must not own a private collection" in str(error)
+        else:
+            raise AssertionError("Branch-as-owner native config was accepted")
+        branch_path.write_text(original_branch, encoding="utf-8")
+
+        topology_path = config_dir / "topology/static-hierarchical.yaml"
+        topology = yaml.safe_load(topology_path.read_text(encoding="utf-8"))
+        topology["branches"][0]["leaves"] = []
+        topology_path.write_text(yaml.safe_dump(topology, sort_keys=False), encoding="utf-8")
+        try:
+            MODULE.load_contract("testbed.static-hierarchical.yaml", str(config_dir))
+        except MODULE.ControlError as error:
+            assert "topology" in str(error)
+        else:
+            raise AssertionError("bad hierarchical topology was accepted")
+
+
+def test_hierarchical_training_response_requires_hierarchical_mode():
+    selected = contract()
+    selected = MODULE.Contract(
+        **{
+            **selected.__dict__,
+            "deployment_kind": "static-hierarchical",
+            "training_mode": "hierarchical",
+        }
+    )
+    body = {
+        "requestId": RUN_ID,
+        "modelFamilyId": "ue-communication-default",
+        "mode": "hierarchical",
+        "participantSource": "static",
+        "triggerSource": "private_api",
+        "state": "PREPARING",
+    }
+    http = FakeHttp()
+    http.add(
+        "GET",
+        selected.coordinator_endpoint + MODULE.TRAINING_PATH + "/" + RUN_ID,
+        response(200, **body),
+    )
+    assert MODULE.Controller(selected, http).training_status(RUN_ID)["mode"] == "hierarchical"
+
+    for field, value in (("mode", "flat"), ("participantSource", "dynamic"), ("triggerSource", "degradation")):
+        http = FakeHttp()
+        http.add(
+            "GET",
+            selected.coordinator_endpoint + MODULE.TRAINING_PATH + "/" + RUN_ID,
+            response(200, **dict(body, **{field: value})),
+        )
+        try:
+            MODULE.Controller(selected, http).training_status(RUN_ID)
+        except MODULE.ControlError:
+            pass
+        else:
+            raise AssertionError("nonhierarchical training response was accepted")
 
 
 def main():
@@ -495,7 +656,9 @@ def main():
     test_training_preflight_start_status_and_family_rejection()
     test_training_ambiguous_retry_and_http_failures()
     test_runtime_identity_and_generated_contract_tampering_fail_closed()
-    test_contract_is_manifest_driven_and_rejects_other_topologies()
+    test_contract_is_manifest_driven_for_both_static_topologies()
+    test_hierarchical_contract_tampering_fails_closed()
+    test_hierarchical_training_response_requires_hierarchical_mode()
     print("FL_CONTROL_TEST status=passed owners=4")
 
 

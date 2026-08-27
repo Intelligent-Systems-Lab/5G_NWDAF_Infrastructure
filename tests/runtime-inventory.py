@@ -43,6 +43,19 @@ def main():
     renderer = (ROOT / "scripts/host/config-render.py").read_text(encoding="utf-8")
     makefile = (ROOT / "Makefile").read_text(encoding="utf-8")
     dockerfile = (ROOT / "containers/ml/Dockerfile").read_text(encoding="utf-8")
+    component_locks = {
+        item["path"]: item["commit"]
+        for item in yaml.safe_load(
+            (ROOT / "components.lock.yaml").read_text(encoding="utf-8")
+        )["components"]
+    }
+    for path, expected in component_locks.items():
+        gitlink = run("git", "ls-tree", "HEAD", path).stdout.split()[2]
+        assert gitlink == expected, (
+            "component lock does not match parent gitlink: {} expected={} actual={}".format(
+                path, expected, gitlink
+            )
+        )
     for forbidden in ("static-config-render.py", "deployments/", "DEPLOYMENT"):
         assert forbidden not in renderer + makefile, forbidden
     for testbed_path in (
@@ -107,6 +120,12 @@ def main():
             assert list(compose["volumes"]) == [
                 item["name"] for item in original["runtime"]["mlVolumes"]
             ]
+            for service in compose["services"].values():
+                target = service["build"]["target"]
+                expected_revision = component_locks[
+                    "ML/PyAnLF" if target == "pyanlf" else "ML/PyMTLF"
+                ]
+                assert service["build"]["args"]["COMPONENT_REVISION"] == expected_revision
             if original["runtime"]["deploymentKind"] != "production-flat":
                 topology_name = original["runtime"]["deploymentKind"] + ".yaml"
                 for service in compose["services"].values():

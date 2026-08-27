@@ -197,7 +197,115 @@ def main():
         "outcome=failed"
     ), static_failed
 
+    hfl_logs = {
+        "pymtlf-root": "\n".join((
+            "2026-08-27T00:00:00Z Accepted hierarchy Root request request_id=old-run plan_id=old-plan source=manual family=ue-communication-default",
+            "2026-08-27T00:00:01Z FL participant resource created process_id=old-process nf=old-branch location=/training/stale-upper",
+            "2026-08-27T01:00:00Z Accepted hierarchy Root request request_id=hfl-run plan_id=hfl-plan source=manual family=ue-communication-default",
+            "2026-08-27T01:00:01Z Hierarchy preparation dispatched plan_id=hfl-plan process_id=root-process participants=['branch-1','branch-2']",
+            "2026-08-27T01:00:02Z FL participant resource created process_id=root-process nf=branch-1 location=/training/upper-1",
+            "2026-08-27T01:00:03Z FL participant resource created process_id=root-process nf=branch-2 location=/training/upper-2",
+            "2026-08-27T01:00:50Z Hierarchy final validation evaluated process_id=root-process base_wape=1.0 candidate_wape=0.5 gate_would_accept=True enforced=False",
+            "2026-08-27T01:01:00Z Federated model published publication_id=pub-hfl model_id=2 state=COMPLETE required_scopes=0",
+            "2026-08-27T01:01:01Z FL participant resource deleted process_id=root-process nf=branch-1 location=/training/upper-1 status=204",
+            "2026-08-27T01:01:02Z FL participant resource deleted process_id=root-process nf=branch-2 location=/training/upper-2 status=204",
+        )),
+    }
+    for branch in range(1, 3):
+        process = "branch-{}-process".format(branch)
+        first_leaf = (branch - 1) * 2 + 1
+        hfl_logs["pymtlf-branch-{}".format(branch)] = "\n".join((
+            "2026-08-27T01:00:04Z Hierarchy preparation dispatched plan_id=hfl-plan process_id={} participants=['leaf-{}','leaf-{}']".format(
+                process, first_leaf, first_leaf + 1
+            ),
+            "2026-08-27T01:00:05Z FL participant resource created process_id={} nf=leaf-{} location=/training/lower-{}".format(
+                process, first_leaf, first_leaf
+            ),
+            "2026-08-27T01:00:06Z FL participant resource created process_id={} nf=leaf-{} location=/training/lower-{}".format(
+                process, first_leaf + 1, first_leaf + 1
+            ),
+            "2026-08-27T01:00:55Z FL participant resource deleted process_id={} nf=leaf-{} location=/training/lower-{} status=204".format(
+                process, first_leaf, first_leaf
+            ),
+            "2026-08-27T01:00:56Z FL participant resource deleted process_id={} nf=leaf-{} location=/training/lower-{} status=204".format(
+                process, first_leaf + 1, first_leaf + 1
+            ),
+        ))
+    for leaf in range(1, 5):
+        hfl_logs["pymtlf-leaf-{}".format(leaf)] = "\n".join((
+            "2026-08-27T01:00:20Z FL client local result ready subscription_id=leaf-{} round=0 samples={} artifact=local-a".format(leaf, leaf),
+            "2026-08-27T01:00:40Z FL client local result ready subscription_id=leaf-{} round=1 samples={} artifact=local-b".format(leaf, leaf + 4),
+            "2026-08-27T01:00:45Z FL client final validation ready subscription_id=leaf-{} round=2 samples=1".format(leaf),
+        ))
+
+    hfl = MODULE.parse_fl_milestones(hfl_logs, "pymtlf-root")
+    assert hfl["hierarchy_request"]["detail"] == (
+        "request=hfl-run plan=hfl-plan source=manual family=ue-communication-default"
+    ), hfl
+    assert hfl["root_preparation"]["detail"] == (
+        "plan=hfl-plan process=root-process participants=2"
+    ), hfl
+    assert hfl["branch_preparation"]["detail"].startswith(
+        "plan=hfl-plan prepared=2 expected=2"
+    ), hfl
+    assert hfl["upper_cleanup"]["detail"] == (
+        "created=2 deleted=2 active=0 unknown_deletes=0"
+    ), hfl
+    assert hfl["lower_cleanup"]["detail"] == (
+        "created=4 deleted=4 active=0 unknown_deletes=0 branches=2"
+    ), hfl
+    assert all(
+        hfl["leaf_{}".format(position)]["detail"].endswith("final_validation=true")
+        for position in range(1, 5)
+    ), hfl
+    assert MODULE.fl_result(hfl, "running", hierarchical=True) == (
+        "outcome=verification-incomplete phase=top-level-status model=2 "
+        "evidence=hierarchical-publication-and-cleanup"
+    ), hfl
+
+    missing_leaf = MODULE.parse_fl_milestones(
+        {key: value for key, value in hfl_logs.items() if key != "pymtlf-leaf-4"},
+        "pymtlf-root",
+    )
+    assert MODULE.fl_result(missing_leaf, "running", hierarchical=True) == (
+        "outcome=verification-incomplete phase=leaf-evidence"
+    ), missing_leaf
+
+    incomplete_cleanup_logs = dict(hfl_logs)
+    incomplete_cleanup_logs["pymtlf-root"] = "\n".join(
+        incomplete_cleanup_logs["pymtlf-root"].splitlines()[:-1]
+    )
+    incomplete_cleanup = MODULE.parse_fl_milestones(
+        incomplete_cleanup_logs, "pymtlf-root"
+    )
+    assert MODULE.fl_result(
+        incomplete_cleanup, "running", hierarchical=True
+    ) == "outcome=verification-incomplete phase=cleanup", incomplete_cleanup
+
+    cleanup_failed_logs = dict(hfl_logs)
+    cleanup_failed_logs["pymtlf-branch-2"] += (
+        "\n2026-08-27T01:01:03Z FL participant cleanup failed "
+        "process_id=branch-2-process nf=leaf-4 error=timeout"
+    )
+    cleanup_failed = MODULE.parse_fl_milestones(cleanup_failed_logs, "pymtlf-root")
+    assert MODULE.fl_result(cleanup_failed, "running", hierarchical=True).startswith(
+        "outcome=failed"
+    ), cleanup_failed
+
+    root_failed = MODULE.parse_fl_milestones(
+        {
+            "pymtlf-root": hfl_logs["pymtlf-root"]
+            + "\n2026-08-27T01:01:04Z Hierarchy Root request failed "
+            "request_id=hfl-run plan_id=hfl-plan"
+        },
+        "pymtlf-root",
+    )
+    assert MODULE.fl_result(root_failed, "running", hierarchical=True).startswith(
+        "outcome=failed"
+    ), root_failed
+
     hfl_container = {
+        "Id": "hfl-container",
         "Config": {
             "Labels": {
                 "io.5g-nwdaf.config-set": "static-hfl",
@@ -210,11 +318,21 @@ def main():
             "StartedAt": "2026-08-27T00:00:00Z",
         },
     }
-    rendered = io.StringIO()
-    with redirect_stdout(rendered):
-        MODULE.print_fl_summary({"pymtlf-root": hfl_container}, "pymtlf-root")
-    assert "topology=static-hierarchical milestones=not-evaluated" in rendered.getvalue()
-    assert "created=4" not in rendered.getvalue()
+    original_container_logs_since = MODULE.container_logs_since
+    try:
+        MODULE.container_logs_since = lambda _container, service=None, cache_dir=None: hfl_logs[service]
+        rendered = io.StringIO()
+        with redirect_stdout(rendered):
+            MODULE.print_fl_summary(
+                {service: dict(hfl_container, Id=service) for service in hfl_logs},
+                "pymtlf-root",
+            )
+    finally:
+        MODULE.container_logs_since = original_container_logs_since
+    assert "milestones=not-evaluated" not in rendered.getvalue()
+    assert "upper_cleanup" in rendered.getvalue()
+    assert "lower_cleanup" in rendered.getvalue()
+    assert "phase=top-level-status" in rendered.getvalue()
 
     original_run = MODULE.subprocess.run
     captured = {}

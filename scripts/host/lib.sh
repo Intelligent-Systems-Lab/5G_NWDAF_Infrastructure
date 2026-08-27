@@ -693,7 +693,11 @@ ml_compose() {
   export REPOSITORY_ROOT="$HOST_ROOT"
   command=(docker compose -p "$project" -f "$config_dir/compose.yaml")
   if [ "$(ml_runtime_mode)" = cpu-smoke ]; then
-    command+=(-f "$HOST_ROOT/compose.cpu-smoke.yaml")
+    if [ -f "$config_dir.cpu-smoke.yaml" ]; then
+      command+=(-f "$config_dir.cpu-smoke.yaml")
+    else
+      command+=(-f "$HOST_ROOT/compose.cpu-smoke.yaml")
+    fi
   fi
   "${command[@]}" "$@"
 }

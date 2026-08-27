@@ -147,6 +147,8 @@ def latest_milestone(current, timestamp, detail):
 
 
 def parse_fl_milestones(logs_by_service, coordinator_name="pymtlf-c"):
+    if coordinator_name == "pymtlf-root":
+        return parse_hierarchical_milestones(logs_by_service, coordinator_name)
     result = {
         "monitors": milestone(),
         "degradation": milestone(),
@@ -355,12 +357,424 @@ def parse_fl_milestones(logs_by_service, coordinator_name="pymtlf-c"):
     return result
 
 
+def _participant_count(value):
+    return len(set(re.findall(r"['\"]([^'\"]+)['\"]", value)))
+
+
+def _resource_milestone(created, deleted, timestamp, *, branches=None):
+    active = set(created).difference(deleted)
+    unknown_deletes = set(deleted).difference(created)
+    detail = "created={} deleted={} active={} unknown_deletes={}".format(
+        len(created),
+        len(set(deleted).intersection(created)),
+        len(active),
+        len(unknown_deletes),
+    )
+    if branches is not None:
+        detail += " branches={}".format(branches)
+    return milestone(timestamp, detail)
+
+
+def parse_hierarchical_milestones(logs_by_service, coordinator_name="pymtlf-root"):
+    result = {
+        "hierarchy_request": milestone(),
+        "root_preparation": milestone(),
+        "branch_preparation": milestone(),
+        "validation": milestone(),
+        "publication": milestone(),
+        "upper_cleanup": milestone(),
+        "lower_cleanup": milestone(),
+        "cleanup_failure": milestone(),
+        "failure": milestone(),
+    }
+    request_id = None
+    plan_id = None
+    request_timestamp = "not-seen"
+    root_logs = logs_by_service.get(coordinator_name, "")
+    for line in root_logs.splitlines():
+        match = TIMESTAMP_PATTERN.match(line)
+        timestamp, message = (
+            (match.group(1), match.group(2)) if match else ("unknown", line)
+        )
+        accepted = re.search(
+            r"Accepted hierarchy Root request request_id=([^ ]+) plan_id=([^ ]+) "
+            r"source=([^ ]+) family=([^ ]+)",
+            message,
+        )
+        if accepted:
+            candidate = latest_milestone(
+                result["hierarchy_request"],
+                timestamp,
+                "request={} plan={} source={} family={}".format(*accepted.groups()),
+            )
+            if candidate is not result["hierarchy_request"]:
+                result["hierarchy_request"] = candidate
+                request_id, plan_id = accepted.group(1), accepted.group(2)
+                request_timestamp = timestamp
+
+    cutoff = timestamp_order(request_timestamp)
+
+    def current_run(timestamp):
+        observed = timestamp_order(timestamp)
+        return cutoff is None or observed is None or observed >= cutoff
+
+    root_process = None
+    branch_processes = {}
+    branch_participants = {}
+    branch_preparation_timestamps = {}
+    created_resources = {}
+    deleted_resources = {}
+    resource_timestamps = {}
+
+    for service, raw in logs_by_service.items():
+        for line in raw.splitlines():
+            match = TIMESTAMP_PATTERN.match(line)
+            timestamp, message = (
+                (match.group(1), match.group(2)) if match else ("unknown", line)
+            )
+            if not current_run(timestamp):
+                continue
+
+            dispatched = re.search(
+                r"Hierarchy preparation dispatched plan_id=([^ ]+) "
+                r"process_id=([^ ]+) participants=(.*)",
+                message,
+            )
+            if dispatched and dispatched.group(1) == plan_id:
+                process = dispatched.group(2)
+                participants = _participant_count(dispatched.group(3))
+                if service == coordinator_name:
+                    if root_process is not None and root_process != process:
+                        result["failure"] = latest_milestone(
+                            result["failure"],
+                            timestamp,
+                            "plan={} contradictory_root_processes".format(plan_id),
+                        )
+                    root_process = process
+                    result["root_preparation"] = milestone(
+                        timestamp,
+                        "plan={} process={} participants={}".format(
+                            plan_id, process, participants
+                        ),
+                    )
+                elif service.startswith("pymtlf-branch-"):
+                    if (
+                        service in branch_processes
+                        and branch_processes[service] != process
+                    ):
+                        result["failure"] = latest_milestone(
+                            result["failure"],
+                            timestamp,
+                            "plan={} service={} contradictory_branch_processes".format(
+                                plan_id, service
+                            ),
+                        )
+                    branch_processes[service] = process
+                    branch_participants[service] = participants
+                    branch_preparation_timestamps[service] = timestamp
+
+            local = re.search(
+                r"FL client local result ready .* round=(\d+) samples=(\d+)",
+                message,
+            )
+            validation_ready = re.search(
+                r"FL client final validation ready .* round=(\d+) samples=(\d+)",
+                message,
+            )
+            if service.startswith("pymtlf-leaf-") and (local or validation_ready):
+                key = "_leaf_events_{}".format(service)
+                events = result.setdefault(
+                    key,
+                    {
+                        "rounds": set(),
+                        "samples": {},
+                        "validation": False,
+                        "timestamp": "not-seen",
+                    },
+                )
+                if local:
+                    round_indicator = int(local.group(1))
+                    events["rounds"].add(round_indicator)
+                    events["samples"][round_indicator] = int(local.group(2))
+                if validation_ready:
+                    events["validation"] = True
+                events["timestamp"] = timestamp
+
+            if (
+                "FL client round failed" in message
+                or "FL client final validation failed" in message
+            ):
+                result["failure"] = latest_milestone(
+                    result["failure"], timestamp, service + ": " + message.strip()
+                )
+
+            failed = re.search(
+                r"Hierarchy Root request failed request_id=([^ ]+) plan_id=([^ ]+)",
+                message,
+            )
+            if failed and failed.group(1) == request_id and failed.group(2) == plan_id:
+                result["failure"] = latest_milestone(
+                    result["failure"],
+                    timestamp,
+                    "request={} plan={}".format(*failed.groups()),
+                )
+
+            evaluated = re.search(
+                r"Hierarchy final validation evaluated process_id=([^ ]+) "
+                r"base_wape=([^ ]+) candidate_wape=([^ ]+) "
+                r"gate_would_accept=([^ ]+)",
+                message,
+            )
+            if (
+                evaluated
+                and service == coordinator_name
+                and evaluated.group(1) == root_process
+            ):
+                result["validation"] = milestone(
+                    timestamp,
+                    "process={} base_wape={} candidate_wape={} "
+                    "gate_would_accept={}".format(*evaluated.groups()),
+                )
+
+            published = re.search(
+                r"Federated model published .* model_id=([^ ]+) state=([^ ]+) "
+                r"required_scopes=(\d+)",
+                message,
+            )
+            if published and service == coordinator_name:
+                result["publication"] = milestone(
+                    timestamp,
+                    "model={} state={} required_scopes={}".format(
+                        *published.groups()
+                    ),
+                )
+
+            created = re.search(
+                r"FL participant resource created process_id=([^ ]+) "
+                r"nf=([^ ]+) location=([^ ]+)",
+                message,
+            )
+            if created:
+                key = (service, created.group(1))
+                created_resources.setdefault(key, {})[created.group(3)] = created.group(2)
+                resource_timestamps[key] = timestamp
+            deleted = re.search(
+                r"FL participant resource deleted process_id=([^ ]+) "
+                r"nf=([^ ]+) location=([^ ]+) status=(\d+)",
+                message,
+            )
+            if deleted:
+                key = (service, deleted.group(1))
+                deleted_resources.setdefault(key, set()).add(deleted.group(3))
+                resource_timestamps[key] = timestamp
+            cleanup_failed = re.search(
+                r"FL participant cleanup failed process_id=([^ ]+) "
+                r"nf=([^ ]+) error=(.*)",
+                message,
+            )
+            known_processes = {root_process, *branch_processes.values()}
+            if cleanup_failed and cleanup_failed.group(1) in known_processes:
+                result["cleanup_failure"] = latest_milestone(
+                    result["cleanup_failure"],
+                    timestamp,
+                    "process={} nf={} error={}".format(*cleanup_failed.groups()),
+                )
+
+    prepared_exact = sum(
+        participants == 2 for participants in branch_participants.values()
+    )
+    if branch_processes:
+        latest = max(
+            branch_preparation_timestamps.values(),
+            key=lambda value: timestamp_order(value) or datetime.datetime.min.replace(
+                tzinfo=datetime.timezone.utc
+            ),
+        )
+        result["branch_preparation"] = milestone(
+            latest,
+            "plan={} prepared={} expected=2 participants_exact={}".format(
+                plan_id, len(branch_processes), prepared_exact
+            ),
+        )
+
+    if root_process is not None:
+        key = (coordinator_name, root_process)
+        if key in created_resources or key in deleted_resources:
+            result["upper_cleanup"] = _resource_milestone(
+                created_resources.get(key, {}),
+                deleted_resources.get(key, set()),
+                resource_timestamps.get(key, request_timestamp),
+            )
+
+    lower_created = {}
+    lower_deleted = set()
+    exact_branches = 0
+    lower_timestamp = request_timestamp
+    for service, process in branch_processes.items():
+        key = (service, process)
+        created = created_resources.get(key, {})
+        deleted = deleted_resources.get(key, set())
+        lower_created.update(
+            {"{}:{}".format(service, location): nf for location, nf in created.items()}
+        )
+        lower_deleted.update("{}:{}".format(service, location) for location in deleted)
+        if (
+            len(created) == 2
+            and len(deleted.intersection(created)) == 2
+            and not set(created).difference(deleted)
+            and not set(deleted).difference(created)
+        ):
+            exact_branches += 1
+        lower_timestamp = resource_timestamps.get(key, lower_timestamp)
+    if lower_created or lower_deleted:
+        result["lower_cleanup"] = _resource_milestone(
+            lower_created,
+            lower_deleted,
+            lower_timestamp,
+            branches=exact_branches,
+        )
+
+    for position in range(1, 5):
+        service = "pymtlf-leaf-{}".format(position)
+        events = result.pop("_leaf_events_{}".format(service), None)
+        result["leaf_{}".format(position)] = milestone()
+        if events is None:
+            continue
+        samples = ",".join(
+            "{}:{}".format(round_indicator, events["samples"][round_indicator])
+            for round_indicator in sorted(events["samples"])
+        ) or "none"
+        result["leaf_{}".format(position)] = milestone(
+            events["timestamp"],
+            "rounds={} samples={} final_validation={}".format(
+                ",".join(map(str, sorted(events["rounds"]))) or "none",
+                samples,
+                str(events["validation"]).lower(),
+            ),
+        )
+    return result
+
+
 def milestone_value(detail, key):
     match = re.search(r"(?:^| ){}=([^ ]+)".format(re.escape(key)), detail)
     return match.group(1) if match else "unknown"
 
 
-def fl_result(summary, coordinator_state, *, static=False):
+def _exact_resource_cleanup(value, expected, *, branches=None):
+    exact = (
+        milestone_value(value["detail"], "created") == str(expected)
+        and milestone_value(value["detail"], "deleted") == str(expected)
+        and milestone_value(value["detail"], "active") == "0"
+        and milestone_value(value["detail"], "unknown_deletes") == "0"
+    )
+    if branches is not None:
+        exact = exact and milestone_value(value["detail"], "branches") == str(branches)
+    return exact
+
+
+def _positive_round_samples(detail):
+    value = milestone_value(detail, "samples")
+    try:
+        pairs = [item.split(":", 1) for item in value.split(",")]
+        return (
+            [int(round_indicator) for round_indicator, _samples in pairs] == [0, 1]
+            and all(int(samples) > 0 for _round, samples in pairs)
+        )
+    except (TypeError, ValueError):
+        return False
+
+
+def _hierarchical_result(summary, coordinator_state):
+    failure = latest_milestone(
+        summary["failure"],
+        summary["cleanup_failure"]["timestamp"],
+        summary["cleanup_failure"]["detail"],
+    )
+    if failure["timestamp"] != "not-seen":
+        return "outcome=failed evidence={}".format(
+            failure["detail"].replace(" ", "_")
+        )
+    if summary["hierarchy_request"]["timestamp"] == "not-seen":
+        if coordinator_state == "absent":
+            return "outcome=not-started reason=coordinator-absent"
+        if coordinator_state == "running":
+            return "outcome=in-progress phase=starting"
+        return "outcome=incomplete phase=starting coordinator_state={}".format(
+            coordinator_state
+        )
+
+    published = summary["publication"]["timestamp"] != "not-seen"
+    leaf_evidence = all(
+        milestone_value(summary["leaf_{}".format(position)]["detail"], "rounds")
+        == "0,1"
+        and milestone_value(
+            summary["leaf_{}".format(position)]["detail"], "final_validation"
+        )
+        == "true"
+        and _positive_round_samples(
+            summary["leaf_{}".format(position)]["detail"]
+        )
+        for position in range(1, 5)
+    )
+    branch_evidence = (
+        milestone_value(summary["root_preparation"]["detail"], "participants") == "2"
+        and milestone_value(summary["branch_preparation"]["detail"], "prepared") == "2"
+        and milestone_value(
+            summary["branch_preparation"]["detail"], "participants_exact"
+        )
+        == "2"
+    )
+    publication_exact = (
+        published
+        and milestone_value(summary["publication"]["detail"], "state") == "COMPLETE"
+        and milestone_value(summary["publication"]["detail"], "required_scopes") == "0"
+    )
+    cleanup_exact = _exact_resource_cleanup(summary["upper_cleanup"], 2) and (
+        _exact_resource_cleanup(summary["lower_cleanup"], 4, branches=2)
+    )
+    validation_seen = summary["validation"]["timestamp"] != "not-seen"
+
+    if published:
+        if not leaf_evidence:
+            return "outcome=verification-incomplete phase=leaf-evidence"
+        if not branch_evidence:
+            return "outcome=verification-incomplete phase=hierarchy-preparation"
+        if not validation_seen:
+            return "outcome=verification-incomplete phase=final-validation"
+        if not publication_exact:
+            return "outcome=verification-incomplete phase=publication"
+        if not cleanup_exact:
+            return "outcome=verification-incomplete phase=cleanup"
+        return (
+            "outcome=verification-incomplete phase=top-level-status model={} "
+            "evidence=hierarchical-publication-and-cleanup"
+        ).format(milestone_value(summary["publication"]["detail"], "model"))
+
+    phases = (
+        ("validation", "final-validation"),
+        ("leaf_1", "leaf-training"),
+        ("branch_preparation", "branch-preparation"),
+        ("root_preparation", "root-preparation"),
+        ("hierarchy_request", "root-request"),
+    )
+    phase = next(
+        (
+            name
+            for milestone_name, name in phases
+            if summary[milestone_name]["timestamp"] != "not-seen"
+        ),
+        "starting",
+    )
+    if coordinator_state == "running":
+        return "outcome=in-progress phase={}".format(phase)
+    return "outcome=incomplete phase={} coordinator_state={}".format(
+        phase, coordinator_state
+    )
+
+
+def fl_result(summary, coordinator_state, *, static=False, hierarchical=False):
+    if hierarchical:
+        return _hierarchical_result(summary, coordinator_state)
     if static:
         completion = summary["completion"]
         failure = latest_milestone(
@@ -508,7 +922,8 @@ def container_logs_since(container, service=None, cache_dir=None, until=None):
 
 def print_fl_summary(by_service, coordinator_name="pymtlf-c", cache_dir=None):
     static_flat = coordinator_name == "pymtlf-server"
-    supported = coordinator_name == "pymtlf-c" or static_flat
+    static_hierarchical = coordinator_name == "pymtlf-root"
+    supported = coordinator_name == "pymtlf-c" or static_flat or static_hierarchical
     coordinator = by_service.get(coordinator_name)
     if coordinator is None:
         print("FL CURRENT RUN coordinator={} container=absent milestones=not-seen".format(coordinator_name))
@@ -519,6 +934,7 @@ def print_fl_summary(by_service, coordinator_name="pymtlf-c", cache_dir=None):
                         parse_fl_milestones({}, coordinator_name),
                         "absent",
                         static=static_flat,
+                        hierarchical=static_hierarchical,
                     )
                 )
             )
@@ -584,7 +1000,12 @@ def print_fl_summary(by_service, coordinator_name="pymtlf-c", cache_dir=None):
         print("{:<24} {:<30} {}".format(name, value["timestamp"], value["detail"]))
     print(
         "FL RESULT {}".format(
-            fl_result(summary, coordinator_state, static=static_flat)
+            fl_result(
+                summary,
+                coordinator_state,
+                static=static_flat,
+                hierarchical=static_hierarchical,
+            )
         )
     )
 

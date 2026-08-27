@@ -10,6 +10,7 @@ custom_scenario_root="$HOST_ROOT/.generated/tests/experiments/repository-interfa
 webconsole_root=$(mktemp -d)
 cleanup() {
   rm -rf "$cpu_config"
+  rm -f "$cpu_config.cpu-smoke.yaml"
   rm -rf "$make_config"
   rm -rf "$custom_scenario_root"
   rm -rf "$webconsole_root"

@@ -298,9 +298,13 @@ def render_compose(testbed, output, runtime):
         "NNPACK_DISABLE": "1", "MALLOC_ARENA_MAX": "2", "OMP_NUM_THREADS": "1",
         "OPENBLAS_NUM_THREADS": "1", "MKL_NUM_THREADS": "1", "NUMEXPR_NUM_THREADS": "1",
     }
+    component_locks = {
+        item["path"]: item["commit"]
+        for item in load_yaml(ROOT / "components.lock.yaml")["components"]
+    }
     revisions = {
-        "pyanlf": "6a4d94ad3cc6f66dac55ea921772d731e4b71371",
-        "pymtlf": "36166f04320ae70674604659786ba73935371426",
+        "pyanlf": component_locks["ML/PyAnLF"],
+        "pymtlf": component_locks["ML/PyMTLF"],
     }
     services = {}
     for name in runtime["hostContainers"]:

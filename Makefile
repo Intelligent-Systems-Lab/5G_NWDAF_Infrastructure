@@ -57,7 +57,7 @@ help-advanced:
 help-dev:
 	@echo "5G NWDAF Infrastructure — repository tests"
 	@echo "  make test             Run static and host-only repository checks"
-	@echo "  make test-containers  Run the disposable five-container CPU lifecycle test"
+	@echo "  make test-containers  Run disposable Flat/HFL CPU container lifecycle tests"
 
 help-all: help
 	@echo ""

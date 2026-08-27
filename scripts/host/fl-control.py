@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Operate the manifest-selected static Flat collection and training requests."""
+"""Operate manifest-selected static Flat or Hierarchical FL requests."""
 
 from __future__ import annotations
 
@@ -62,6 +62,8 @@ class Contract:
     config_dir: Path
     config_set: str
     config_hash: str
+    deployment_kind: str
+    training_mode: str
     services: tuple[str, ...]
     coordinator_service: str
     coordinator_endpoint: str
@@ -150,20 +152,27 @@ def load_contract(testbed_name: str, explicit_config: str = "") -> Contract:
             raise ControlError(
                 "runtime.{} does not exactly match selected TESTBED".format(key)
             )
-    if runtime.get("deploymentKind") != "static-flat":
-        raise ControlError("FL control requires selected deploymentKind=static-flat")
+    kind = runtime.get("deploymentKind")
+    if kind not in ("static-flat", "static-hierarchical"):
+        raise ControlError(
+            "FL control requires deploymentKind=static-flat or static-hierarchical"
+        )
     if runtime.get("subscriptions") != "none":
-        raise ControlError("static Flat FL control requires runtime.subscriptions=none")
+        raise ControlError("static FL control requires runtime.subscriptions=none")
+
+    mode = "flat" if kind == "static-flat" else "hierarchical"
+    owner_role = "client" if kind == "static-flat" else "leaf"
+    coordinator_role = "server" if kind == "static-flat" else "root"
 
     services = tuple(runtime["hostContainers"])
     coordinator_service = runtime.get("coordinatorContainer")
     if not isinstance(coordinator_service, str) or coordinator_service not in services:
-        raise ControlError("static Flat coordinatorContainer is not in the Host inventory")
+        raise ControlError("static coordinatorContainer is not in the Host inventory")
 
     nwdafs = runtime.get("nwdafs")
     data_owners = runtime.get("dataOwners")
     if not isinstance(nwdafs, list) or not isinstance(data_owners, list):
-        raise ControlError("static Flat manifest must declare NWDAFs and data owners")
+        raise ControlError("static manifest must declare NWDAFs and data owners")
     by_backend = {
         item.get("backends", {}).get("mtlf"): item
         for item in nwdafs
@@ -172,41 +181,59 @@ def load_contract(testbed_name: str, explicit_config: str = "") -> Contract:
     analytics = testbed.get("analytics")
     if not isinstance(analytics, dict):
         raise ControlError("selected TESTBED analytics inventory is missing")
-    clients_by_owner = {}
+    participants_by_owner = {}
     for nwdaf in nwdafs:
-        if nwdaf.get("role") != "client":
+        if nwdaf.get("role") != owner_role:
             continue
         source = analytics.get(nwdaf.get("unit"), {})
         position = source.get("dataOwner") if isinstance(source, dict) else None
-        if not isinstance(position, int) or position in clients_by_owner:
-            raise ControlError("static Flat Client-to-data-owner mapping is invalid")
-        clients_by_owner[position] = nwdaf
-    if set(clients_by_owner) != {1, 2, 3, 4}:
-        raise ControlError("static Flat must map exact Client data owners 1-4")
-    expected_services = (coordinator_service,) + tuple(
-        clients_by_owner[position]["backends"]["mtlf"] for position in range(1, 5)
+        if not isinstance(position, int) or position in participants_by_owner:
+            raise ControlError(
+                "static {}-to-data-owner mapping is invalid".format(owner_role)
+            )
+        participants_by_owner[position] = nwdaf
+    if set(participants_by_owner) != {1, 2, 3, 4}:
+        raise ControlError("static topology must map exact data owners 1-4")
+
+    branches = [item for item in nwdafs if item.get("role") == "branch"]
+    branch_services = tuple(item["backends"]["mtlf"] for item in branches)
+    if kind == "static-flat" and branches:
+        raise ControlError("static Flat must not declare Branch NWDAFs")
+    if kind == "static-hierarchical" and len(branches) != 2:
+        raise ControlError("static Hierarchical must declare exactly two Branch NWDAFs")
+    expected_services = (
+        (coordinator_service,)
+        + branch_services
+        + tuple(
+            participants_by_owner[position]["backends"]["mtlf"]
+            for position in range(1, 5)
+        )
     )
     if services != expected_services:
-        raise ControlError("static Flat Host inventory must be coordinator plus owner-ordered Clients 1-4")
+        raise ControlError(
+            "static Host inventory must be coordinator, ordered Branches, then owners 1-4"
+        )
     if set(by_backend) != set(expected_services):
-        raise ControlError("static Flat NWDAF-to-PyMTLF backend mapping is incomplete")
-    if by_backend[coordinator_service].get("role") != "server":
-        raise ControlError("static Flat coordinator NWDAF must have role=server")
+        raise ControlError("static NWDAF-to-PyMTLF backend mapping is incomplete")
+    if by_backend[coordinator_service].get("role") != coordinator_role:
+        raise ControlError(
+            "static {} coordinator NWDAF must have role={}".format(kind, coordinator_role)
+        )
 
     positions = [item.get("position") for item in data_owners if isinstance(item, dict)]
     if positions != [1, 2, 3, 4]:
-        raise ControlError("static Flat data owners must be ordered positions 1-4")
+        raise ControlError("static data owners must be ordered positions 1-4")
     seen_supis: set[str] = set()
     owners = []
     for item in data_owners:
         position = item["position"]
-        nwdaf = clients_by_owner[position]
+        nwdaf = participants_by_owner[position]
         service = nwdaf["backends"]["mtlf"]
         supis = item.get("supis")
         if not isinstance(supis, list) or len(supis) != 2 or len(set(supis)) != 2:
             raise ControlError("data owner {} must own exactly two unique SUPIs".format(position))
         if seen_supis.intersection(supis):
-            raise ControlError("static Flat data-owner SUPIs must be disjoint")
+            raise ControlError("static data-owner SUPIs must be disjoint")
         seen_supis.update(supis)
 
         native = load_yaml(config_dir / (service + ".yaml"))
@@ -233,13 +260,25 @@ def load_contract(testbed_name: str, explicit_config: str = "") -> Contract:
             )
         )
 
+    if kind == "static-hierarchical":
+        _validate_hierarchical_branches(config_dir, branch_services)
+
     server = load_yaml(config_dir / (coordinator_service + ".yaml"))
     orchestration = server.get("federated_learning", {}).get("orchestration", {})
     trigger = server.get("federated_learning", {}).get("training_trigger", {})
-    if orchestration != {"mode": "flat", "participant_source": "static"}:
-        raise ControlError("selected coordinator must declare flat + static orchestration")
+    if orchestration != {"mode": mode, "participant_source": "static"}:
+        raise ControlError(
+            "selected coordinator must declare {} + static orchestration".format(mode)
+        )
     if trigger.get("private_api", {}).get("enabled") is not True:
         raise ControlError("selected coordinator private training trigger is disabled")
+    if kind == "static-hierarchical":
+        _validate_hierarchical_topology(
+            config_dir,
+            testbed,
+            server,
+            nwdafs,
+        )
     families = server.get("model_provision", {}).get("seed_models")
     family_ids = tuple(item.get("family_id") for item in families or [] if isinstance(item, dict))
     if not family_ids or len(family_ids) != len(set(family_ids)) or any(not item for item in family_ids):
@@ -262,6 +301,8 @@ def load_contract(testbed_name: str, explicit_config: str = "") -> Contract:
         config_dir=config_dir,
         config_set=config_dir.name,
         config_hash=sha256_tree(config_dir),
+        deployment_kind=kind,
+        training_mode=mode,
         services=services,
         coordinator_service=coordinator_service,
         coordinator_endpoint=_public_endpoint(server, coordinator_service),
@@ -271,6 +312,75 @@ def load_contract(testbed_name: str, explicit_config: str = "") -> Contract:
         closure_budget_seconds=closure_budget,
         preparation_window_seconds=preparation_window,
     )
+
+
+def _validate_hierarchical_branches(
+    config_dir: Path, branch_services: tuple[str, ...]
+) -> None:
+    for service in branch_services:
+        native = load_yaml(config_dir / (service + ".yaml"))
+        fl = native.get("federated_learning", {})
+        if not isinstance(fl.get("server"), dict) or not isinstance(fl.get("client"), dict):
+            raise ControlError("{} must declare both FL client and server roles".format(service))
+        training_data = fl["client"].get("training_data", {})
+        if training_data.get("collection_trigger") != "consumer_subscription":
+            raise ControlError("{} must not own a private collection".format(service))
+        if "collection_profiles" in training_data:
+            raise ControlError("{} must not declare collection profiles".format(service))
+        if "orchestration" in fl or "training_trigger" in fl:
+            raise ControlError("{} must not own Root orchestration".format(service))
+
+
+def _validate_hierarchical_topology(
+    config_dir: Path,
+    testbed: dict,
+    root: dict,
+    nwdafs: list[dict],
+) -> None:
+    topology_config = root.get("federated_learning", {}).get("topology", {})
+    topology_path = "topology/static-hierarchical.yaml"
+    if topology_config != {"strategy": "static", "config_file": topology_path}:
+        raise ControlError("selected Root must reference the generated static Hierarchical topology")
+
+    by_unit = {item.get("unit"): item for item in nwdafs}
+    analytics = testbed["analytics"]
+    leaves = {}
+    for unit, source in analytics.items():
+        if not unit.startswith("nwdaf-") or not isinstance(source, dict):
+            continue
+        if source.get("role") == "leaf":
+            leaves[source.get("dataOwner")] = by_unit[unit]["nfInstanceId"]
+    branches = []
+    for unit, source in analytics.items():
+        if not unit.startswith("nwdaf-") or not isinstance(source, dict):
+            continue
+        if source.get("role") != "branch":
+            continue
+        positions = source.get("leaves")
+        if (
+            not isinstance(positions, list)
+            or len(positions) != 2
+            or len(set(positions)) != 2
+            or any(position not in leaves for position in positions)
+        ):
+            raise ControlError("static Hierarchical Branch-to-Leaf mapping is invalid")
+        branches.append(
+            {
+                "nf_instance_id": by_unit[unit]["nfInstanceId"],
+                "leaves": [
+                    {"nf_instance_id": leaves[position]} for position in positions
+                ],
+            }
+        )
+    expected = {
+        "version": 1,
+        "admission": {"mode": "complete_required"},
+        "branches": branches,
+    }
+    if load_yaml(config_dir / topology_path) != expected:
+        raise ControlError(
+            "generated static Hierarchical topology does not exactly match selected TESTBED"
+        )
 
 
 def verify_runtime_identity(contract: Contract) -> None:
@@ -549,15 +659,24 @@ class Controller:
             raise ControlError("MODEL_FAMILY_ID is required when selected config has zero or multiple families")
         return self.contract.model_families[0]
 
-    @staticmethod
-    def _validate_training(run_id: str, family: str | None, response: Response) -> dict:
+    def _validate_training(
+        self, run_id: str, family: str | None, response: Response
+    ) -> dict:
         body = response.body
         if body.get("requestId") != run_id:
             raise ControlError("training resource request identity mismatch")
         if family is not None and body.get("modelFamilyId") != family:
             raise ControlError("training resource model family mismatch")
-        if body.get("mode") != "flat" or body.get("participantSource") != "static":
-            raise ControlError("training resource is not static Flat")
+        if (
+            body.get("mode") != self.contract.training_mode
+            or body.get("participantSource") != "static"
+            or body.get("triggerSource") != "private_api"
+        ):
+            raise ControlError(
+                "training resource is not static {} private-API flow".format(
+                    self.contract.training_mode
+                )
+            )
         return body
 
 
