@@ -1,9 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-machine=${1:?usage: runtime-tools-install.sh core|path-a|path-b source-root [source-hash]}
-source_root=${2:?usage: runtime-tools-install.sh core|path-a|path-b source-root [source-hash]}
-source_hash=${3:-provisioned-source}
+machine=${1:?usage: runtime-tools-install.sh core|path-a|path-b source-root}
+source_root=${2:?usage: runtime-tools-install.sh core|path-a|path-b source-root}
 
 case "$machine" in core|path-a|path-b) ;; *) echo "invalid machine: $machine" >&2; exit 2;; esac
 test "$(id -u)" -eq 0 || { echo "runtime tool installation requires root" >&2; exit 1; }
@@ -32,6 +31,5 @@ install -m 0644 "$source_root/scripts/guest/systemd/5g-nwdaf@.service" /etc/syst
 install -m 0644 "$source_root/scripts/guest/systemd/5g-nwdaf-stack.target" /etc/systemd/system/5g-nwdaf-stack.target
 install -m 0644 "$source_root/scripts/guest/systemd/5g-nwdaf-network.service" /etc/systemd/system/5g-nwdaf-network.service
 install -m 0644 "$source_root/scripts/guest/systemd/5g-nwdaf-consumer.service" /etc/systemd/system/5g-nwdaf-consumer.service
-printf '%s\n' "$source_hash" >/etc/5g-nwdaf-infrastructure/runtime-tools.sha256
 systemctl daemon-reload
-echo "RUNTIME TOOLS machine=$machine source=$source_hash"
+echo "RUNTIME TOOLS machine=$machine"

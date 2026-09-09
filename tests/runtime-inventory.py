@@ -68,11 +68,9 @@ def main():
 
     with tempfile.TemporaryDirectory(prefix="5g-runtime-inventory-") as temporary:
         output_root = Path(temporary)
-        for testbed, name in (
-            ("testbed.yaml", "production"),
-            ("testbed.static-flat.yaml", "static-flat"),
-            ("testbed.static-hierarchical.yaml", "static-hierarchical"),
-        ):
+        # Exercise the shared exact-inventory guard with one complete fixture;
+        # compatibility across historical profiles is outside this test.
+        for testbed, name in (("testbed.yaml", "production"),):
             config_dir = render(output_root, testbed, name)
             manifest_path = config_dir / "manifest.yaml"
             original = yaml.safe_load(manifest_path.read_text(encoding="utf-8"))

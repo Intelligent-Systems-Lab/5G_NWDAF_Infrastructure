@@ -3,9 +3,9 @@ set -euo pipefail
 source "$(dirname "$0")/lib.sh"
 
 action=${1:-plan}
-testbed=${2:-testbed.yaml}
+testbed=${2:?usage: experiment-reset.sh plan|apply|verify testbed [config-dir]}
 explicit_config=${3:-}
-case "$action" in plan|apply|verify) ;; *) echo "usage: experiment-reset.sh plan|apply|verify [testbed] [config-dir]" >&2; exit 2;; esac
+case "$action" in plan|apply|verify) ;; *) echo "usage: experiment-reset.sh plan|apply|verify testbed [config-dir]" >&2; exit 2;; esac
 
 config_dir=$(effective_config_dir "$testbed" "$explicit_config")
 python3 "$HOST_ROOT/scripts/host/config-check.py" --testbed "$testbed" --config-dir "$config_dir"

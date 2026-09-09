@@ -201,7 +201,7 @@ def render_summary(spec, manifest, root):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--testbed", default="testbed.yaml")
+    parser.add_argument("--testbed", required=True)
     parser.add_argument("--config-dir")
     parser.add_argument("--output-root", default=str(DEFAULT_OUTPUT))
     subparsers = parser.add_subparsers(dest="action", required=True)

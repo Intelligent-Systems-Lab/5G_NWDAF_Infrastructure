@@ -10,7 +10,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "scripts" / "host"))
 
-from configlib import ROOT, dump_yaml, load_yaml, resolve_path, sha256_tree  # noqa: E402
+from configlib import ROOT, dump_yaml, load_yaml, resolve_path  # noqa: E402
 
 
 def main():
@@ -87,7 +87,6 @@ def main():
     )
     manifest["smoke"] = {
         "purpose": "cpu-container-health",
-        "sourceConfigHash": sha256_tree(source),
         "deviceOverrides": device_overrides,
         "persistenceOverrides": persistence_overrides,
     }

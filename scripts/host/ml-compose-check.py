@@ -54,7 +54,7 @@ def compose_config(mode, device_policy, config_dir, bind_address):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--testbed", default="testbed.yaml")
+    parser.add_argument("--testbed", required=True)
     parser.add_argument("--config-dir")
     parser.add_argument("--mode", choices=("baseline", "cpu-smoke"), default="baseline")
     args = parser.parse_args()

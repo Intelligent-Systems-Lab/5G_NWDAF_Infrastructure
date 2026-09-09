@@ -2,7 +2,7 @@
 set -euo pipefail
 source "$(dirname "$0")/lib.sh"
 
-testbed=${1:-testbed.yaml}
+testbed=${1:?usage: preflight.sh testbed [config-dir]}
 explicit_config=${2:-}
 failures=0
 warnings=0

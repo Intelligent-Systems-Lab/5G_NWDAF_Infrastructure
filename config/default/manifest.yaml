@@ -4,12 +4,10 @@ topology:
   name: dual-tai-default
   kind: production-flat
   definition: testbed.yaml
-  definitionHash: e3a0c316c7777f88befbd23393092383ed871a00fa6a97bee2dc35fe76272b6a
 scenario:
   name: full-core-cat-transition
   kind: business-acceptance
   definition: experiments/examples/full-core-cat-transition/scenario.yaml
-  definitionHash: 4025e45d81e92cbcd1598063fb9c453198900bf6bb75931cffa55c855084ecf3
 sources:
   free5gcConfig:
     remote: https://github.com/free5gc/free5gc.git

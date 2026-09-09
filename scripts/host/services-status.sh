@@ -53,7 +53,7 @@ services_status_main() {
   local -a ue_records=()
   local -A vm_states=()
   local -A snapshot_pids=()
-  local testbed=${1:-testbed.yaml} explicit_config=${2:-} config_dir
+  local testbed=${1:?usage: services-status.sh testbed [config-dir]} explicit_config=${2:-} config_dir
   config_dir=$(effective_config_dir "$testbed" "$explicit_config")
   assert_guest_runtime_identity "$config_dir" || return
   vm_records=$(vm_state_records) || return

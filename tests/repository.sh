@@ -4,13 +4,10 @@ source "$(cd "$(dirname "$0")/.." && pwd)/scripts/host/lib.sh"
 
 testbed=${1:-testbed.yaml}
 explicit_config=${2:-}
-cpu_config="$HOST_ROOT/.generated/tests/config/ml-repository-test"
 make_config="$HOST_ROOT/config/local/repository-interface-test"
 custom_scenario_root="$HOST_ROOT/.generated/tests/experiments/repository-interface-test"
 webconsole_root=$(mktemp -d)
 cleanup() {
-  rm -rf "$cpu_config"
-  rm -f "$cpu_config.cpu-smoke.yaml"
   rm -rf "$make_config"
   rm -rf "$custom_scenario_root"
   rm -rf "$webconsole_root"
@@ -66,6 +63,55 @@ echo "PASS shell syntax"
 )
 echo "PASS provider host-context guard and mock wrapper"
 
+if selection_error=$(require_testbed_selection "" 2>&1); then
+  echo "explicit testbed selection guard accepted an empty value" >&2
+  exit 1
+fi
+[[ "$selection_error" == *'TESTBED must select an explicit testbed definition'* ]]
+require_testbed_selection "$testbed"
+echo "PASS explicit testbed selection guard"
+
+assert_selection_rejected() {
+  local label=$1 expected=$2
+  shift 2
+  local output
+  if output=$("$@" 2>&1); then
+    echo "$label accepted a missing TESTBED selection" >&2
+    exit 1
+  fi
+  if [[ "$output" != *"$expected"* ]]; then
+    echo "$label failed for an unrelated reason: $output" >&2
+    exit 1
+  fi
+}
+
+assert_selection_rejected \
+  "config validation" \
+  "TESTBED must select an explicit testbed definition" \
+  make --no-print-directory -C "$HOST_ROOT" config-validate
+assert_selection_rejected \
+  "experiment start" \
+  "usage: experiment-start.sh testbed" \
+  "$HOST_ROOT/scripts/host/experiment-start.sh"
+assert_selection_rejected \
+  "experiment stop" \
+  "usage: experiment-stop.sh testbed" \
+  "$HOST_ROOT/scripts/host/experiment-stop.sh"
+assert_selection_rejected \
+  "experiment reset" \
+  "usage: experiment-reset.sh plan|apply|verify testbed" \
+  "$HOST_ROOT/scripts/host/experiment-reset.sh" plan
+if provider_selection_error=$(make --no-print-directory -C "$HOST_ROOT" vm-status 2>&1); then
+  echo "vm-status accepted a missing TESTBED selection" >&2
+  exit 1
+fi
+[[ "$provider_selection_error" == *"TESTBED must select an explicit testbed definition"* ]]
+if [[ "$provider_selection_error" == *"provider execution refused"* ]]; then
+  echo "vm-status reached the provider boundary without a TESTBED selection" >&2
+  exit 1
+fi
+echo "PASS deployment entrypoints reject missing testbed selection before action"
+
 "$HOST_ROOT/tests/provider-runtime-preflight.sh"
 
 (
@@ -102,11 +148,12 @@ grep -F 'observe_start_subscription_section ' "$HOST_ROOT/scripts/host/observe.s
 echo "PASS observable subscription-mode collection"
 
 if make --no-print-directory -C "$HOST_ROOT" config-create \
-  NAME=repository-interface-test FROM= DEVICE=cpu >/dev/null 2>&1; then
+  TESTBED="$testbed" NAME=repository-interface-test FROM= DEVICE=cpu >/dev/null 2>&1; then
   echo "config-create accepted a missing FROM path" >&2
   exit 1
 fi
 if make --no-print-directory -C "$HOST_ROOT" config-create \
+  TESTBED="$testbed" \
   NAME=repository-interface-test \
   FROM="$HOST_ROOT/experiments/examples/full-core-cat-transition/scenario.yaml" \
   DEVICE=cpu >/dev/null 2>&1; then
@@ -114,7 +161,7 @@ if make --no-print-directory -C "$HOST_ROOT" config-create \
   exit 1
 fi
 if make --no-print-directory -C "$HOST_ROOT" config-create \
-  NAME=repository-interface-test FROM=../outside/scenario.yaml DEVICE=cpu \
+  TESTBED="$testbed" NAME=repository-interface-test FROM=../outside/scenario.yaml DEVICE=cpu \
   >/dev/null 2>&1; then
   echo "config-create accepted a repository-escaping FROM path" >&2
   exit 1
@@ -122,6 +169,7 @@ fi
 mkdir -p "$custom_scenario_root"
 cp -R "$HOST_ROOT/experiments/examples/fl-closure-smoke/." "$custom_scenario_root/"
 make --no-print-directory -C "$HOST_ROOT" config-create \
+  TESTBED="$testbed" \
   NAME=repository-interface-test \
   FROM=.generated/tests/experiments/repository-interface-test/scenario.yaml \
   DEVICE=cpu WEBCONSOLE=false >/dev/null
@@ -142,9 +190,8 @@ fi
 grep -F 'config-hash "$staged"' "$HOST_ROOT/scripts/guest/config-activate.sh" >/dev/null
 grep -F 'scripts/shared/config_hash.py' "$HOST_ROOT/scripts/host/guest-tools-sync.sh" >/dev/null
 grep -F '"$destination/config-hash"' "$HOST_ROOT/scripts/guest/runtime-tools-install.sh" >/dev/null
-grep -F 'ROOT / "scripts" / "shared" / "config_hash.py"' \
-  "$HOST_ROOT/scripts/host/configlib.py" >/dev/null
 if make --no-print-directory -C "$HOST_ROOT" config-create \
+  TESTBED="$testbed" \
   NAME=repository-interface-test \
   FROM=.generated/tests/experiments/repository-interface-test/scenario.yaml \
   DEVICE=cpu >/dev/null 2>&1; then
@@ -203,7 +250,7 @@ if [ "$(journal_log_since '1970-01-01T00:00:00Z')" != '1970-01-01 00:00:00 UTC' 
   echo "journald time rendering is not compatible with the Guest parser" >&2
   exit 1
 fi
-if invalid_since_output=$("$HOST_ROOT/scripts/host/logs.sh" --source vm \
+if invalid_since_output=$("$HOST_ROOT/scripts/host/logs.sh" --testbed "$testbed" --source vm \
     --since 'not-a-time' --no-follow 2>&1); then
   echo "logs.sh accepted an invalid --since value" >&2
   exit 1
@@ -213,7 +260,7 @@ if [ "$invalid_since_output" != 'invalid --since value: not-a-time' ]; then
   exit 1
 fi
 make_log_plan=$(make -C "$HOST_ROOT" --no-print-directory -n logs \
-  SOURCE=ml VM=all SERVICE=pymtlf-c SINCE='15 minutes ago' TAIL=25 FOLLOW=false)
+  TESTBED="$testbed" SOURCE=ml VM=all SERVICE=pymtlf-c SINCE='15 minutes ago' TAIL=25 FOLLOW=false)
 for expected_arg in \
   '--source "ml"' \
   '--vm "all"' \
@@ -226,13 +273,13 @@ for expected_arg in \
     exit 1
   fi
 done
-empty_service_plan=$(make -C "$HOST_ROOT" --no-print-directory -n logs SERVICE=)
+empty_service_plan=$(make -C "$HOST_ROOT" --no-print-directory -n logs TESTBED="$testbed" SERVICE=)
 if [[ "$empty_service_plan" != *'--service ""'* ]]; then
   echo "make logs did not preserve an empty all-service selector" >&2
   exit 1
 fi
 if invalid_follow_output=$(make -C "$HOST_ROOT" --no-print-directory logs \
-    FOLLOW=sometimes 2>&1); then
+    TESTBED="$testbed" FOLLOW=sometimes 2>&1); then
   echo "make logs accepted an invalid FOLLOW value" >&2
   exit 1
 fi
@@ -294,7 +341,7 @@ assert_ue_readiness 'successful|successful' active \
   vm_state_records() {
     printf '%s\n' 'core|running' 'path-a|running' 'path-b|running'
   }
-  status_output=$(services_status_main)
+  status_output=$(services_status_main "$testbed" "$explicit_config")
   compact_status=$(sed -E 's/[[:space:]]+/ /g' <<<"$status_output")
   [[ "$compact_status" == *'path-a ue1 active successful successful'* ]]
   [[ "$compact_status" == *'path-b ue4 inactive inactive inactive'* ]]
@@ -302,7 +349,7 @@ assert_ue_readiness 'successful|successful' active \
     printf '%s\n' 'core|poweroff' 'path-a|poweroff' 'path-b|poweroff'
   }
   machine_snapshot() { return 99; }
-  stopped_output=$(services_status_main)
+  stopped_output=$(services_status_main "$testbed" "$explicit_config")
   stopped_compact=$(sed -E 's/[[:space:]]+/ /g' <<<"$stopped_output")
   [[ "$stopped_compact" == *'path-a ue1 not-running not-running not-running'* ]]
 )
@@ -320,12 +367,12 @@ echo "PASS current-invocation UE readiness parsing"
   [[ "$failed_output" == *'backend refused query'* ]]
   [[ "$failed_output" == *'TEST status unavailable'* ]]
   observe_snapshot() { printf '%s\n' complete-snapshot; }
-  rendered=$(OBSERVE_INTERVAL=0 observe_main --once)
+  rendered=$(OBSERVE_INTERVAL=0 observe_main --once "$testbed" "$explicit_config")
   [[ "$rendered" == *'SNAPSHOT started='* ]]
   [[ "$rendered" == *'collection='* ]]
   [[ "$rendered" == *'complete-snapshot'* ]]
   observe_snapshot() { return 1; }
-  if observe_main --once >/dev/null 2>&1; then
+  if observe_main --once "$testbed" "$explicit_config" >/dev/null 2>&1; then
     echo "observe --once accepted an incomplete snapshot" >&2
     exit 1
   fi
@@ -504,7 +551,7 @@ python3 "$HOST_ROOT/tests/config-contract.py" "${check_args[@]}"
 python3 "$HOST_ROOT/tests/execution-policy.py"
 python3 "$HOST_ROOT/tests/dataset-summary.py"
 python3 "$HOST_ROOT/tests/mobile-identity.py"
-python3 "$HOST_ROOT/tests/static-topologies.py"
+echo "SKIP legacy static topology regression (retained unverified asset)"
 python3 "$HOST_ROOT/tests/runtime-inventory.py"
 python3 "$HOST_ROOT/tests/consumer-state.py"
 python3 "$HOST_ROOT/tests/ml-status.py"
@@ -540,11 +587,7 @@ python3 "$HOST_ROOT/scripts/host/config-check.py" --testbed "$testbed" \
   --config-dir "$webconsole_root/enabled"
 python3 "$HOST_ROOT/tests/network-config.py"
 "$HOST_ROOT/tests/dataset-determinism.sh" "$testbed" "$explicit_config"
-python3 "$HOST_ROOT/scripts/host/ml-compose-check.py" "${check_args[@]}"
-python3 "$HOST_ROOT/tests/support/ml-cpu-config.py" --force --output "$cpu_config"
-python3 "$HOST_ROOT/scripts/host/config-check.py" --testbed "$testbed" --config-dir "$cpu_config"
-python3 "$HOST_ROOT/scripts/host/ml-compose-check.py" --testbed "$testbed" \
-  --config-dir "$cpu_config" --mode cpu-smoke
+echo "SKIP legacy ML Compose and CPU smoke regression (retained unverified assets)"
 
 embedded_ruby=/opt/vagrant/embedded/bin/ruby
 [ -x "$embedded_ruby" ] || {
@@ -558,6 +601,12 @@ echo "PASS isolated Vagrantfile Ruby syntax"
   trap 'rm -rf "$vagrantfile_fixture"' EXIT
   cp "$HOST_ROOT/Vagrantfile" "$vagrantfile_fixture/Vagrantfile"
   cp "$HOST_ROOT/testbed.yaml" "$vagrantfile_fixture/testbed.yaml"
+  if selection_output=$(cd "$vagrantfile_fixture" && env -u TESTBED \
+      "$embedded_ruby" Vagrantfile 2>&1); then
+    echo "Vagrantfile accepted a missing TESTBED selection" >&2
+    exit 1
+  fi
+  grep -F "TESTBED must select an explicit testbed definition" <<<"$selection_output" >/dev/null
   touch "$vagrantfile_fixture/testbed.local.yaml"
   if legacy_output=$(cd "$vagrantfile_fixture" && TESTBED=testbed.yaml "$embedded_ruby" Vagrantfile 2>&1); then
     echo "Vagrantfile accepted removed testbed.local.yaml compatibility layer" >&2

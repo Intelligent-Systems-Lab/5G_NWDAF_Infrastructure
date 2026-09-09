@@ -1,10 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-expected_identity=${1:?usage: webconsole-build.sh expected-identity source-archive archive-sha source-revision}
-source_archive=${2:?usage: webconsole-build.sh expected-identity source-archive archive-sha source-revision}
-expected_archive_sha=${3:?usage: webconsole-build.sh expected-identity source-archive archive-sha source-revision}
-source_revision=${4:?usage: webconsole-build.sh expected-identity source-archive archive-sha source-revision}
+expected_identity=${1:?usage: webconsole-build.sh expected-identity source-archive source-revision}
+source_archive=${2:?usage: webconsole-build.sh expected-identity source-archive source-revision}
+source_revision=${3:?usage: webconsole-build.sh expected-identity source-archive source-revision}
 runtime_root=/var/lib/5g-nwdaf-infrastructure/webconsole
 release_root=$runtime_root/releases
 current=$runtime_root/current
@@ -13,7 +12,6 @@ yarn_version=4.1.0
 
 test "$(id -u)" -eq 0 || { echo "WebConsole build requires root" >&2; exit 1; }
 [[ "$expected_identity" =~ ^[0-9a-f]{64}$ ]] || { echo "invalid WebConsole artifact identity" >&2; exit 2; }
-[[ "$expected_archive_sha" =~ ^[0-9a-f]{64}$ ]] || { echo "invalid WebConsole archive SHA-256" >&2; exit 2; }
 [[ "$source_revision" =~ ^[0-9a-f]{40}$ ]] || { echo "invalid WebConsole source revision" >&2; exit 2; }
 
 if [ -x "$current/webconsole" ] && [ -f "$current/public/index.html" ] && \
@@ -23,11 +21,6 @@ if [ -x "$current/webconsole" ] && [ -f "$current/public/index.html" ] && \
 fi
 
 test -f "$source_archive" || { echo "WebConsole source archive is missing" >&2; exit 1; }
-actual_archive_sha=$(sha256sum "$source_archive" | awk '{print $1}')
-test "$actual_archive_sha" = "$expected_archive_sha" || {
-  echo "WebConsole source archive hash mismatch" >&2
-  exit 1
-}
 
 if ! command -v node >/dev/null 2>&1 || [ "$(node --version | sed -E 's/^v([0-9]+).*/\1/')" != "$node_major" ]; then
   keyring=/usr/share/keyrings/nodesource.gpg

@@ -3,9 +3,9 @@ set -euo pipefail
 source "$(dirname "$0")/lib.sh"
 
 action=${1:-show}
-testbed=${2:-testbed.yaml}
+testbed=${2:?usage: subscriber-data.sh validate|plan|apply|show|clear testbed [config-dir]}
 explicit_config=${3:-}
-case "$action" in validate|plan|apply|show|clear) ;; *) echo "usage: subscriber-data.sh validate|plan|apply|show|clear [testbed] [config-dir]" >&2; exit 2;; esac
+case "$action" in validate|plan|apply|show|clear) ;; *) echo "usage: subscriber-data.sh validate|plan|apply|show|clear testbed [config-dir]" >&2; exit 2;; esac
 
 config_dir=$(effective_config_dir "$testbed" "$explicit_config")
 mapfile -t fixture_paths < <(

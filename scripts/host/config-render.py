@@ -5,15 +5,13 @@ import argparse
 import copy
 import json
 import shutil
-import subprocess
 import sys
 
 from configlib import (
-    ROOT, canonical_sha256, config_generator_source_hash, dump_yaml,
-    deployment_kind, expected_runtime_inventory, guest_network_configs,
-    load_yaml, load_scenario_definition, nwdaf_definitions, resolve_path,
-    repository_relative_paths, resolve_mobile_identities,
-    resolve_scenario_profile_paths, set_path, sha256_tree,
+    ROOT, dump_yaml, deployment_kind, expected_runtime_inventory,
+    guest_network_configs, load_yaml, load_scenario_definition,
+    nwdaf_definitions, resolve_path, repository_relative_paths,
+    resolve_mobile_identities, resolve_scenario_profile_paths, set_path,
 )
 
 
@@ -745,7 +743,7 @@ def render(testbed, baseline, output, scenario):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--testbed", default="testbed.yaml")
+    parser.add_argument("--testbed", required=True)
     parser.add_argument("--name", required=True)
     parser.add_argument("--scenario", required=True)
     parser.add_argument("--output-root", default="config/local")
@@ -760,7 +758,7 @@ def main():
     testbed = copy.deepcopy(topology_definition)
     resolve_mobile_identities(testbed)
     if deployment_kind(testbed) != "production-flat" and args.webconsole == "true":
-        raise SystemExit("static TESTBED definitions do not enable WebConsole in Phase 2")
+        raise SystemExit("static TESTBED definitions do not enable WebConsole")
     if args.ml_device:
         training_device = "cpu" if args.ml_device == "cpu" else "cuda:0"
         for service_name, service in testbed["mlRuntime"]["services"].items():
@@ -777,10 +775,6 @@ def main():
             raise SystemExit("output exists; pass --force to replace it: {}".format(output))
         shutil.rmtree(str(output))
     render(testbed, baseline, output, scenario)
-    try:
-        revision = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=str(ROOT), text=True).strip()
-    except (OSError, subprocess.CalledProcessError):
-        revision = "unknown"
     manifest = load_yaml(output / "manifest.yaml")
     manifest["name"] = args.name
     try:
@@ -791,7 +785,6 @@ def main():
         "name": scenario["name"],
         "kind": scenario["kind"],
         "definition": scenario_definition,
-        "definitionHash": canonical_sha256(scenario),
     }
     try:
         topology_path = testbed_path.relative_to(ROOT).as_posix()
@@ -801,7 +794,6 @@ def main():
         "name": topology_definition["name"],
         "kind": deployment_kind(topology_definition),
         "definition": topology_path,
-        "definitionHash": canonical_sha256(topology_definition),
     }
     manifest["renderOptions"] = {
         "mlDevicePolicy": "gpu" if any(
@@ -847,10 +839,6 @@ def main():
         }
     render_compose(testbed, output, manifest["runtime"])
     manifest["generated"] = {
-        "baselineHash": sha256_tree(baseline),
-        "definitionHash": canonical_sha256(topology_definition),
-        "generatorSourceHash": config_generator_source_hash(),
-        "generatorRevision": revision,
         "files": sorted(
             path.relative_to(output).as_posix()
             for path in output.rglob("*")

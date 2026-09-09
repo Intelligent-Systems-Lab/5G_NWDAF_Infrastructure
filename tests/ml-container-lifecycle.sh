@@ -103,7 +103,7 @@ run_case() {
 
 run_case flat "$HOST_ROOT/testbed.yaml" "$HOST_ROOT/config/default" 5
 run_case hfl "$HOST_ROOT/testbed.static-hierarchical.yaml" \
-  "$HOST_ROOT/config/local/phase2-static-hfl-v4" 7
+  "$HOST_ROOT/config/local/static-hierarchical-container-test" 7
 
 trap - ERR INT TERM
 cleanup

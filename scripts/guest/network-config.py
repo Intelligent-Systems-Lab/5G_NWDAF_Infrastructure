@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import argparse
-import hashlib
 import ipaddress
 import json
 import re
@@ -191,11 +190,9 @@ def render(
     affected_devices = sorted(
         {item["device"] for item in desired} | {item["device"] for item in previous}
     )
-    serialized = yaml.safe_dump(fragment, sort_keys=False).encode()
     plan = {
         "schemaVersion": 1,
         "machine": machine,
-        "fragmentSha256": hashlib.sha256(serialized).hexdigest(),
         "aliases": desired,
         "previousAliases": previous,
         "staleAliases": stale,

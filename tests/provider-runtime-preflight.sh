@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 source "$(cd "$(dirname "$0")/.." && pwd)/scripts/host/lib.sh"
+export TESTBED=testbed.yaml
 
 provider_fixture=$(mktemp -d)
 trap 'rm -rf "$provider_fixture"' EXIT

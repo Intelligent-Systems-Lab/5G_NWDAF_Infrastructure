@@ -4,7 +4,9 @@ require "ipaddr"
 require "yaml"
 
 ROOT = File.expand_path(__dir__)
-definition_path = ENV.fetch("TESTBED", "testbed.yaml")
+definition_selection = ENV["TESTBED"]
+abort "TESTBED must select an explicit testbed definition" if definition_selection.nil? || definition_selection.strip.empty?
+definition_path = definition_selection
 definition_path = File.expand_path(definition_path, ROOT)
 abort "testbed definition not found: #{definition_path}" unless File.file?(definition_path)
 

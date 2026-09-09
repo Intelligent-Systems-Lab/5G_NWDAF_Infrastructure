@@ -2,7 +2,7 @@
 set -euo pipefail
 source "$(dirname "$0")/lib.sh"
 
-testbed=${1:-testbed.yaml}
+testbed=${1:?usage: webconsole-prepare.sh testbed [config-dir]}
 explicit_config=${2:-}
 config_dir=$(effective_config_dir "$testbed" "$explicit_config")
 enabled=$(config_webconsole_enabled "$config_dir")
@@ -52,10 +52,9 @@ tar -C "$HOST_ROOT/webconsole" \
   --exclude=.git --exclude=bin --exclude=public \
   --exclude=frontend/node_modules --exclude=frontend/build --exclude=frontend/.yarn/cache \
   -czf "$archive" .
-archive_sha=$(sha256sum "$archive" | awk '{print $1}')
-remote_archive=/tmp/5g-nwdaf-webconsole-"${archive_sha:0:16}".tgz
+remote_archive="/tmp/5g-nwdaf-webconsole-${UID}-$$-${RANDOM}.tgz"
 (cd "$HOST_ROOT" && provider_vagrant upload "$archive" "$remote_archive" core)
 printf -v command \
-  'sudo /usr/local/libexec/5g-nwdaf-infrastructure/webconsole-build %q %q %q %q' \
-  "$identity" "$remote_archive" "$archive_sha" "$actual_revision"
+  'sudo /usr/local/libexec/5g-nwdaf-infrastructure/webconsole-build %q %q %q' \
+  "$identity" "$remote_archive" "$actual_revision"
 vssh core "$command"

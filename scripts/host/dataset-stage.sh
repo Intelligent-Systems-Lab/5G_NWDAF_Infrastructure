@@ -3,9 +3,9 @@ set -euo pipefail
 source "$(dirname "$0")/lib.sh"
 
 action=${1:-plan}
-testbed=${2:-testbed.yaml}
+testbed=${2:?usage: dataset-stage.sh plan|apply testbed [config-dir]}
 explicit_config=${3:-}
-case "$action" in plan|apply) ;; *) echo "usage: dataset-stage.sh plan|apply [testbed] [config-dir]" >&2; exit 2;; esac
+case "$action" in plan|apply) ;; *) echo "usage: dataset-stage.sh plan|apply testbed [config-dir]" >&2; exit 2;; esac
 
 stage_temporary=
 cleanup() {

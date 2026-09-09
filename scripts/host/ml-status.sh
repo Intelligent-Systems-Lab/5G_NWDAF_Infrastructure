@@ -3,7 +3,7 @@ set -euo pipefail
 source "$(dirname "$0")/lib.sh"
 
 project=$(ml_project_name)
-testbed=${1:-testbed.yaml}
+testbed=${1:?usage: ml-status.sh testbed [config-dir]}
 explicit_config=${2:-}
 config_dir=$(effective_config_dir "$testbed" "$explicit_config")
 services=$(config_host_containers "$config_dir" | paste -sd, -)

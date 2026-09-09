@@ -5,7 +5,7 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 OBSERVE_ACTIVE_PIDS=()
 OBSERVE_ACTIVE_DIR=''
 OBSERVE_CACHE_DIR=''
-OBSERVE_TESTBED=testbed.yaml
+OBSERVE_TESTBED=''
 OBSERVE_CONFIG_DIR=''
 
 observe_section() {
@@ -163,7 +163,8 @@ observe_main() {
     once=true
     shift
   fi
-  OBSERVE_TESTBED=${1:-testbed.yaml}
+  OBSERVE_TESTBED=${1:-}
+  require_testbed_selection "$OBSERVE_TESTBED" || return
   OBSERVE_CONFIG_DIR=${2:-}
   OBSERVE_CACHE_DIR=$(mktemp -d -t 5g-nwdaf-observe-cache.XXXXXX)
   snapshot_file="$OBSERVE_CACHE_DIR/snapshot"

@@ -746,7 +746,7 @@ def main() -> int:
             "training-status",
         ),
     )
-    parser.add_argument("--testbed", default="testbed.yaml")
+    parser.add_argument("--testbed", required=True)
     parser.add_argument("--config-dir", default="")
     parser.add_argument("--run-id", required=True)
     parser.add_argument("--model-family-id", default="")

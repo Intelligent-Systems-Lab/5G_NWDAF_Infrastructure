@@ -14,6 +14,14 @@ provider_host_context_available() {
   [ -c "$device" ]
 }
 
+require_testbed_selection() {
+  local testbed=${1:-}
+  if [ -z "${testbed//[[:space:]]/}" ]; then
+    echo "TESTBED must select an explicit testbed definition" >&2
+    return 2
+  fi
+}
+
 require_provider_host_context() {
   local device=/dev/vboxdrv
   if ! provider_host_context_available "$device"; then
@@ -199,7 +207,8 @@ validate_provider_runtime_inventory() {
 
 provider_live_vm_state_records() {
   local raw machine state count total
-  if ! raw=$(cd "$HOST_ROOT" && TESTBED="${TESTBED:-testbed.yaml}" provider_vagrant status --machine-readable); then
+  require_testbed_selection "${TESTBED:-}" || return
+  if ! raw=$(cd "$HOST_ROOT" && TESTBED="$TESTBED" provider_vagrant status --machine-readable); then
     echo "failed to query Vagrant machine states" >&2
     return 1
   fi
@@ -449,6 +458,7 @@ config_hash() {
 
 effective_config_dir() {
   local testbed=$1 explicit=${2:-}
+  require_testbed_selection "$testbed" || return
   PYTHONPATH="$HOST_ROOT/scripts/host" python3 - "$testbed" "$explicit" <<'PY'
 import sys
 from configlib import load_yaml, resolve_config_dir, resolve_path

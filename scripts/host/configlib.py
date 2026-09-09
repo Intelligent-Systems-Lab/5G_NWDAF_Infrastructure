@@ -1,9 +1,7 @@
 #!/usr/bin/env python3
 """Shared, host-only configuration helpers."""
 
-import hashlib
 import ipaddress
-import json
 import re
 import sys
 import uuid
@@ -469,10 +467,6 @@ def resolve_config_scenario(config_dir):
     path, scenario = load_scenario_definition(definition)
     if metadata.get("name") != scenario.get("name"):
         raise ValueError("config manifest scenario name does not match its definition")
-    expected_hash = metadata.get("definitionHash")
-    actual_hash = canonical_sha256(scenario)
-    if expected_hash != actual_hash:
-        raise ValueError("config manifest scenario definition hash is stale")
     resolve_scenario_profile_paths(path, scenario)
     return path, scenario
 
@@ -607,33 +601,6 @@ def runtime_subscriptions(config_dir):
 
 def runtime_coordinator_container(config_dir):
     return load_runtime_manifest(config_dir)["runtime"]["coordinatorContainer"]
-
-
-def sha256_file(path):
-    digest = hashlib.sha256()
-    with Path(path).open("rb") as stream:
-        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
-
-
-def canonical_sha256(value):
-    payload = json.dumps(value, sort_keys=True, separators=(",", ":")).encode("utf-8")
-    return hashlib.sha256(payload).hexdigest()
-
-
-def config_generator_source_hash():
-    digest = hashlib.sha256()
-    for path in (
-        ROOT / "scripts" / "host" / "config-render.py",
-        ROOT / "scripts" / "host" / "configlib.py",
-        ROOT / "scripts" / "shared" / "config_hash.py",
-    ):
-        name = path.relative_to(ROOT).as_posix()
-        digest.update(name.encode("utf-8") + b"\0")
-        digest.update(path.read_bytes())
-        digest.update(b"\0")
-    return digest.hexdigest()
 
 
 def guest_network_configs(testbed, analytics=None, include_consumer=True):

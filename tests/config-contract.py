@@ -180,6 +180,12 @@ def main():
             "pymtlf-a device",
         ),
         (
+            "manifest-scenario-kind",
+            "manifest.yaml",
+            lambda value: value["scenario"].update({"kind": "wrong-kind"}),
+            "manifest scenario kind",
+        ),
+        (
             "subscriber-fixture-path",
             "manifest.yaml",
             lambda value: value["subscriberData"].update(
@@ -290,22 +296,6 @@ def main():
                 {"enable": False}
             ),
             "WebConsole billing compatibility settings",
-        ),
-        (
-            "manifest-baseline",
-            "manifest.yaml",
-            lambda value: value.setdefault("generated", {}).update(
-                {"baselineHash": "0" * 64}
-            ),
-            "manifest baseline hash",
-        ),
-        (
-            "manifest-generator",
-            "manifest.yaml",
-            lambda value: value.setdefault("generated", {}).update(
-                {"generatorSourceHash": "0" * 64}
-            ),
-            "manifest config generator hash",
         ),
     )
 

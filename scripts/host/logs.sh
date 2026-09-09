@@ -8,7 +8,7 @@ service='*'
 since='10 minutes ago'
 follow=true
 tail_lines=all
-testbed=testbed.yaml
+testbed=
 explicit_config=
 while [ "$#" -gt 0 ]; do
   case "$1" in
@@ -20,9 +20,10 @@ while [ "$#" -gt 0 ]; do
     --testbed) testbed=$2; shift 2;;
     --config-dir) explicit_config=$2; shift 2;;
     --no-follow) follow=false; shift;;
-    *) echo "usage: logs.sh [--source vm|ml|all] [--vm core|path-a|path-b|all] [--service name|glob|all] [--since value] [--tail lines|all] [--no-follow]" >&2; exit 2;;
+    *) echo "usage: logs.sh --testbed testbed [--config-dir dir] [--source vm|ml|all] [--vm core|path-a|path-b|all] [--service name|glob|all] [--since value] [--tail lines|all] [--no-follow]" >&2; exit 2;;
   esac
 done
+require_testbed_selection "$testbed"
 config_dir=$(effective_config_dir "$testbed" "$explicit_config")
 case "$service" in ''|all) service='*';; esac
 case "$source_type" in vm|ml|all) ;; *) echo "invalid source: $source_type" >&2; exit 2;; esac

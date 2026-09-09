@@ -2,7 +2,7 @@
 set -euo pipefail
 source "$(dirname "$0")/lib.sh"
 
-testbed=${1:-testbed.yaml}
+testbed=${1:?usage: ml-start.sh testbed [config-dir]}
 explicit_config=${2:-}
 mode=$(ml_runtime_mode)
 project=$(ml_project_name)

@@ -11,8 +11,8 @@ import uuid
 from pathlib import Path
 
 from configlib import (
-    ROOT, SCENARIO_SCHEMA, canonical_sha256, config_generator_source_hash, get_path,
-    deployment_kind, expected_runtime_inventory, guest_network_configs,
+    ROOT, SCENARIO_SCHEMA, get_path, deployment_kind,
+    expected_runtime_inventory, guest_network_configs,
     load_runtime_manifest, load_yaml, nwdaf_definitions, resolve_config_dir,
     repository_relative_paths, resolve_config_scenario, resolve_ml_bind_address,
     resolve_mobile_identities, resolve_path, resolve_scenario_profile_paths,
@@ -230,7 +230,6 @@ def check_manifest_exact(check, testbed_path, testbed, config_dir, actual_files)
     check.equal("manifest topology name", topology.get("name"), testbed.get("name"))
     check.equal("manifest topology kind", topology.get("kind"), deployment_kind(testbed))
     check.equal("manifest topology definition", topology.get("definition"), definition)
-    check.equal("manifest topology hash", topology.get("definitionHash"), canonical_sha256(testbed))
     policy = manifest.get("renderOptions", {}).get("mlDevicePolicy")
     check.true("manifest renderOptions.mlDevicePolicy must be cpu or gpu", policy in ("cpu", "gpu"))
     selected = copy.deepcopy(testbed)
@@ -261,9 +260,6 @@ def check_manifest_exact(check, testbed_path, testbed, config_dir, actual_files)
     )
     generated = manifest.get("generated")
     if generated is not None:
-        check.equal("manifest baseline hash", generated.get("baselineHash"), sha256_tree(ROOT / "config/default"))
-        check.equal("manifest source definition hash", generated.get("definitionHash"), canonical_sha256(testbed))
-        check.equal("manifest config generator hash", generated.get("generatorSourceHash"), config_generator_source_hash())
         check.equal(
             "manifest generated files", generated.get("files"),
             sorted(path for path in actual_files if path != "manifest.yaml"),
@@ -417,7 +413,7 @@ def group_id_for_owner(testbed, owner):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--testbed", default="testbed.yaml")
+    parser.add_argument("--testbed", required=True)
     parser.add_argument("--config-dir")
     args = parser.parse_args()
 
@@ -1288,21 +1284,6 @@ def main():
         check.equal("dataset set paths", sorted(dataset_spec["paths"]), ["path-a", "path-b"])
     generated = manifest.get("generated")
     if generated is not None:
-        check.equal(
-            "manifest baseline hash",
-            generated.get("baselineHash"),
-            sha256_tree(ROOT / "config" / "default"),
-        )
-        check.equal(
-            "manifest topology hash",
-            generated.get("definitionHash"),
-            canonical_sha256(testbed),
-        )
-        check.equal(
-            "manifest config generator hash",
-            generated.get("generatorSourceHash"),
-            config_generator_source_hash(),
-        )
         check.equal(
             "manifest generated files",
             generated.get("files"),

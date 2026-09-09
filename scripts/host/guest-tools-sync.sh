@@ -26,8 +26,7 @@ cleanup() {
 trap cleanup EXIT
 archive="$temporary/runtime-tools.tgz"
 tar -C "$HOST_ROOT" -czf "$archive" "${files[@]}"
-source_hash=$(sha256sum "$archive" | awk '{print $1}')
-remote_archive="/tmp/5g-nwdaf-runtime-tools-${source_hash:0:16}.tgz"
+remote_archive="/tmp/5g-nwdaf-runtime-tools-${UID}-$$-${RANDOM}.tgz"
 
 selected_machines=("${MACHINES[@]}")
 if [ "$#" -gt 0 ]; then
@@ -38,10 +37,10 @@ if [ "$#" -gt 0 ]; then
 fi
 
 for machine in "${selected_machines[@]}"; do
-  echo "SYNC RUNTIME TOOLS $machine source=$source_hash"
+  echo "SYNC RUNTIME TOOLS $machine"
   (cd "$HOST_ROOT" && provider_vagrant upload "$archive" "$remote_archive" "$machine")
   printf -v command \
-    'set -euo pipefail; archive=%q; expected=%q; actual=$(sha256sum "$archive" | awk '\''{print $1}'\''); test "$actual" = "$expected"; stage=$(mktemp -d); trap '\''rm -rf "$stage" "$archive"'\'' EXIT; tar -C "$stage" -xzf "$archive"; sudo bash "$stage/scripts/guest/runtime-tools-install.sh" %q "$stage" "$expected"' \
-    "$remote_archive" "$source_hash" "$machine"
+    'set -euo pipefail; archive=%q; stage=$(mktemp -d); trap '\''rm -rf "$stage" "$archive"'\'' EXIT; tar -C "$stage" -xzf "$archive"; sudo bash "$stage/scripts/guest/runtime-tools-install.sh" %q "$stage"' \
+    "$remote_archive" "$machine"
   vssh "$machine" "$command"
 done

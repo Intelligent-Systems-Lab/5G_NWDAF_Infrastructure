@@ -2,7 +2,7 @@
 set -euo pipefail
 source "$(dirname "$0")/lib.sh"
 
-testbed=${1:-testbed.yaml}
+testbed=${1:?usage: experiment-start.sh testbed [config-dir]}
 explicit_config=${2:-}
 config_dir=$(effective_config_dir "$testbed" "$explicit_config")
 webconsole_enabled=$(config_webconsole_enabled "$config_dir")

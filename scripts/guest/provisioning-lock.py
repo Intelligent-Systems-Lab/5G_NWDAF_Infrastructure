@@ -3,7 +3,6 @@
 
 import argparse
 import datetime
-import hashlib
 import json
 import os
 import platform
@@ -273,10 +272,6 @@ def resolve_mongodb(lock):
     }
 
 
-def lock_hash(path):
-    return hashlib.sha256(Path(path).read_bytes()).hexdigest()
-
-
 def actual_go_version():
     result = subprocess.run(
         ["/usr/local/go/bin/go", "version"],
@@ -312,7 +307,6 @@ def write_manifest(lock_path, machine, include_mongodb, output):
         "schemaVersion": 1,
         "machine": machine,
         "generatedAt": datetime.datetime.now(datetime.timezone.utc).isoformat(),
-        "lock": {"sha256": lock_hash(lock_path)},
         "platform": {
             "os": os_release.get("ID"),
             "release": os_release.get("VERSION_ID"),
@@ -325,7 +319,6 @@ def write_manifest(lock_path, machine, include_mongodb, output):
             "requestedVersion": lock["go"]["version"],
             "resolvedVersion": version,
             "archive": lock["go"]["archive"],
-            "archiveSha256": lock["go"]["sha256"],
             "drift": False,
         },
     }
@@ -336,9 +329,6 @@ def write_manifest(lock_path, machine, include_mongodb, output):
             "drift": resolved["drift"],
             "reasons": resolved["reasons"],
             "packages": resolved["packages"],
-            "signingKeyFingerprint": lock["mongodb"]["repository"][
-                "signingKeyFingerprint"
-            ],
         }
     path = Path(output)
     path.parent.mkdir(parents=True, exist_ok=True)

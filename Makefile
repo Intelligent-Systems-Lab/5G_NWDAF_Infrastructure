@@ -1,9 +1,11 @@
 SHELL := /usr/bin/env bash
-TESTBED ?= testbed.yaml
+TESTBED ?=
 CONFIG_DIR ?=
 NAME ?= local
 DEVICE ?= gpu
 WEBCONSOLE ?= false
+
+require_testbed = @source scripts/host/lib.sh; require_testbed_selection "$(TESTBED)"
 
 .PHONY: help help-advanced help-dev help-all experiment-validate experiment-start experiment-status experiment-stop \
 	config-create config-validate dataset-validate dataset-load reset-show reset test test-containers \
@@ -19,13 +21,13 @@ help:
 	@echo "5G NWDAF Infrastructure"
 	@echo ""
 	@echo "Experiment lifecycle"
-	@echo "  make experiment-validate CONFIG_DIR=...  Diagnose prerequisites and inputs; does not gate start"
-	@echo "  make vm-up                               Create or start the three VMs"
-	@echo "  make experiment-start CONFIG_DIR=...     Start Guest, ML, consumer, and subscriptions"
-	@echo "  make experiment-status CONFIG_DIR=...    Show the complete experiment state"
-	@echo "  make logs [SERVICE=...]                  Follow selected logs; defaults to all"
-	@echo "  make experiment-stop                     Stop processes but retain state and VMs"
-	@echo "  make vm-halt                             Gracefully power off the VMs"
+	@echo "  make experiment-validate TESTBED=... [CONFIG_DIR=...]  Diagnose prerequisites and inputs"
+	@echo "  make vm-up TESTBED=...                               Create or start the selected VMs"
+	@echo "  make experiment-start TESTBED=... [CONFIG_DIR=...]   Start the selected experiment"
+	@echo "  make experiment-status TESTBED=... [CONFIG_DIR=...]  Show the complete experiment state"
+	@echo "  make logs TESTBED=... [SERVICE=...]                  Follow selected logs; defaults to all"
+	@echo "  make experiment-stop TESTBED=... [CONFIG_DIR=...]    Stop processes but retain state and VMs"
+	@echo "  make vm-halt TESTBED=...                             Gracefully power off the selected VMs"
 	@echo ""
 	@echo "More commands: make help-advanced | help-dev | help-all"
 
@@ -35,24 +37,24 @@ help-advanced:
 	@echo "Configuration and datasets"
 	@echo "  make config-create TESTBED=... NAME=... FROM=experiments/.../scenario.yaml"
 	@echo "                     [DEVICE=gpu|cpu] [WEBCONSOLE=false|true]"
-	@echo "  make config-validate CONFIG_DIR=...  Diagnose cross-config inconsistencies"
-	@echo "  make dataset-generate | dataset-validate | dataset-show | dataset-load CONFIG_DIR=..."
+	@echo "  make config-validate TESTBED=... [CONFIG_DIR=...]  Diagnose cross-config inconsistencies"
+	@echo "  make dataset-generate | dataset-validate | dataset-show | dataset-load TESTBED=... [CONFIG_DIR=...]"
 	@echo ""
 	@echo "Independent execution domains"
-	@echo "  make services-start CONFIG_DIR=... | services-status | services-stop"
-	@echo "  make ml-start CONFIG_DIR=... | ml-status | ml-stop"
-	@echo "  make webconsole-start CONFIG_DIR=... | webconsole-status | webconsole-stop"
+	@echo "  make services-start | services-status | services-stop TESTBED=... [CONFIG_DIR=...]"
+	@echo "  make ml-start | ml-status | ml-stop TESTBED=... [CONFIG_DIR=...]"
+	@echo "  make webconsole-start TESTBED=... [CONFIG_DIR=...] | webconsole-status | webconsole-stop"
 	@echo "  make subscriptions-start | subscriptions-status | subscriptions-stop"
-	@echo "  make fl-collection-start|status|stop CONFIG_DIR=... RUN_ID=<uuid>"
-	@echo "  make fl-training-start|status CONFIG_DIR=... RUN_ID=<uuid> [MODEL_FAMILY_ID=...]"
-	@echo "  make observe"
-	@echo "  make logs [SOURCE=vm|ml|all] [VM=core|path-a|path-b|all] [SERVICE=name|glob|all]"
+	@echo "  make fl-collection-start|status|stop TESTBED=... [CONFIG_DIR=...] RUN_ID=<uuid>"
+	@echo "  make fl-training-start|status TESTBED=... [CONFIG_DIR=...] RUN_ID=<uuid> [MODEL_FAMILY_ID=...]"
+	@echo "  make observe TESTBED=... [CONFIG_DIR=...]"
+	@echo "  make logs TESTBED=... [CONFIG_DIR=...] [SOURCE=vm|ml|all] [VM=core|path-a|path-b|all] [SERVICE=name|glob|all]"
 	@echo "            [SINCE='10 minutes ago'] [TAIL=lines|all] [FOLLOW=true|false]"
 	@echo ""
 	@echo "Subscriber and retained experiment state"
-	@echo "  make subscriber-data-show | subscriber-data-apply | subscriber-data-clear CONFIG_DIR=..."
-	@echo "  make reset-show CONFIG_DIR=..."
-	@echo "  make reset CONFIG_DIR=... RESET_CONFIRM=<scenario>"
+	@echo "  make subscriber-data-show | subscriber-data-apply | subscriber-data-clear TESTBED=... [CONFIG_DIR=...]"
+	@echo "  make reset-show TESTBED=... [CONFIG_DIR=...]"
+	@echo "  make reset TESTBED=... [CONFIG_DIR=...] RESET_CONFIRM=<scenario>"
 
 help-dev:
 	@echo "5G NWDAF Infrastructure — repository tests"
@@ -66,18 +68,23 @@ help-all: help
 	@$(MAKE) --no-print-directory help-dev
 
 experiment-validate:
+	$(require_testbed)
 	@scripts/host/experiment-validate.sh "$(TESTBED)" "$(CONFIG_DIR)"
 
 experiment-start:
+	$(require_testbed)
 	@scripts/host/experiment-start.sh "$(TESTBED)" "$(CONFIG_DIR)"
 
 experiment-status:
+	$(require_testbed)
 	@scripts/host/experiment-status.sh "$(TESTBED)" "$(CONFIG_DIR)"
 
 experiment-stop:
+	$(require_testbed)
 	@scripts/host/experiment-stop.sh "$(TESTBED)" "$(CONFIG_DIR)"
 
 config-create:
+	$(require_testbed)
 	@test -n "$(FROM)" || { echo "FROM=<repository-relative-scenario.yaml> is required" >&2; exit 2; }
 	@case "$(FROM)" in /*) echo "FROM must be relative to the repository: $(FROM)" >&2; exit 2;; *.yaml) ;; *) echo "FROM must select a scenario.yaml file: $(FROM)" >&2; exit 2;; esac
 	@case "$(DEVICE)" in gpu|cpu) ;; *) echo "DEVICE must be gpu or cpu" >&2; exit 2;; esac
@@ -87,43 +94,56 @@ config-create:
 		--webconsole "$(WEBCONSOLE)"
 
 config-validate:
+	$(require_testbed)
 	@python3 scripts/host/config-check.py --testbed "$(TESTBED)" $(if $(CONFIG_DIR),--config-dir "$(CONFIG_DIR)")
 
 dataset-validate:
+	$(require_testbed)
 	@python3 scripts/host/dataset.py --testbed "$(TESTBED)" $(if $(CONFIG_DIR),--config-dir "$(CONFIG_DIR)") check
 
 dataset-load:
+	$(require_testbed)
 	@scripts/host/dataset-stage.sh apply "$(TESTBED)" "$(CONFIG_DIR)"
 
 reset-show:
+	$(require_testbed)
 	@scripts/host/experiment-reset.sh plan "$(TESTBED)" "$(CONFIG_DIR)"
 
 reset:
+	$(require_testbed)
 	@RESET_CONFIRM="$(RESET_CONFIRM)" scripts/host/experiment-reset.sh apply "$(TESTBED)" "$(CONFIG_DIR)"
 	@scripts/host/experiment-reset.sh verify "$(TESTBED)" "$(CONFIG_DIR)"
 
 test:
-	@tests/repository.sh "$(TESTBED)" "$(CONFIG_DIR)"
+	# Repository checks use the retained production definition only as a fixture;
+	# this fallback is not reachable from a deployment lifecycle target.
+	@tests/repository.sh "$(if $(strip $(TESTBED)),$(TESTBED),testbed.yaml)" "$(CONFIG_DIR)"
 
 test-containers:
 	@tests/ml-container-lifecycle.sh
 
 dataset-generate:
+	$(require_testbed)
 	@python3 scripts/host/dataset.py --testbed "$(TESTBED)" $(if $(CONFIG_DIR),--config-dir "$(CONFIG_DIR)") generate
 
 dataset-show:
+	$(require_testbed)
 	@python3 scripts/host/dataset.py --testbed "$(TESTBED)" $(if $(CONFIG_DIR),--config-dir "$(CONFIG_DIR)") show
 
 ml-start:
+	$(require_testbed)
 	@scripts/host/ml-start.sh "$(TESTBED)" "$(CONFIG_DIR)"
 
 ml-status:
+	$(require_testbed)
 	@scripts/host/ml-status.sh "$(TESTBED)" "$(CONFIG_DIR)"
 
 ml-stop:
+	$(require_testbed)
 	@scripts/host/ml-stop.sh "$(TESTBED)" "$(CONFIG_DIR)"
 
 webconsole-start:
+	$(require_testbed)
 	@scripts/host/webconsole-start.sh "$(TESTBED)" "$(CONFIG_DIR)"
 
 webconsole-status:
@@ -133,30 +153,36 @@ webconsole-stop:
 	@scripts/host/webconsole-stop.sh
 
 vm-up:
-	@source scripts/host/lib.sh; TESTBED="$(TESTBED)" provider_vagrant_up
+	@source scripts/host/lib.sh; require_testbed_selection "$(TESTBED)"; TESTBED="$(TESTBED)" provider_vagrant_up
 
 vm-status:
-	@source scripts/host/lib.sh; TESTBED="$(TESTBED)" provider_vagrant status
+	@source scripts/host/lib.sh; require_testbed_selection "$(TESTBED)"; TESTBED="$(TESTBED)" provider_vagrant status
 
 vm-halt:
-	@source scripts/host/lib.sh; TESTBED="$(TESTBED)" provider_vagrant halt
+	@source scripts/host/lib.sh; require_testbed_selection "$(TESTBED)"; TESTBED="$(TESTBED)" provider_vagrant halt
 
 services-start:
+	$(require_testbed)
 	@scripts/host/services-start.sh "$(TESTBED)" "$(CONFIG_DIR)"
 
 services-status:
+	$(require_testbed)
 	@scripts/host/services-status.sh "$(TESTBED)" "$(CONFIG_DIR)"
 
 services-stop:
+	$(require_testbed)
 	@scripts/host/services-stop.sh "$(TESTBED)" "$(CONFIG_DIR)"
 
 subscriber-data-apply:
+	$(require_testbed)
 	@scripts/host/subscriber-data.sh apply "$(TESTBED)" "$(CONFIG_DIR)"
 
 subscriber-data-show:
+	$(require_testbed)
 	@scripts/host/subscriber-data.sh show "$(TESTBED)" "$(CONFIG_DIR)"
 
 subscriber-data-clear:
+	$(require_testbed)
 	@scripts/host/subscriber-data.sh clear "$(TESTBED)" "$(CONFIG_DIR)"
 
 subscriptions-start:
@@ -169,21 +195,27 @@ subscriptions-stop:
 	@scripts/host/subscriptions-stop.sh
 
 fl-collection-start:
+	$(require_testbed)
 	@python3 scripts/host/fl-control.py collection-start --testbed "$(TESTBED)" --config-dir "$(CONFIG_DIR)" --run-id "$(RUN_ID)"
 
 fl-collection-status:
+	$(require_testbed)
 	@python3 scripts/host/fl-control.py collection-status --testbed "$(TESTBED)" --config-dir "$(CONFIG_DIR)" --run-id "$(RUN_ID)"
 
 fl-collection-stop:
+	$(require_testbed)
 	@python3 scripts/host/fl-control.py collection-stop --testbed "$(TESTBED)" --config-dir "$(CONFIG_DIR)" --run-id "$(RUN_ID)"
 
 fl-training-start:
+	$(require_testbed)
 	@python3 scripts/host/fl-control.py training-start --testbed "$(TESTBED)" --config-dir "$(CONFIG_DIR)" --run-id "$(RUN_ID)" $(if $(MODEL_FAMILY_ID),--model-family-id "$(MODEL_FAMILY_ID)")
 
 fl-training-status:
+	$(require_testbed)
 	@python3 scripts/host/fl-control.py training-status --testbed "$(TESTBED)" --config-dir "$(CONFIG_DIR)" --run-id "$(RUN_ID)" $(if $(MODEL_FAMILY_ID),--model-family-id "$(MODEL_FAMILY_ID)")
 
 observe:
+	$(require_testbed)
 	@scripts/host/observe.sh "$(TESTBED)" "$(CONFIG_DIR)"
 
 logs: SOURCE ?= all
@@ -193,6 +225,7 @@ logs: SINCE ?= 10 minutes ago
 logs: TAIL ?= all
 logs: FOLLOW ?= true
 logs:
+	$(require_testbed)
 	@case "$(FOLLOW)" in \
 		true) follow_args=() ;; \
 		false) follow_args=(--no-follow) ;; \
