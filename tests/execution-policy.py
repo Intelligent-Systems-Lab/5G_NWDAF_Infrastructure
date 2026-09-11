@@ -75,6 +75,8 @@ def main():
     make_source = (ROOT / "Makefile").read_text(encoding="utf-8")
     if 'TESTBED="$(TESTBED)" provider_vagrant_up' not in make_source:
         raise SystemExit("vm-up must use the duplicate/orphan runtime preflight wrapper")
+    if re.search(r"^vm-up:\s+experiment-validate\s*$", make_source, re.MULTILINE):
+        raise SystemExit("vm-up must observe provider processes before any diagnostic provider query")
     reject_startup_gate("scripts/host/experiment-start.sh", ("experiment-validate.sh",))
     reject_startup_gate("scripts/host/services-start.sh", ("config-check.py",))
     reject_startup_gate(

@@ -435,7 +435,12 @@ def test_runtime_identity_and_generated_contract_tampering_fail_closed():
             raise AssertionError("unknown collection profile was accepted")
 
 
-def _render(output, testbed, name):
+def _render(
+    output,
+    testbed,
+    name,
+    scenario="experiments/examples/fl-closure-smoke/scenario.yaml",
+):
     subprocess.run(
         [
             sys.executable,
@@ -445,7 +450,7 @@ def _render(output, testbed, name):
             "--name",
             name,
             "--scenario",
-            "experiments/examples/fl-closure-smoke/scenario.yaml",
+            scenario,
             "--output-root",
             str(output),
             "--ml-device",
@@ -531,7 +536,7 @@ def test_contract_is_manifest_driven_for_both_static_topologies():
         try:
             MODULE.load_contract("testbed.yaml")
         except (MODULE.ControlError, ValueError) as error:
-            assert "static-flat or static-hierarchical" in str(error)
+            assert "selected Flat or Hierarchical" in str(error)
         else:
             raise AssertionError("production Flat config was accepted by static FL control")
 
@@ -637,6 +642,49 @@ def test_hierarchical_training_response_requires_hierarchical_mode():
             raise AssertionError("nonhierarchical training response was accepted")
 
 
+def test_protocol_image_training_skips_collection_precondition():
+    with tempfile.TemporaryDirectory(prefix="fl-control-protocol-") as temporary:
+        output = Path(temporary)
+        _render(
+            output,
+            "testbed.protocol-hierarchical.yaml",
+            "protocol",
+            "experiments/protocol-hierarchical/mnist/scenario.yaml",
+        )
+        selected = MODULE.load_contract(
+            "testbed.protocol-hierarchical.yaml", str(output / "protocol")
+        )
+        assert selected.deployment_kind == "protocol-hierarchical"
+        assert selected.training_mode == "hierarchical"
+        assert selected.coordinator_service == "pymtlf-root"
+        assert selected.owners == ()
+        assert selected.model_families == ("image-classification-mnist",)
+
+        body = {
+            "requestId": RUN_ID,
+            "modelFamilyId": "image-classification-mnist",
+            "mode": "hierarchical",
+            "participantSource": "static",
+            "triggerSource": "private_api",
+            "state": "PREPARING",
+        }
+        http = FakeHttp()
+        http.add(
+            "GET",
+            selected.coordinator_endpoint + "/health/ready",
+            response(200, status="ready"),
+        )
+        http.add(
+            "POST",
+            selected.coordinator_endpoint + MODULE.TRAINING_PATH,
+            response(202, **body),
+        )
+        value = MODULE.Controller(selected, http).training_start(RUN_ID, None)
+        assert value["state"] == "PREPARING"
+        assert [method for method, _url, _payload in http.calls] == ["GET", "POST"]
+        assert all(MODULE.COLLECTION_PATH not in url for _method, url, _payload in http.calls)
+
+
 def main():
     assert MODULE.canonical_run_id(RUN_ID) == RUN_ID
     for invalid in (
@@ -659,7 +707,8 @@ def main():
     test_contract_is_manifest_driven_for_both_static_topologies()
     test_hierarchical_contract_tampering_fails_closed()
     test_hierarchical_training_response_requires_hierarchical_mode()
-    print("FL_CONTROL_TEST status=passed owners=4")
+    test_protocol_image_training_skips_collection_precondition()
+    print("FL_CONTROL_TEST status=passed flows=collection-based,protocol-driven")
 
 
 if __name__ == "__main__":

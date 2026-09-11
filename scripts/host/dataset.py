@@ -10,7 +10,10 @@ import sys
 import tempfile
 from pathlib import Path
 
-from configlib import ROOT, load_yaml, resolve_config_dir, resolve_path
+from configlib import (
+    ROOT, load_yaml, resolve_config_dir, resolve_config_scenario, resolve_path,
+    scenario_profile,
+)
 from datasetlib import canonical_bytes, resolve_dataset_spec
 
 
@@ -214,6 +217,25 @@ def main():
     args = parser.parse_args()
 
     try:
+        testbed = load_yaml(resolve_path(args.testbed))
+        config_dir = resolve_config_dir(testbed, args.config_dir)
+        _scenario_path, scenario = resolve_config_scenario(config_dir)
+        if scenario_profile(scenario) == "image-classification":
+            if args.action == "locate":
+                raise ValueError("dataset locate is only available for UE communication datasets")
+            interpreter = ROOT / "ML" / "PyMTLF" / ".venv" / "bin" / "python"
+            if not interpreter.is_file():
+                raise ValueError("PyMTLF project environment is missing: {}".format(interpreter))
+            command = [
+                str(interpreter),
+                str(ROOT / "scripts" / "host" / "image_dataset.py"),
+                "--testbed",
+                args.testbed,
+            ]
+            if args.config_dir:
+                command.extend(["--config-dir", args.config_dir])
+            command.append(args.action)
+            return subprocess.run(command, check=False).returncode
         _testbed, _config_dir, spec = command_spec(args)
         if args.action == "generate":
             generate(args, spec)

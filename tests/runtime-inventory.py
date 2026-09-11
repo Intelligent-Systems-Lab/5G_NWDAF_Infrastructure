@@ -11,7 +11,10 @@ import yaml
 
 
 ROOT = Path(__file__).resolve().parents[1]
-SCENARIO = "experiments/examples/fl-closure-smoke/scenario.yaml"
+LEGACY_SCENARIO = "experiments/examples/fl-closure-smoke/scenario.yaml"
+sys.path.insert(0, str(ROOT / "scripts" / "host"))
+
+from configlib import expected_runtime_inventory, selected_component_paths  # noqa: E402
 
 
 def run(*command, check=True):
@@ -21,10 +24,10 @@ def run(*command, check=True):
     )
 
 
-def render(output_root, testbed, name):
+def render(output_root, testbed, name, scenario=LEGACY_SCENARIO):
     run(
         sys.executable, ROOT / "scripts/host/config-render.py",
-        "--testbed", testbed, "--name", name, "--scenario", SCENARIO,
+        "--testbed", testbed, "--name", name, "--scenario", scenario,
         "--output-root", output_root, "--ml-device", "cpu", "--webconsole", "false",
     )
     return output_root / name
@@ -49,17 +52,28 @@ def main():
             (ROOT / "components.lock.yaml").read_text(encoding="utf-8")
         )["components"]
     }
-    for path, expected in component_locks.items():
-        gitlink = run("git", "ls-tree", "HEAD", path).stdout.split()[2]
-        assert gitlink == expected, (
-            "component lock does not match parent gitlink: {} expected={} actual={}".format(
-                path, expected, gitlink
+    protocol_definition = yaml.safe_load(
+        (ROOT / "testbed.protocol-hierarchical.yaml").read_text(encoding="utf-8")
+    )
+    protocol_components = selected_component_paths(
+        protocol_definition, expected_runtime_inventory(protocol_definition)
+    )
+    assert protocol_components == [
+        "ML/PyMTLF", "NFs/adrf", "NFs/nrf", "NFs/nwdaf",
+    ]
+    for path in protocol_components:
+        expected = component_locks[path]
+        actual = run("git", "-C", ROOT / path, "rev-parse", "HEAD").stdout.strip()
+        assert actual == expected, (
+            "component lock does not match checked-out revision: {} expected={} actual={}".format(
+                path, expected, actual
             )
         )
     for forbidden in ("static-config-render.py", "deployments/", "DEPLOYMENT"):
         assert forbidden not in renderer + makefile, forbidden
     for testbed_path in (
         "testbed.yaml", "testbed.static-flat.yaml", "testbed.static-hierarchical.yaml",
+        "testbed.protocol-hierarchical.yaml",
     ):
         definition = yaml.safe_load((ROOT / testbed_path).read_text(encoding="utf-8"))
         for service in definition["mlRuntime"]["services"].values():
@@ -70,19 +84,37 @@ def main():
         output_root = Path(temporary)
         # Exercise the shared exact-inventory guard with one complete fixture;
         # compatibility across historical profiles is outside this test.
-        for testbed, name in (("testbed.yaml", "production"),):
-            config_dir = render(output_root, testbed, name)
+        cases = (
+            ("testbed.yaml", "production", LEGACY_SCENARIO),
+            (
+                "testbed.protocol-hierarchical.yaml", "protocol-mnist",
+                "experiments/protocol-hierarchical/mnist/scenario.yaml",
+            ),
+            (
+                "testbed.protocol-hierarchical.yaml", "protocol-cifar10",
+                "experiments/protocol-hierarchical/cifar10/scenario.yaml",
+            ),
+        )
+        for testbed, name, scenario in cases:
+            config_dir = render(output_root, testbed, name, scenario)
             manifest_path = config_dir / "manifest.yaml"
             original = yaml.safe_load(manifest_path.read_text(encoding="utf-8"))
             units = [item["unit"] for item in original["runtime"]["guestServices"]]
-            first_upf = min(units.index(unit) for unit in units if unit.startswith("upf-"))
-            first_nwdaf = min(units.index(unit) for unit in units if unit.startswith("nwdaf-"))
-            first_gnb = min(units.index(unit) for unit in units if unit.startswith("gnb-"))
-            first_ue = min(units.index(unit) for unit in units if unit.startswith("ue"))
-            assert units.index("mongodb") < units.index("nrf") < units.index("amf")
-            assert units.index("amf") < first_upf < units.index("smf")
-            assert units.index("smf") < units.index("adrf") < first_nwdaf
-            assert first_nwdaf < first_gnb < first_ue
+            if original["runtime"]["deploymentKind"] == "protocol-hierarchical":
+                assert units[:3] == ["mongodb", "nrf", "adrf"]
+                assert all(unit.startswith("nwdaf-") for unit in units[3:])
+                assert original["runtime"]["guestMachines"] == [
+                    "core", "path-a", "path-b", "path-c"
+                ]
+            else:
+                first_upf = min(units.index(unit) for unit in units if unit.startswith("upf-"))
+                first_nwdaf = min(units.index(unit) for unit in units if unit.startswith("nwdaf-"))
+                first_gnb = min(units.index(unit) for unit in units if unit.startswith("gnb-"))
+                first_ue = min(units.index(unit) for unit in units if unit.startswith("ue"))
+                assert units.index("mongodb") < units.index("nrf") < units.index("amf")
+                assert units.index("amf") < first_upf < units.index("smf")
+                assert units.index("smf") < units.index("adrf") < first_nwdaf
+                assert first_nwdaf < first_gnb < first_ue
 
             tampered = copy.deepcopy(original)
             tampered["runtime"]["hostContainers"] = []
@@ -124,7 +156,7 @@ def main():
                     "ML/PyAnLF" if target == "pyanlf" else "ML/PyMTLF"
                 ]
                 assert service["build"]["args"]["COMPONENT_REVISION"] == expected_revision
-            if original["runtime"]["deploymentKind"] != "production-flat":
+            if original["runtime"]["deploymentKind"] in ("static-flat", "static-hierarchical"):
                 topology_name = original["runtime"]["deploymentKind"] + ".yaml"
                 for service in compose["services"].values():
                     assert any(
@@ -133,6 +165,14 @@ def main():
                         and volume.get("read_only") is True
                         for volume in service["volumes"]
                     ), "static PyMTLF service is missing its generated topology mount"
+            if original["runtime"]["deploymentKind"] == "protocol-hierarchical":
+                root_service = original["runtime"]["coordinatorContainer"]
+                for service_name, service in compose["services"].items():
+                    topology_mounts = [
+                        volume for volume in service["volumes"]
+                        if volume.get("target") == "/etc/5g-nwdaf/topology/protocol-hierarchical.yaml"
+                    ]
+                    assert len(topology_mounts) == (1 if service_name == root_service else 0)
             print("OK exact-runtime testbed={} services={}".format(
                 testbed, len(compose["services"])
             ))

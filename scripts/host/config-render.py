@@ -6,11 +6,13 @@ import copy
 import json
 import shutil
 import sys
+from pathlib import Path
 
 from configlib import (
     ROOT, dump_yaml, deployment_kind, expected_runtime_inventory,
     guest_network_configs, load_yaml, load_scenario_definition,
-    nwdaf_definitions, resolve_path, repository_relative_paths,
+    image_scenario_contract, nwdaf_definitions, protocol_topology,
+    resolve_path, repository_relative_paths,
     resolve_mobile_identities, resolve_scenario_profile_paths, set_path,
 )
 
@@ -289,7 +291,239 @@ def render_static_analytics(testbed, output, scenario):
     write(output, "topology/{}.yaml".format(kind), static_topology(testbed, nwdafs))
 
 
-def render_compose(testbed, output, runtime):
+def protocol_origins(testbed):
+    """Derive each PyMTLF artifact allowlist from the recursive topology."""
+    definitions = {item["unit"]: item for item in nwdaf_definitions(testbed)}
+    services = testbed["mlRuntime"]["services"]
+    address = testbed["mlRuntime"]["advertisedAddress"]
+    origins = {
+        unit: uri(address, services[item["backends"]["mtlf"]]["publishedPort"])
+        for unit, item in definitions.items()
+    }
+    root = next(unit for unit, item in definitions.items() if item["role"] == "root")
+    topology = testbed["analytics"]["protocolTopology"]
+    branch_units = [
+        candidate["node"]
+        for group in topology["branchGroups"]
+        for candidate in group["branches"]
+    ]
+    allowed = {root: [origins[unit] for unit in branch_units]}
+    for group in topology["branchGroups"]:
+        branches = [item["node"] for item in group["branches"]]
+        leaves = [item["node"] for item in group["leaves"]]
+        for branch in branches:
+            allowed[branch] = [origins[root]] + [origins[leaf] for leaf in leaves]
+        for leaf in leaves:
+            allowed[leaf] = [origins[branch] for branch in branches]
+    adrf = endpoint_uri(testbed["coreServices"]["adrf"]["sbi"])
+    return {
+        unit: values + [adrf]
+        for unit, values in allowed.items()
+    }
+
+
+def render_protocol_nwdaf(testbed, output, item, scenario):
+    template = "nwdafcfg-c.yaml" if item["role"] == "root" else "nwdafcfg-a.yaml"
+    config = load_yaml(ROOT / "NFs" / "nwdaf" / "config" / template)
+    native = config["configuration"]
+    address = item["sbi"]["address"]
+    native["nwdafName"] = item["unit"].upper()
+    native["nfInstanceId"] = item["nfInstanceId"]
+    native["sbi"].update({
+        "scheme": "http", "registerIPv4": address,
+        "bindingIPv4": address, "port": item["sbi"]["port"],
+    })
+    native["nrfRegistrationEnabled"] = True
+    native["nrfUri"] = endpoint_uri(testbed["coreServices"]["nrf"]["sbi"])
+    for service, port in (("anlf", 8090), ("mtlf", 8091)):
+        native[service]["server"].update({
+            "registerIPv4": address, "bindingIPv4": address, "port": port,
+        })
+    capability = {
+        "root": "FL_SERVER", "branch": "FL_SERVER_AND_CLIENT", "leaf": "FL_CLIENT",
+    }[item["role"]]
+    analytics = {
+        "mlAnalyticsIds": [scenario["workload"]["event"]],
+        "mlModelInterInfo": {"vendorList": ["001122"]},
+        "flCapabilityType": capability,
+    }
+    if item["role"] == "leaf":
+        analytics.update({
+            "trackingAreaList": [{
+                "plmnId": dict(testbed["mobileNetwork"]["plmn"]),
+                "tac": item["tai"],
+            }],
+            "nfTypeList": ["UPF"],
+        })
+    native["nwdafInfo"] = {"mlAnalyticsList": [analytics]}
+    native["serviceNameList"] = (
+        ["nnwdaf-mlmodelprovision", "nnwdaf-mlmodelmonitor"]
+        if item["role"] == "root" else ["nnwdaf-mlmodeltraining"]
+    )
+    native["anlfBackend"] = {"enabled": False}
+    backend = testbed["mlRuntime"]["services"][item["backends"]["mtlf"]]
+    native["mtlfBackend"] = {
+        "enabled": True,
+        "endpoint": uri(
+            testbed["mlRuntime"]["advertisedAddress"], backend["publishedPort"]
+        ),
+        "requestTimeout": testbed["operations"]["serviceReadyTimeoutSeconds"],
+    }
+    config["info"]["description"] = "Protocol-driven {} NWDAF".format(item["role"])
+    write(output, "nwdafcfg-{}.yaml".format(item["unit"][len("nwdaf-"):]), config)
+
+
+def render_protocol_pymtlf(testbed, output, item, scenario, allowed_origins):
+    template = {
+        "root": "fl-server-hierarchy.yaml",
+        "branch": "fl-server-client.yaml",
+        "leaf": "fl-client.yaml",
+    }[item["role"]]
+    config = load_yaml(ROOT / "ML" / "PyMTLF" / "config" / template)
+    service_name = item["backends"]["mtlf"]
+    service = testbed["mlRuntime"]["services"][service_name]
+    volume_root = service["volume"]["target"]
+    public_origin = uri(testbed["mlRuntime"]["advertisedAddress"], service["publishedPort"])
+    config["server"] = {"binding_host": "0.0.0.0", "port": service["containerPort"]}
+    config["runtime"] = {"mode": "federated"}
+    config["containing_nwdaf"] = {
+        "internal_api_root": uri(item["sbi"]["address"], 8091),
+        "request_timeout_seconds": 30,
+    }
+    config["storage"] = {"artifact_root": volume_root + "/artifacts"}
+    config["model_state"] = {"directory": volume_root + "/model-state"}
+    config["publication"] = {"directory": volume_root + "/publications"}
+    config["artifact"]["public_base_url"] = public_origin
+    fl = config["federated_learning"]
+    fl["workspace_root"] = volume_root + "/fl-workspaces"
+    fl["public_base_url"] = public_origin
+    fl["artifact_download"] = {
+        "allowed_origins": list(allowed_origins),
+        "timeout_seconds": testbed["operations"]["roundTimeoutSeconds"],
+    }
+    fl["experiment_recording"] = {"directory": volume_root + "/experiment-records"}
+    if "server" in fl:
+        fl["server"].update({
+            "callback_uri": public_origin + "/internal/v1/ml-model-training/notifications",
+            "preparation_timeout_seconds": testbed["operations"]["preparationTimeoutSeconds"],
+            "preparation_data_window_seconds": testbed["operations"]["preparationDataWindowSeconds"],
+            "round_timeout_seconds": testbed["operations"]["roundTimeoutSeconds"],
+            "round_count": scenario["training"]["acceptedRounds"],
+            "max_active_processes": 1,
+            "client_training": {"epochs": 1},
+        })
+    if item["role"] == "root":
+        fl["topology"] = {
+            "strategy": "static",
+            "config_file": "topology/protocol-hierarchical.yaml",
+        }
+        fl["training_trigger"] = {
+            "degradation": {"enabled": False}, "private_api": {"enabled": True},
+        }
+        fl["experiment_recording"]["validation"] = {
+            "dataset": scenario["workload"]["dataset"],
+            "path": "/data/validation.npz",
+            "device": "cpu",
+            "batch_size": 128,
+        }
+        fl.pop("strategy", None)
+        config["model_provision"]["seed_models"] = [{
+            "family_id": scenario["workload"]["modelFamilyId"],
+            "model_id": scenario["workload"]["seedModelId"],
+            "artifact_key": scenario["workload"]["seedArtifactKey"],
+            "event": scenario["workload"]["event"],
+            "event_filter": {},
+            "target_ue": None,
+            "model_interoperability": scenario["workload"]["modelInteroperability"],
+            "use_case_context": "",
+        }]
+        config["model_monitor"]["callback_uri"] = (
+            public_origin + "/internal/v1/ml-model-monitor/notifications"
+        )
+    elif item["role"] == "branch":
+        fl.pop("orchestration", None)
+        fl.pop("topology", None)
+        fl.pop("training_trigger", None)
+        config.pop("model_provision", None)
+        config.pop("model_monitor", None)
+        config.pop("accuracy_policy", None)
+    else:
+        client = fl["client"]
+        client["workload"] = {"profile": "image_classification"}
+        client["training_data"] = {
+            "collection_trigger": "local",
+            "dataset": scenario["workload"]["dataset"],
+            "shard_path": "/data/train.npz",
+        }
+        client["model_interoperability_ids"] = [
+            scenario["workload"]["modelInteroperability"]
+        ]
+        client["training"].update({
+            "device": "cpu",
+            "batch_size": scenario["training"]["batchSize"],
+            "learning_rate": scenario["training"]["learningRate"],
+            "validation_ratio": 0.1,
+            "random_seed": scenario["partition"]["seed"],
+        })
+        config.pop("dataset", None)
+    write(output, service_name + ".yaml", config)
+
+
+def render_protocol(testbed, output, scenario):
+    output.mkdir(parents=True)
+    core = testbed["coreServices"]
+    mongo_uri = "mongodb://{}:{}".format(
+        core["mongodb"]["endpoint"]["address"],
+        core["mongodb"]["endpoint"]["port"],
+    )
+    nrf_uri = endpoint_uri(core["nrf"]["sbi"])
+    nrf = load_yaml(ROOT / "config" / "default" / "nrfcfg.yaml")
+    nrf["configuration"]["MongoDBName"] = core["mongodb"]["database"]
+    nrf["configuration"]["MongoDBUrl"] = mongo_uri
+    nrf["configuration"]["DefaultPlmnId"] = dict(testbed["mobileNetwork"]["plmn"])
+    nrf["configuration"]["sbi"].update({
+        "registerIPv4": core["nrf"]["sbi"]["address"],
+        "bindingIPv4": core["nrf"]["sbi"]["address"],
+        "port": core["nrf"]["sbi"]["port"],
+        "oauth": False,
+    })
+    write(output, "nrfcfg.yaml", nrf)
+
+    adrf = load_yaml(ROOT / "config" / "default" / "adrfcfg.yaml")
+    adrf_native = adrf["configuration"]
+    adrf_native["nfInstanceId"] = core["adrf"]["nfInstanceId"]
+    adrf_native["nrfUri"] = nrf_uri
+    adrf_native["sbi"].update({
+        "registerIPv4": core["adrf"]["sbi"]["address"],
+        "bindingIPv4": core["adrf"]["sbi"]["address"],
+        "port": core["adrf"]["sbi"]["port"],
+        "oauth": False,
+    })
+    adrf_native["mongodb"] = {"name": core["adrf"]["mongodb"]["database"], "url": mongo_uri}
+    adrf_native["mlModelStorage"] = {
+        "localDirectory": core["adrf"]["modelStorage"]["localDirectory"]
+    }
+    adrf_native["plmnSupportList"] = [{
+        "plmnId": dict(testbed["mobileNetwork"]["plmn"]),
+        "snssaiList": [dict(testbed["mobileNetwork"]["snssai"])],
+    }]
+    adrf_native["locality"] = "protocol-hierarchical"
+    write(output, "adrfcfg.yaml", adrf)
+
+    write(output, "topology/protocol-hierarchical.yaml", protocol_topology(testbed))
+    for machine, network in guest_network_configs(testbed, include_consumer=False).items():
+        write(output, "network/{}.yaml".format(machine), network)
+    origins = protocol_origins(testbed)
+    for item in nwdaf_definitions(testbed):
+        render_protocol_nwdaf(testbed, output, item, scenario)
+        render_protocol_pymtlf(testbed, output, item, scenario, origins[item["unit"]])
+
+
+def uri(host, port):
+    return "http://{}:{}".format(host, port)
+
+
+def render_compose(testbed, output, runtime, scenario=None):
     kind = deployment_kind(testbed)
     common_environment = {
         "PYTHONDONTWRITEBYTECODE": "1", "PYTHONUNBUFFERED": "1",
@@ -345,7 +579,9 @@ def render_compose(testbed, output, runtime):
                 "io.5g-nwdaf.config-hash": "${CONFIG_HASH:-unresolved}",
             },
         }
-        if kind != "production-flat" and image == "pymtlf":
+        if kind != "production-flat" and image == "pymtlf" and (
+            kind != "protocol-hierarchical" or name == runtime["coordinatorContainer"]
+        ):
             topology_name = kind + ".yaml"
             service["volumes"].insert(1, {
                 "type": "bind",
@@ -359,12 +595,38 @@ def render_compose(testbed, output, runtime):
                 "NVIDIA_VISIBLE_DEVICES": "nvidia.com/gpu=all",
                 "NVIDIA_DRIVER_CAPABILITIES": "compute,utility",
             })
+        if kind == "protocol-hierarchical":
+            definition_by_backend = {
+                item["backends"]["mtlf"]: item for item in nwdaf_definitions(testbed)
+            }
+            node = definition_by_backend[name]
+            dataset_root = ROOT / ".generated" / "image-datasets" / scenario["name"]
+            if node["role"] == "root":
+                service["volumes"].append({
+                    "type": "bind", "source": str(dataset_root / "validation.npz"),
+                    "target": "/data/validation.npz", "read_only": True,
+                })
+            elif node["role"] == "leaf":
+                service["volumes"].append({
+                    "type": "bind",
+                    "source": str(dataset_root / "leaves" / (node["unit"] + ".npz")),
+                    "target": "/data/train.npz", "read_only": True,
+                })
         if name == runtime["coordinatorContainer"]:
-            environment.update({
-                "PYMTLF_SEED_SOURCE": "/opt/app/seed_models/initial",
-                "PYMTLF_SEED_MODEL_ID": "1", "PYMTLF_SEED_INTEROPERABILITY": "001122",
-                "PYMTLF_SEED_ARTIFACT_KEY": "a2c796a001e2da2461418f80b01d7d1e33f0e3349c2817d92286f09e67aa6bef",
-            })
+            if kind == "protocol-hierarchical":
+                environment.update({
+                    "PYMTLF_SEED_SOURCE": "/opt/app/seed_models/image_classification/"
+                    + scenario["workload"]["dataset"],
+                    "PYMTLF_SEED_MODEL_ID": str(scenario["workload"]["seedModelId"]),
+                    "PYMTLF_SEED_INTEROPERABILITY": scenario["workload"]["modelInteroperability"],
+                    "PYMTLF_SEED_ARTIFACT_KEY": scenario["workload"]["seedArtifactKey"],
+                })
+            else:
+                environment.update({
+                    "PYMTLF_SEED_SOURCE": "/opt/app/seed_models/initial",
+                    "PYMTLF_SEED_MODEL_ID": "1", "PYMTLF_SEED_INTEROPERABILITY": "001122",
+                    "PYMTLF_SEED_ARTIFACT_KEY": "a2c796a001e2da2461418f80b01d7d1e33f0e3349c2817d92286f09e67aa6bef",
+                })
         services[name] = service
     dump_yaml(output / "compose.yaml", {
         "name": "5g-nwdaf-infrastructure", "services": services,
@@ -756,8 +1018,10 @@ def main():
     testbed_path = resolve_path(args.testbed)
     topology_definition = load_yaml(testbed_path)
     testbed = copy.deepcopy(topology_definition)
-    resolve_mobile_identities(testbed)
-    if deployment_kind(testbed) != "production-flat" and args.webconsole == "true":
+    kind = deployment_kind(testbed)
+    if kind != "protocol-hierarchical":
+        resolve_mobile_identities(testbed)
+    if kind != "production-flat" and args.webconsole == "true":
         raise SystemExit("static TESTBED definitions do not enable WebConsole")
     if args.ml_device:
         training_device = "cpu" if args.ml_device == "cpu" else "cuda:0"
@@ -765,17 +1029,25 @@ def main():
             if service_name.startswith("pymtlf-") and service["device"] != "cpu":
                 service["device"] = training_device
     scenario_path, scenario = load_scenario_definition(args.scenario)
-    profile_sources = repository_relative_paths(
-        resolve_scenario_profile_paths(scenario_path, scenario)
-    )
+    if kind == "protocol-hierarchical":
+        image_scenario_contract(scenario)
+        profile_sources = {}
+    else:
+        profile_sources = repository_relative_paths(
+            resolve_scenario_profile_paths(scenario_path, scenario)
+        )
     baseline = ROOT / "config" / "default"
     output = resolve_path(args.output_root) / args.name
     if output.exists():
         if not args.force:
             raise SystemExit("output exists; pass --force to replace it: {}".format(output))
         shutil.rmtree(str(output))
-    render(testbed, baseline, output, scenario)
-    manifest = load_yaml(output / "manifest.yaml")
+    if kind == "protocol-hierarchical":
+        render_protocol(testbed, output, scenario)
+        manifest = {"schemaVersion": 1}
+    else:
+        render(testbed, baseline, output, scenario)
+        manifest = load_yaml(output / "manifest.yaml")
     manifest["name"] = args.name
     try:
         scenario_definition = scenario_path.relative_to(ROOT).as_posix()
@@ -786,6 +1058,8 @@ def main():
         "kind": scenario["kind"],
         "definition": scenario_definition,
     }
+    if kind == "protocol-hierarchical":
+        manifest["scenario"]["workload"] = copy.deepcopy(scenario["workload"])
     try:
         topology_path = testbed_path.relative_to(ROOT).as_posix()
     except ValueError:
@@ -810,7 +1084,10 @@ def main():
     )[0]
     manifest["seedRestoration"] = {
         "coordinatorContainer": manifest["runtime"]["coordinatorContainer"],
-        "canonicalSource": "/opt/app/seed_models/initial",
+        "canonicalSource": (
+            "/opt/app/seed_models/image_classification/" + scenario["workload"]["dataset"]
+            if kind == "protocol-hierarchical" else "/opt/app/seed_models/initial"
+        ),
         "modelId": seed_descriptor.get("model_id"),
         "modelInteroperability": seed_descriptor.get("model_interoperability"),
         "artifactKey": seed_descriptor.get("artifact_key"),
@@ -826,18 +1103,33 @@ def main():
             ),
         },
     }
-    manifest["datasets"] = {}
-    manifest.setdefault("constraints", {})["pseudoDriverProfiles"] = dict(
-        profile_sources
-    )
-    for path_name in ("a", "b"):
-        pseudo = testbed["paths"][path_name]["upf"]["pseudoDriver"]
-        dataset = pseudo["dataset"]
-        manifest["datasets"]["path-" + path_name] = {
-            "profile": profile_sources[path_name],
-            "guestDirectory": dataset["guestDirectory"],
+    if kind == "protocol-hierarchical":
+        dataset_root = ROOT / ".generated" / "image-datasets" / scenario["name"]
+        manifest["datasets"] = {
+            "root": str(dataset_root),
+            "validation": str(dataset_root / "validation.npz"),
+            "heldOut": str(dataset_root / "held-out.npz"),
+            "leaves": {
+                item["unit"]: str(
+                    dataset_root / "leaves" / (item["unit"] + ".npz")
+                )
+                for item in nwdaf_definitions(testbed) if item["role"] == "leaf"
+            },
         }
-    render_compose(testbed, output, manifest["runtime"])
+        manifest["constraints"] = {"pseudoDriverProfiles": {}}
+    else:
+        manifest["datasets"] = {}
+        manifest.setdefault("constraints", {})["pseudoDriverProfiles"] = dict(
+            profile_sources
+        )
+        for path_name in ("a", "b"):
+            pseudo = testbed["paths"][path_name]["upf"]["pseudoDriver"]
+            dataset = pseudo["dataset"]
+            manifest["datasets"]["path-" + path_name] = {
+                "profile": profile_sources[path_name],
+                "guestDirectory": dataset["guestDirectory"],
+            }
+    render_compose(testbed, output, manifest["runtime"], scenario)
     manifest["generated"] = {
         "files": sorted(
             path.relative_to(output).as_posix()

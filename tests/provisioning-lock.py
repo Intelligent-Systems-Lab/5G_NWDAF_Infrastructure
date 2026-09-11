@@ -58,6 +58,33 @@ def main():
     MODULE.validate_lock(lock)
     print("OK provisioning lock schema")
 
+    component_lock_path = ROOT / "components.lock.yaml"
+    component_lock = yaml.safe_load(component_lock_path.read_text(encoding="utf-8"))
+    selected = ["NFs/nwdaf", "NFs/nrf", "NFs/adrf"]
+    expected = {
+        item["path"]: item["commit"] for item in component_lock["components"]
+    }
+    records = ["{}={}".format(path, expected[path]) for path in selected]
+    resolved = MODULE.load_component_revisions(component_lock_path, records)
+    assert resolved == [
+        {"path": path, "revision": expected[path]} for path in sorted(selected)
+    ]
+    expect_error(
+        "component-revision-mismatch",
+        lambda: MODULE.load_component_revisions(
+            component_lock_path, ["NFs/nwdaf=" + "0" * 40]
+        ),
+        "component revision differs",
+    )
+    expect_error(
+        "duplicate-component-revision",
+        lambda: MODULE.load_component_revisions(
+            component_lock_path, [records[0], records[0]]
+        ),
+        "duplicate component revision",
+    )
+    print("OK selected component revision inventory")
+
     exact = resolve(lock, available=versions_for(lock))
     assert exact["source"] == "repository" and exact["drift"] is False
     print("OK preferred MongoDB package set")
@@ -151,6 +178,8 @@ def main():
     assert "apt-get install -y mongodb-org\n" not in core
     assert "provisioning.lock.yaml" in common and "provisioning.lock.yaml" in core
     assert "resolve-mongodb" in core
+    assert "write_provisioning_manifest" in core
+    assert "write_provisioning_manifest" in (ROOT / "scripts" / "guest" / "path.sh").read_text(encoding="utf-8")
     print("OK Guest scripts consume the lock without floating primary installs")
     return 0
 

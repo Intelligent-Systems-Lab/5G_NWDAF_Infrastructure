@@ -1,9 +1,10 @@
 SHELL := /usr/bin/env bash
-TESTBED ?=
+TESTBED ?= testbed.protocol-hierarchical.yaml
 CONFIG_DIR ?=
-NAME ?= local
-DEVICE ?= gpu
+NAME ?= protocol-hierarchical
+DEVICE ?= cpu
 WEBCONSOLE ?= false
+FORCE ?= false
 
 require_testbed = @source scripts/host/lib.sh; require_testbed_selection "$(TESTBED)"
 
@@ -21,13 +22,13 @@ help:
 	@echo "5G NWDAF Infrastructure"
 	@echo ""
 	@echo "Experiment lifecycle"
-	@echo "  make experiment-validate TESTBED=... [CONFIG_DIR=...]  Diagnose prerequisites and inputs"
-	@echo "  make vm-up TESTBED=...                               Create or start the selected VMs"
-	@echo "  make experiment-start TESTBED=... [CONFIG_DIR=...]   Start the selected experiment"
-	@echo "  make experiment-status TESTBED=... [CONFIG_DIR=...]  Show the complete experiment state"
+	@echo "  make experiment-validate [TESTBED=...] [CONFIG_DIR=...]  Diagnose prerequisites and inputs"
+	@echo "  make vm-up [TESTBED=...]                                Create or start the selected VMs"
+	@echo "  make experiment-start [TESTBED=...] [CONFIG_DIR=...]   Start the selected experiment"
+	@echo "  make experiment-status [TESTBED=...] [CONFIG_DIR=...]  Show the complete experiment state"
 	@echo "  make logs TESTBED=... [SERVICE=...]                  Follow selected logs; defaults to all"
-	@echo "  make experiment-stop TESTBED=... [CONFIG_DIR=...]    Stop processes but retain state and VMs"
-	@echo "  make vm-halt TESTBED=...                             Gracefully power off the selected VMs"
+	@echo "  make experiment-stop [TESTBED=...] [CONFIG_DIR=...]    Stop processes but retain state and VMs"
+	@echo "  make vm-halt [TESTBED=...]                             Gracefully power off the selected VMs"
 	@echo ""
 	@echo "More commands: make help-advanced | help-dev | help-all"
 
@@ -36,7 +37,7 @@ help-advanced:
 	@echo ""
 	@echo "Configuration and datasets"
 	@echo "  make config-create TESTBED=... NAME=... FROM=experiments/.../scenario.yaml"
-	@echo "                     [DEVICE=gpu|cpu] [WEBCONSOLE=false|true]"
+	@echo "                     [DEVICE=gpu|cpu] [WEBCONSOLE=false|true] [FORCE=false|true]"
 	@echo "  make config-validate TESTBED=... [CONFIG_DIR=...]  Diagnose cross-config inconsistencies"
 	@echo "  make dataset-generate | dataset-validate | dataset-show | dataset-load TESTBED=... [CONFIG_DIR=...]"
 	@echo ""
@@ -48,7 +49,7 @@ help-advanced:
 	@echo "  make fl-collection-start|status|stop TESTBED=... [CONFIG_DIR=...] RUN_ID=<uuid>"
 	@echo "  make fl-training-start|status TESTBED=... [CONFIG_DIR=...] RUN_ID=<uuid> [MODEL_FAMILY_ID=...]"
 	@echo "  make observe TESTBED=... [CONFIG_DIR=...]"
-	@echo "  make logs TESTBED=... [CONFIG_DIR=...] [SOURCE=vm|ml|all] [VM=core|path-a|path-b|all] [SERVICE=name|glob|all]"
+	@echo "  make logs TESTBED=... [CONFIG_DIR=...] [SOURCE=vm|ml|all] [VM=selected-machine|all] [SERVICE=name|glob|all]"
 	@echo "            [SINCE='10 minutes ago'] [TAIL=lines|all] [FOLLOW=true|false]"
 	@echo ""
 	@echo "Subscriber and retained experiment state"
@@ -77,7 +78,8 @@ experiment-start:
 
 experiment-status:
 	$(require_testbed)
-	@scripts/host/experiment-status.sh "$(TESTBED)" "$(CONFIG_DIR)"
+	@RUN_ID="$(RUN_ID)" MODEL_FAMILY_ID="$(MODEL_FAMILY_ID)" \
+		scripts/host/experiment-status.sh "$(TESTBED)" "$(CONFIG_DIR)"
 
 experiment-stop:
 	$(require_testbed)
@@ -89,9 +91,10 @@ config-create:
 	@case "$(FROM)" in /*) echo "FROM must be relative to the repository: $(FROM)" >&2; exit 2;; *.yaml) ;; *) echo "FROM must select a scenario.yaml file: $(FROM)" >&2; exit 2;; esac
 	@case "$(DEVICE)" in gpu|cpu) ;; *) echo "DEVICE must be gpu or cpu" >&2; exit 2;; esac
 	@case "$(WEBCONSOLE)" in false|true) ;; *) echo "WEBCONSOLE must be false or true" >&2; exit 2;; esac
+	@case "$(FORCE)" in false|true) ;; *) echo "FORCE must be false or true" >&2; exit 2;; esac
 	@python3 scripts/host/config-render.py --testbed "$(TESTBED)" --name "$(NAME)" \
 		--scenario "$(FROM)" --output-root config/local --ml-device "$(DEVICE)" \
-		--webconsole "$(WEBCONSOLE)"
+		--webconsole "$(WEBCONSOLE)" $(if $(filter true,$(FORCE)),--force)
 
 config-validate:
 	$(require_testbed)
@@ -116,8 +119,8 @@ reset:
 
 test:
 	# Repository checks use the retained production definition only as a fixture;
-	# this fallback is not reachable from a deployment lifecycle target.
-	@tests/repository.sh "$(if $(strip $(TESTBED)),$(TESTBED),testbed.yaml)" "$(CONFIG_DIR)"
+	# this explicit fixture is not reachable from a deployment lifecycle target.
+	@tests/repository.sh testbed.yaml
 
 test-containers:
 	@tests/ml-container-lifecycle.sh
@@ -156,10 +159,10 @@ vm-up:
 	@source scripts/host/lib.sh; require_testbed_selection "$(TESTBED)"; TESTBED="$(TESTBED)" provider_vagrant_up
 
 vm-status:
-	@source scripts/host/lib.sh; require_testbed_selection "$(TESTBED)"; TESTBED="$(TESTBED)" provider_vagrant status
+	@source scripts/host/lib.sh; require_testbed_selection "$(TESTBED)"; TESTBED="$(TESTBED)" provider_runtime_state_records
 
 vm-halt:
-	@source scripts/host/lib.sh; require_testbed_selection "$(TESTBED)"; TESTBED="$(TESTBED)" provider_vagrant halt
+	@source scripts/host/lib.sh; require_testbed_selection "$(TESTBED)"; TESTBED="$(TESTBED)" provider_vagrant_halt
 
 services-start:
 	$(require_testbed)

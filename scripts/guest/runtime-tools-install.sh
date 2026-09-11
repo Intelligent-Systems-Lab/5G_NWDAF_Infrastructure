@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-machine=${1:?usage: runtime-tools-install.sh core|path-a|path-b source-root}
-source_root=${2:?usage: runtime-tools-install.sh core|path-a|path-b source-root}
+machine=${1:?usage: runtime-tools-install.sh machine source-root}
+source_root=${2:?usage: runtime-tools-install.sh machine source-root}
 
-case "$machine" in core|path-a|path-b) ;; *) echo "invalid machine: $machine" >&2; exit 2;; esac
+[[ "$machine" =~ ^[a-z0-9][a-z0-9-]*$ ]] || { echo "invalid machine: $machine" >&2; exit 2; }
 test "$(id -u)" -eq 0 || { echo "runtime tool installation requires root" >&2; exit 1; }
 test -d "$source_root/scripts/guest" || { echo "invalid runtime tool source: $source_root" >&2; exit 1; }
 

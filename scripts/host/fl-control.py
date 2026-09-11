@@ -153,9 +153,9 @@ def load_contract(testbed_name: str, explicit_config: str = "") -> Contract:
                 "runtime.{} does not exactly match selected TESTBED".format(key)
             )
     kind = runtime.get("deploymentKind")
-    if kind not in ("static-flat", "static-hierarchical"):
+    if kind not in ("static-flat", "static-hierarchical", "protocol-hierarchical"):
         raise ControlError(
-            "FL control requires deploymentKind=static-flat or static-hierarchical"
+            "FL control requires a selected Flat or Hierarchical deployment"
         )
     if runtime.get("subscriptions") != "none":
         raise ControlError("static FL control requires runtime.subscriptions=none")
@@ -168,6 +168,54 @@ def load_contract(testbed_name: str, explicit_config: str = "") -> Contract:
     coordinator_service = runtime.get("coordinatorContainer")
     if not isinstance(coordinator_service, str) or coordinator_service not in services:
         raise ControlError("static coordinatorContainer is not in the Host inventory")
+
+    if kind == "protocol-hierarchical":
+        if runtime.get("dataOwners") != []:
+            raise ControlError("protocol Hierarchical runtime must not declare data owners")
+        roots = [item for item in runtime.get("nwdafs", []) if item.get("role") == "root"]
+        if len(roots) != 1 or roots[0].get("backends", {}).get("mtlf") != coordinator_service:
+            raise ControlError("protocol Hierarchical runtime must map one Root to the coordinator")
+        server = load_yaml(config_dir / (coordinator_service + ".yaml"))
+        orchestration = server.get("federated_learning", {}).get("orchestration", {})
+        trigger = server.get("federated_learning", {}).get("training_trigger", {})
+        if orchestration != {"mode": "hierarchical", "participant_source": "static"}:
+            raise ControlError("protocol Root must declare hierarchical static orchestration")
+        if trigger.get("private_api", {}).get("enabled") is not True:
+            raise ControlError("protocol Root private training trigger is disabled")
+        families = server.get("model_provision", {}).get("seed_models")
+        family_ids = tuple(
+            item.get("family_id") for item in families or [] if isinstance(item, dict)
+        )
+        if len(family_ids) != 1 or not family_ids[0]:
+            raise ControlError("protocol Root must declare exactly one model family")
+        server_settings = server.get("federated_learning", {}).get("server", {})
+        preparation_window = server_settings.get("preparation_data_window_seconds")
+        round_count = server_settings.get("round_count")
+        round_timeout = server_settings.get("round_timeout_seconds")
+        preparation_timeout = server_settings.get("preparation_timeout_seconds")
+        if any(
+            not isinstance(value, int) or isinstance(value, bool) or value <= 0
+            for value in (preparation_window, round_count, round_timeout, preparation_timeout)
+        ):
+            raise ControlError("protocol Root training limits are invalid")
+        _scenario_path, scenario = resolve_config_scenario(config_dir)
+        if scenario.get("training", {}).get("acceptedRounds") != round_count:
+            raise ControlError("protocol Root round count differs from the scenario")
+        return Contract(
+            config_dir=config_dir,
+            config_set=config_dir.name,
+            config_hash=sha256_tree(config_dir),
+            deployment_kind=kind,
+            training_mode="hierarchical",
+            services=services,
+            coordinator_service=coordinator_service,
+            coordinator_endpoint=_public_endpoint(server, coordinator_service),
+            owners=(),
+            model_families=family_ids,
+            minimum_samples=0,
+            closure_budget_seconds=preparation_timeout + round_count * round_timeout + 300,
+            preparation_window_seconds=preparation_window,
+        )
 
     nwdafs = runtime.get("nwdafs")
     data_owners = runtime.get("dataOwners")
@@ -616,7 +664,8 @@ class Controller:
 
     def training_start(self, run_id: str, family: str | None) -> dict:
         self.require_ready(coordinator=True)
-        self.retained_collections(run_id)
+        if self.contract.owners:
+            self.retained_collections(run_id)
         family_id = self.model_family(family)
         url = _request_path(self.contract.coordinator_endpoint, TRAINING_PATH)
         payload = {"requestId": run_id, "modelFamilyId": family_id}
@@ -754,6 +803,8 @@ def main() -> int:
     try:
         run_id = canonical_run_id(args.run_id)
         contract = load_contract(args.testbed, args.config_dir)
+        if contract.deployment_kind == "protocol-hierarchical" and args.action.startswith("collection-"):
+            raise ControlError("protocol image training does not use collection resources")
         verify_runtime_identity(contract)
         controller = Controller(contract, HttpClient(timeout=min(30, contract.closure_budget_seconds)))
         if args.action == "collection-start":

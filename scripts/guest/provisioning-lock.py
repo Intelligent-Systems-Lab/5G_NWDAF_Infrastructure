@@ -15,6 +15,7 @@ import yaml
 
 
 HEX64 = re.compile(r"^[0-9a-f]{64}$")
+GIT_REVISION = re.compile(r"^[0-9a-f]{40}$")
 FINGERPRINT = re.compile(r"^[0-9A-F]{40}$")
 GO_VERSION = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+$")
 VERSION = re.compile(r"^[0-9]+(?:\.[0-9]+)+(?:[-+~][A-Za-z0-9.+:~-]+)?$")
@@ -287,7 +288,48 @@ def actual_go_version():
     return fields[2][2:], fields[3]
 
 
-def write_manifest(lock_path, machine, include_mongodb, output):
+def load_component_revisions(lock_path, records):
+    with Path(lock_path).open(encoding="utf-8") as stream:
+        lock = yaml.safe_load(stream)
+    if not isinstance(lock, dict) or lock.get("schemaVersion") != 1:
+        raise ValueError("unsupported component lock schema")
+    expected = {}
+    for item in lock.get("components", []):
+        if not isinstance(item, dict):
+            raise ValueError("component lock entries must be mappings")
+        path = require_string(item.get("path"), "component path")
+        revision = require_string(item.get("commit"), "component commit")
+        if not GIT_REVISION.fullmatch(revision):
+            raise ValueError("component commit must be a full lowercase Git revision")
+        if path in expected:
+            raise ValueError("duplicate component lock path: {}".format(path))
+        expected[path] = revision
+
+    selected = {}
+    for record in records:
+        path, separator, revision = record.partition("=")
+        if not separator or path not in expected:
+            raise ValueError("unknown component revision record: {}".format(record))
+        if revision != expected[path]:
+            raise ValueError(
+                "component revision differs for {}: expected {}, got {}".format(
+                    path, expected[path], revision
+                )
+            )
+        if path in selected:
+            raise ValueError("duplicate component revision record: {}".format(path))
+        selected[path] = revision
+    if not selected:
+        raise ValueError("component revision inventory must not be empty")
+    return [
+        {"path": path, "revision": selected[path]}
+        for path in sorted(selected)
+    ]
+
+
+def write_manifest(
+    lock_path, machine, include_mongodb, components_lock, component_records, output
+):
     lock = load_lock(lock_path)
     version, target = actual_go_version()
     expected_target = "linux/amd64"
@@ -321,6 +363,7 @@ def write_manifest(lock_path, machine, include_mongodb, output):
             "archive": lock["go"]["archive"],
             "drift": False,
         },
+        "components": load_component_revisions(components_lock, component_records),
     }
     if include_mongodb:
         resolved = resolve_mongodb(lock)
@@ -351,6 +394,8 @@ def main():
     manifest.add_argument("lock")
     manifest.add_argument("--machine", required=True)
     manifest.add_argument("--include-mongodb", action="store_true")
+    manifest.add_argument("--components-lock", required=True)
+    manifest.add_argument("--component", action="append", required=True)
     manifest.add_argument("--output", required=True)
     args = parser.parse_args()
     try:
@@ -363,7 +408,12 @@ def main():
             print(json.dumps(resolve_mongodb(lock), sort_keys=True))
         elif args.command == "write-manifest":
             write_manifest(
-                args.lock, args.machine, args.include_mongodb, args.output
+                args.lock,
+                args.machine,
+                args.include_mongodb,
+                args.components_lock,
+                args.component,
+                args.output,
             )
     except (KeyError, OSError, subprocess.SubprocessError, ValueError) as exc:
         print("ERROR: {}".format(exc), file=sys.stderr)

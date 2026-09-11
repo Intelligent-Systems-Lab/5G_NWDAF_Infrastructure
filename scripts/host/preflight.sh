@@ -4,6 +4,7 @@ source "$(dirname "$0")/lib.sh"
 
 testbed=${1:?usage: preflight.sh testbed [config-dir]}
 explicit_config=${2:-}
+select_testbed_machines "$testbed"
 failures=0
 warnings=0
 virtualbox_storage=
@@ -91,7 +92,7 @@ else
   docker_free_gib=0
 fi
 
-read -r required_mib disk_gib host_reserve_mib swap_policy minimum_swap_mib minimum_free_storage_gib ml_bind_address guest_cpus container_cpus container_memory_mib build_overhead_mib gpu_participants gpu_memory_mib < <(PYTHONPATH="$HOST_ROOT/scripts/host" python3 - "$testbed" "$config_dir" <<'PY'
+read -r required_mib disk_gib host_reserve_mib swap_policy minimum_swap_mib minimum_free_storage_gib ml_bind_address guest_cpus container_cpus container_memory_mib build_overhead_mib gpu_participants gpu_memory_mib published_ports < <(PYTHONPATH="$HOST_ROOT/scripts/host" python3 - "$testbed" "$config_dir" <<'PY'
 import sys
 from configlib import load_runtime_manifest, load_yaml, resolve_ml_bind_address, resolve_path
 d = load_yaml(resolve_path(sys.argv[1]))
@@ -111,6 +112,7 @@ print(
     capacity["containerBuildOverheadMemoryMiB"],
     capacity["gpuParticipants"],
     capacity["minimumGpuMemoryMiB"],
+    ",".join(str(port) for port in capacity["publishedPorts"]),
 )
 PY
 )
@@ -157,18 +159,7 @@ else
   warn "Host ML bind address $ml_bind_address is not present yet; the provider must create/expose it before ml-start"
 fi
 
-mapfile -t ml_ports < <(PYTHONPATH="$HOST_ROOT/scripts/host" python3 - "$config_dir" <<'PY'
-import sys
-from configlib import load_runtime_manifest, load_yaml, resolve_path
-directory = resolve_path(sys.argv[1])
-manifest = load_runtime_manifest(directory)
-for port in sorted({
-    load_yaml(directory / (service + ".yaml"))["server"]["port"]
-    for service in manifest["runtime"]["hostContainers"]
-}):
-    print(port)
-PY
-)
+IFS=, read -r -a ml_ports <<<"$published_ports"
 ml_bind_regex=${ml_bind_address//./\\.}
 for port in "${ml_ports[@]}"; do
   if ss -H -ltn | awk '{print $4}' | grep -Eq "^(0\\.0\\.0\\.0|\\*|\\[::\\]|${ml_bind_regex}):${port}$"; then
@@ -178,26 +169,40 @@ for port in "${ml_ports[@]}"; do
   fi
 done
 
-if git -C "$HOST_ROOT" submodule status --recursive | grep -Eq '^[-+U]'; then
-  fail "submodules are missing, conflicted, or not at parent gitlinks"
-else
-  ok "submodule gitlinks initialized"
-fi
-if git -C "$HOST_ROOT" submodule foreach --quiet 'test -z "$(git status --porcelain)"' >/dev/null; then
-  ok "submodule worktrees clean"
-else
-  fail "one or more submodule worktrees are dirty"
-fi
-
-PYTHONPATH="$HOST_ROOT/scripts/host" python3 - "$HOST_ROOT" "$HOST_ROOT/components.lock.yaml" <<'PY' || failures=$((failures + 1))
+PYTHONPATH="$HOST_ROOT/scripts/host" python3 - \
+  "$HOST_ROOT" "$testbed" "$config_dir" "$HOST_ROOT/components.lock.yaml" <<'PY' \
+  || failures=$((failures + 1))
 import subprocess, sys, yaml
-root, lock_path = sys.argv[1:]
+from configlib import load_runtime_manifest, load_yaml, resolve_path, selected_component_paths
+
+root, testbed_path, config_path, lock_path = sys.argv[1:]
 lock = yaml.safe_load(open(lock_path))
-for item in lock["components"]:
-    actual = subprocess.check_output(["git", "-C", root + "/" + item["path"], "rev-parse", "HEAD"], text=True).strip()
-    if actual != item["commit"]:
-        raise SystemExit("LOCK MISMATCH {} expected={} actual={}".format(item["path"], item["commit"], actual))
-print("OK   {} component locks match".format(len(lock["components"])))
+locked = {item["path"]: item["commit"] for item in lock["components"]}
+testbed = load_yaml(resolve_path(testbed_path))
+manifest = load_runtime_manifest(resolve_path(config_path))
+selected = selected_component_paths(
+    testbed, manifest["runtime"], manifest.get("optionalServices")
+)
+for path in selected:
+    expected = locked.get(path)
+    if expected is None:
+        raise SystemExit("LOCK MISSING {}".format(path))
+    repository = root + "/" + path
+    actual = subprocess.check_output(
+        ["git", "-C", repository, "rev-parse", "HEAD"], text=True
+    ).strip()
+    if actual != expected:
+        raise SystemExit(
+            "LOCK MISMATCH {} expected={} actual={}".format(path, expected, actual)
+        )
+    dirty = subprocess.check_output(
+        ["git", "-C", repository, "status", "--porcelain"], text=True
+    ).strip()
+    if dirty:
+        raise SystemExit("SELECTED COMPONENT DIRTY {}".format(path))
+print("OK   selected component revisions match and worktrees are clean: {}".format(
+    ",".join(selected)
+))
 PY
 
 if python3 "$HOST_ROOT/scripts/host/config-check.py" --testbed "$testbed" --config-dir "$config_dir"; then
@@ -207,9 +212,9 @@ else
 fi
 
 if python3 "$HOST_ROOT/scripts/host/dataset.py" --testbed "$testbed" --config-dir "$config_dir" check; then
-  ok "generated PseudoDriver dataset"
+  ok "generated dataset"
 else
-  fail "generated PseudoDriver dataset is missing or invalid; run make dataset-generate"
+  fail "generated dataset is missing or invalid; run make dataset-generate"
 fi
 
 echo "SUMMARY failures=$failures warnings=$warnings"

@@ -4,6 +4,7 @@ source "$(dirname "$0")/lib.sh"
 
 testbed=${1:?usage: experiment-start.sh testbed [config-dir]}
 explicit_config=${2:-}
+select_testbed_machines "$testbed"
 config_dir=$(effective_config_dir "$testbed" "$explicit_config")
 webconsole_enabled=$(config_webconsole_enabled "$config_dir")
 subscriptions_mode=$(config_subscriptions_mode "$config_dir")
@@ -16,21 +17,9 @@ webconsole_started=false
 ml_started=false
 subscriptions_attempted=false
 
-vm_state() {
-  local machine=$1
-  (cd "$HOST_ROOT" && provider_vagrant status "$machine" --machine-readable 2>/dev/null) |
-    awk -F, '$3 == "state" {state=$4} END {print state}'
-}
-
 assert_clean_start() {
-  local machine state active running consumer
-  for machine in "${MACHINES[@]}"; do
-    state=$(vm_state "$machine")
-    if [ "$state" != running ]; then
-      echo "$machine must be running before experiment-start (state=${state:-unknown})" >&2
-      return 1
-    fi
-  done
+  local machine active running consumer
+  assert_selected_provider_running
   running=$(docker ps -q --filter "label=com.docker.compose.project=$(ml_project_name)")
   if [ -n "$running" ]; then
     echo "ML containers are already running; use the independent lifecycle targets instead" >&2
@@ -43,10 +32,12 @@ assert_clean_start() {
       return 1
     fi
   done
-  consumer=$(vssh core "systemctl is-active 5g-nwdaf-consumer.service 2>/dev/null || true" 2>/dev/null | tr -d '\r' | tail -n 1)
-  if [ "$consumer" = active ]; then
-    echo "consumer is already active; use subscriptions-status" >&2
-    return 1
+  if [ "$subscriptions_mode" = consumer ]; then
+    consumer=$(vssh core "systemctl is-active 5g-nwdaf-consumer.service 2>/dev/null || true" 2>/dev/null | tr -d '\r' | tail -n 1)
+    if [ "$consumer" = active ]; then
+      echo "consumer is already active; use subscriptions-status" >&2
+      return 1
+    fi
   fi
 }
 
@@ -84,6 +75,9 @@ if [ "$webconsole_enabled" = true ]; then
 fi
 "$HOST_ROOT/scripts/host/ml-start.sh" "$testbed" "$explicit_config"
 ml_started=true
+if [ "$(config_deployment_kind "$config_dir")" = protocol-hierarchical ]; then
+  "$HOST_ROOT/scripts/host/backend-check.sh" "$testbed" "$config_dir"
+fi
 if [ "$subscriptions_mode" = consumer ]; then
   subscriptions_attempted=true
   "$HOST_ROOT/scripts/host/subscriptions-start.sh"

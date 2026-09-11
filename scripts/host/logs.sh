@@ -27,7 +27,14 @@ require_testbed_selection "$testbed"
 config_dir=$(effective_config_dir "$testbed" "$explicit_config")
 case "$service" in ''|all) service='*';; esac
 case "$source_type" in vm|ml|all) ;; *) echo "invalid source: $source_type" >&2; exit 2;; esac
-case "$vm" in all) selected=(core path-a path-b);; core|path-a|path-b) selected=("$vm");; *) echo "invalid VM: $vm" >&2; exit 2;; esac
+if [ "$vm" = all ]; then
+  selected=("${MACHINES[@]}")
+elif [[ " ${MACHINES[*]} " == *" $vm "* ]]; then
+  selected=("$vm")
+else
+  echo "invalid VM: $vm" >&2
+  exit 2
+fi
 [[ "$service" =~ ^[A-Za-z0-9*?-]+$ ]] || { echo "invalid service filter" >&2; exit 2; }
 [[ "$tail_lines" = all || "$tail_lines" =~ ^[0-9]+$ ]] || { echo "invalid tail value" >&2; exit 2; }
 if ! absolute_since=$(normalize_log_since "$since" 2>/dev/null); then

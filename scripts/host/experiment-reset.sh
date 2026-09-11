@@ -5,9 +5,12 @@ source "$(dirname "$0")/lib.sh"
 action=${1:-plan}
 testbed=${2:?usage: experiment-reset.sh plan|apply|verify testbed [config-dir]}
 explicit_config=${3:-}
+select_testbed_machines "$testbed"
 case "$action" in plan|apply|verify) ;; *) echo "usage: experiment-reset.sh plan|apply|verify testbed [config-dir]" >&2; exit 2;; esac
 
 config_dir=$(effective_config_dir "$testbed" "$explicit_config")
+database_machine=$(config_guest_service_machine "$config_dir" mongodb)
+vm_records=$(provider_runtime_state_records)
 python3 "$HOST_ROOT/scripts/host/config-check.py" --testbed "$testbed" --config-dir "$config_dir"
 reset_identity=$(
   PYTHONPATH="$HOST_ROOT/scripts/host" python3 - "$testbed" "$config_dir" <<'PY'
@@ -23,7 +26,8 @@ print(
     "mongodb://{}:{}".format(endpoint["address"], endpoint["port"]),
     scope["nrf"]["database"],
     ",".join(scope["nrf"]["collections"]),
-    scope["nrf"]["nfType"],
+    scope["nrf"].get("nfType", "-"),
+    ",".join(scope["nrf"].get("nfInstanceIds", [])) or "-",
     scope["adrf"]["database"],
     ",".join(scope["adrf"]["collections"]),
     scope["adrf"]["modelStorage"],
@@ -33,7 +37,7 @@ print(
 )
 PY
 )
-read -r scenario mongo_uri nrf_database nrf_collections nrf_nf_type adrf_database adrf_collections storage_dir adrf_instance_id seed_coordinator seed_artifact_key <<<"$reset_identity"
+read -r scenario mongo_uri nrf_database nrf_collections nrf_nf_type nrf_instance_ids adrf_database adrf_collections storage_dir adrf_instance_id seed_coordinator seed_artifact_key <<<"$reset_identity"
 project=$(ml_project_name)
 service_lines=$(config_host_containers "$config_dir")
 volume_lines=$(config_ml_volume_records "$config_dir")
@@ -45,9 +49,15 @@ mapfile -t services <<<"$service_lines"
 mapfile -t volume_specs <<<"$volume_lines"
 
 vm_state() {
-  local machine=$1
-  (cd "$HOST_ROOT" && provider_vagrant status "$machine" --machine-readable 2>/dev/null) |
-    awk -F, '$3 == "state" {state=$4} END {print state}'
+  local wanted=$1 machine state
+  while IFS='|' read -r machine state; do
+    if [ "$machine" = "$wanted" ]; then
+      printf '%s\n' "$state"
+      return 0
+    fi
+  done <<<"$vm_records"
+  echo "provider state omitted machine: $wanted" >&2
+  return 1
 }
 
 assert_volume_identity() {
@@ -117,9 +127,9 @@ assert_runtime_stopped() {
 
 guest_reset() {
   local guest_action=$1 remote_shell=/tmp/5g-nwdaf-experiment-reset.sh remote_js=/tmp/5g-nwdaf-experiment-reset.js
-  (cd "$HOST_ROOT" && provider_vagrant upload "$HOST_ROOT/scripts/guest/experiment-reset.sh" "$remote_shell" core)
-  (cd "$HOST_ROOT" && provider_vagrant upload "$HOST_ROOT/scripts/guest/experiment-reset.js" "$remote_js" core)
-  vssh core "sudo bash '$remote_shell' '$guest_action' '$mongo_uri' '$nrf_database' '$nrf_collections' '$nrf_nf_type' '$adrf_database' '$adrf_collections' '$storage_dir' '$adrf_instance_id' '$remote_js'; status=\$?; rm -f '$remote_shell' '$remote_js'; exit \$status"
+  (cd "$HOST_ROOT" && provider_vagrant upload "$HOST_ROOT/scripts/guest/experiment-reset.sh" "$remote_shell" "$database_machine")
+  (cd "$HOST_ROOT" && provider_vagrant upload "$HOST_ROOT/scripts/guest/experiment-reset.js" "$remote_js" "$database_machine")
+  vssh "$database_machine" "sudo bash '$remote_shell' '$guest_action' '$mongo_uri' '$nrf_database' '$nrf_collections' '$nrf_nf_type' '$nrf_instance_ids' '$adrf_database' '$adrf_collections' '$storage_dir' '$adrf_instance_id' '$remote_js'; status=\$?; rm -f '$remote_shell' '$remote_js'; exit \$status"
 }
 
 echo "EXPERIMENT RESET action=$action scenario=$scenario config=$config_dir project=$project"
@@ -131,43 +141,38 @@ for service in "${services[@]}"; do
 done
 container_inventory=$(docker ps -a --filter "label=com.docker.compose.project=$project" \
   --format '{{.Label "com.docker.compose.service"}}|{{.Status}}')
-if [ -n "$container_inventory" ]; then
-  while IFS='|' read -r actual_service actual_status; do
-    [ -n "$actual_service" ] || continue
-    if ! printf '%s\n' "${services[@]}" | grep -Fxq "$actual_service"; then
-      echo "CONTAINER_UNEXPECTED service=$actual_service status=${actual_status:-unknown} retained=yes selected=no"
-    fi
-  done <<<"$container_inventory"
-fi
 for spec in "${volume_specs[@]}"; do
   IFS='|' read -r logical image <<<"$spec"
   volume_state "$logical" "$image"
 done
 volume_inventory=$(docker volume ls --filter "label=com.docker.compose.project=$project" \
   --format '{{.Name}}|{{.Label "com.docker.compose.volume"}}')
-if [ -n "$volume_inventory" ]; then
-  while IFS='|' read -r physical logical; do
-    [ -n "$physical" ] || continue
-    if ! printf '%s\n' "${volume_specs[@]%%|*}" | grep -Fxq "$logical"; then
-      echo "VOLUME_UNEXPECTED logical=${logical:-unknown} physical=$physical retained=yes selected=no"
-    fi
-  done <<<"$volume_inventory"
+unexpected_runtime=false
+if ! inventory_findings=$(check_reset_runtime_inventory \
+    "$service_lines" "$volume_lines" "$container_inventory" "$volume_inventory" "$project"); then
+  unexpected_runtime=true
 fi
+[ -z "$inventory_findings" ] || printf '%s\n' "$inventory_findings"
 
-core_state=$(vm_state core)
-echo "GUEST machine=core state=${core_state:-unknown}"
+core_state=$(vm_state "$database_machine")
+echo "GUEST machine=$database_machine state=${core_state:-unknown}"
 if [ "$action" = plan ]; then
   echo "GUEST_SCOPE adrf_database=$adrf_database collections=$adrf_collections"
-  echo "GUEST_SCOPE nrf_database=$nrf_database collections=$nrf_collections filter=nfType:$nrf_nf_type"
+  echo "GUEST_SCOPE nrf_database=$nrf_database collections=$nrf_collections nf_type=$nrf_nf_type instance_ids=$nrf_instance_ids"
   echo "GUEST_SCOPE model_storage=$storage_dir"
   if [ "$core_state" = running ]; then
     guest_reset plan
   else
-    echo "GUEST_STATE unavailable=core-not-running"
+    echo "GUEST_STATE unavailable=$database_machine-not-running"
   fi
   printf 'RESET_COMMAND make reset CONFIG_DIR=%q RESET_CONFIRM=%q\n' "$config_dir" "$scenario"
   echo "PLAN_ONLY no experiment state was deleted"
   exit 0
+fi
+
+if $unexpected_runtime; then
+  echo "refusing reset while unexpected project containers or volumes exist" >&2
+  exit 1
 fi
 
 assert_runtime_stopped

@@ -1,16 +1,17 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-action=${1:?usage: experiment-reset.sh plan|apply|verify mongo-uri nrf-db nrf-collections nrf-type adrf-db adrf-collections storage-dir instance-id js-file}
+action=${1:?usage: experiment-reset.sh plan|apply|verify mongo-uri nrf-db nrf-collections nrf-type nrf-instance-ids adrf-db adrf-collections storage-dir instance-id js-file}
 mongo_uri=${2:?missing MongoDB URI}
 nrf_database=${3:?missing NRF database}
 nrf_collections=${4:?missing NRF collections}
 nrf_nf_type=${5:?missing NRF NF type}
-adrf_database=${6:?missing ADRF database}
-adrf_collections=${7:?missing ADRF collections}
-storage_dir=${8:?missing ADRF model storage directory}
-adrf_instance_id=${9:?missing ADRF NF instance ID}
-js_file=${10:?missing reset JavaScript}
+nrf_instance_ids=${6:?missing NRF NF instance IDs}
+adrf_database=${7:?missing ADRF database}
+adrf_collections=${8:?missing ADRF collections}
+storage_dir=${9:?missing ADRF model storage directory}
+adrf_instance_id=${10:?missing ADRF NF instance ID}
+js_file=${11:?missing reset JavaScript}
 
 case "$action" in plan|apply|verify) ;; *) echo "invalid reset action: $action" >&2; exit 2;; esac
 [[ "$nrf_database" =~ ^[A-Za-z0-9_-]+$ ]] || { echo "invalid NRF database name" >&2; exit 2; }
@@ -72,6 +73,7 @@ if ! mongosh --quiet "$mongo_uri/$nrf_database" --eval 'quit(db.runCommand({ping
 fi
 
 ACTION="$action" NRF_COLLECTIONS="$nrf_collections" NRF_NF_TYPE="$nrf_nf_type" \
+  NRF_INSTANCE_IDS="$nrf_instance_ids" \
   ADRF_DATABASE="$adrf_database" ADRF_COLLECTIONS="$adrf_collections" \
   ADRF_INSTANCE_ID="$adrf_instance_id" \
   mongosh --quiet "$mongo_uri/$nrf_database" --file "$js_file"

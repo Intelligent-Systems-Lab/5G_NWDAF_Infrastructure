@@ -21,7 +21,7 @@ or execution guarantee. Passing an old test does not change that status.
 
 | Retained group | Included assets and purpose |
 | --- | --- |
-| Complete deployment definitions | `testbed.yaml`, `testbed.static-flat.yaml`, `testbed.static-hierarchical.yaml`, and the historical generated example in `config/default/` |
+| Complete deployment definitions | `testbed.yaml`, `testbed.static-flat.yaml`, `testbed.static-hierarchical.yaml`, and the historical generated example in `config/default/`. The production definition remains a repository fixture. Both static definitions can still be parsed into bounded machine/runtime inventories, but current PyMTLF native validation rejects their obsolete private seed-import contract; lifecycle therefore fails closed. None has a real-run guarantee. |
 | Experiment inputs | UE/CAT scenarios and Path A/B traffic profiles under `experiments/examples/` |
 | Dataset tooling | Host/Guest dataset scripts and `tools/datasetgen/` for the former PseudoDriver data path |
 | Static FL control | `fl-control.py` and the `fl-collection-*` / `fl-training-*` operator commands |
@@ -62,6 +62,62 @@ For a first complete reading, use this order:
 [Components](docs/components.md) explains pinned source revisions and Guest
 build ownership. It is useful when updating or diagnosing a component, but is
 not required before the first run.
+
+## Maintained protocol-driven workflow
+
+The canonical definition is `testbed.protocol-hierarchical.yaml`. It declares
+four VMs (`core` plus three Path VMs), eleven Guest NWDAFs, eleven one-to-one
+Host PyMTLF containers, and only MongoDB, NRF, and ADRF as supporting Guest
+services. The Make defaults select this definition and its generated
+`config/local/protocol-hierarchical` directory.
+
+Create either dataset-specific config, acquire and partition the dataset, and
+then create the VMs:
+
+```sh
+make config-create FROM=experiments/protocol-hierarchical/mnist/scenario.yaml
+make dataset-generate
+make vm-up
+```
+
+Run `make experiment-validate` explicitly before `vm-up` to review the complete
+input, capacity, selected component-revision, dataset, Compose, and provider
+diagnostics. `vm-up` itself starts with the exact provider process/metadata/state
+preflight, and all real Vagrant and VirtualBox operations still require the
+approved Host execution context. Guest provisioning builds only the services
+selected for each machine and records their Git revisions in the Guest
+provisioning manifest; service startup rejects a revision mismatch.
+
+Start the minimal runtime and submit the two-round normal-topology request:
+
+```sh
+make experiment-start
+make fl-training-start RUN_ID=<uuid-v4>
+make fl-training-status RUN_ID=<same-uuid-v4>
+make experiment-status RUN_ID=<same-uuid-v4>
+```
+
+The MNIST and CIFAR-10 scenarios each create six balanced 100-sample Leaf
+shards, a 200-sample Root validation set, and a separate 200-sample held-out
+set. Raw archives are cached under ignored `.cache/image-datasets/`; generated
+partitions are kept under ignored `.generated/image-datasets/`. Dataset
+validation uses the current PyMTLF native loader.
+
+To switch datasets, stop and reset the current run first, then explicitly
+replace the canonical generated config and generate the other partition:
+
+```sh
+make experiment-stop
+make reset-show
+make reset RESET_CONFIRM=<current-scenario-name>
+make config-create FROM=experiments/protocol-hierarchical/cifar10/scenario.yaml FORCE=true
+make dataset-generate
+```
+
+The config identity guard prevents the new generated config from silently
+operating an old active runtime. Canonical normal-topology acceptance requires
+at least two accepted hierarchical rounds for each dataset; Branch failure and
+replacement are intentionally outside this workflow.
 
 ## Legacy production topology reference
 

@@ -2,11 +2,14 @@
 set -euo pipefail
 
 action=${1:-setup}
+inventory=${2:?usage: core.sh setup|build comma-separated-services comma-separated-component-revisions}
+component_revisions=${3:?usage: core.sh setup|build comma-separated-services comma-separated-component-revisions}
 root=/opt/5g-nwdaf-infrastructure
 source_root=$root/source
 work_root=$root/work
 bin_root=/usr/local/libexec/5g-nwdaf-infrastructure/bin
 provision_lock=$source_root/provisioning.lock.yaml
+components_lock=$source_root/components.lock.yaml
 provision_tool=$source_root/scripts/guest/provisioning-lock.py
 test "$(id -u)" -eq 0 || { echo "core setup requires root" >&2; exit 1; }
 
@@ -73,9 +76,6 @@ setup_mongodb() {
     plan=$(python3 "$provision_tool" resolve-mongodb "$provision_lock")
   fi
   apt-mark hold "${packages[@]}" >/dev/null
-  python3 "$provision_tool" write-manifest "$provision_lock" \
-    --machine core --include-mongodb \
-    --output /etc/5g-nwdaf-infrastructure/provisioning-manifest.yaml
   systemctl disable --now mongod >/dev/null 2>&1 || true
   install -d -o 5g-nwdaf -g 5g-nwdaf /var/lib/5g-nwdaf-infrastructure/mongodb
 }
@@ -86,15 +86,59 @@ setup_runtime_storage() {
     /var/lib/5g-nwdaf-infrastructure/adrf/models
 }
 
+IFS=, read -r -a selected_services <<<"$inventory"
+[ "${#selected_services[@]}" -gt 0 ] || { echo "core service inventory is empty" >&2; exit 2; }
+
+has_service() {
+  local wanted=$1 service
+  for service in "${selected_services[@]}"; do
+    [ "$service" = "$wanted" ] && return 0
+  done
+  return 1
+}
+
+build_selected() {
+  local service mapping source name
+  declare -A built=()
+  for service in "${selected_services[@]}"; do
+    case "$service" in
+      mongodb) continue ;;
+      nrf|nssf|udr|udm|ausf|pcf|amf|smf|adrf) mapping="NFs/$service:$service" ;;
+      nwdaf-*) mapping="NFs/nwdaf:nwdaf" ;;
+      *) echo "unsupported core service: $service" >&2; exit 2 ;;
+    esac
+    source=${mapping%%:*}
+    name=${mapping##*:}
+    [ -z "${built[$name]+set}" ] || continue
+    stage "$source" "$name"
+    build_go "$name"
+    built[$name]=true
+  done
+}
+
+write_provisioning_manifest() {
+  local -a component_args=()
+  local record
+  IFS=, read -r -a revision_records <<<"$component_revisions"
+  for record in "${revision_records[@]}"; do
+    component_args+=(--component "$record")
+  done
+  if has_service mongodb; then
+    component_args+=(--include-mongodb)
+  fi
+  python3 "$provision_tool" write-manifest "$provision_lock" \
+    --machine core --components-lock "$components_lock" \
+    "${component_args[@]}" \
+    --output /etc/5g-nwdaf-infrastructure/provisioning-manifest.yaml
+}
+
 case "$action" in
-  setup) setup_mongodb; setup_runtime_storage; "$0" build ;;
-  build)
-    for mapping in \
-      NFs/nrf:nrf NFs/nssf:nssf NFs/udr:udr NFs/udm:udm NFs/ausf:ausf \
-      NFs/pcf:pcf NFs/amf:amf NFs/smf:smf NFs/adrf:adrf NFs/nwdaf:nwdaf; do
-      stage "${mapping%%:*}" "${mapping##*:}"
-      build_go "${mapping##*:}"
-    done
+  setup)
+    has_service mongodb && setup_mongodb
+    has_service adrf && setup_runtime_storage
+    build_selected
+    write_provisioning_manifest
     ;;
-  *) echo "usage: core.sh setup|build" >&2; exit 2;;
+  build) build_selected; write_provisioning_manifest ;;
+  *) echo "usage: core.sh setup|build comma-separated-services comma-separated-component-revisions" >&2; exit 2;;
 esac

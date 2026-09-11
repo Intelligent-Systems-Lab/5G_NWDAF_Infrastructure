@@ -1,0 +1,21 @@
+schemaVersion: 2
+name: protocol-hierarchical-cifar10
+kind: bounded-smoke
+workload:
+  profile: image-classification
+  dataset: cifar10
+  event: X_IMAGE_CLASSIFICATION
+  modelInteroperability: pymtlf-image-classification-cifar10
+  modelFamilyId: image-classification-cifar10
+  seedModelId: 1002
+  seedArtifactKey: 066e77fe72d3bef3f17a54368843616545809b587bca9f0561a3ca4d70388b51
+partition:
+  seed: 42
+  samplesPerLeaf: 100
+  validationSamples: 200
+  heldOutSamples: 200
+training:
+  acceptedRounds: 2
+  batchSize: 16
+  learningRate: 0.001
+  device: cpu

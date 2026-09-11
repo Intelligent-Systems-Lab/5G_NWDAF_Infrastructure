@@ -8,6 +8,22 @@ PATH_A_UNITS=(upf-a nwdaf-a gnb-a ue1 ue2 ue3)
 PATH_B_UNITS=(upf-b nwdaf-b gnb-b ue4 ue5 ue6)
 ML_SERVICES=(pyanlf-a pyanlf-b pymtlf-a pymtlf-b pymtlf-c)
 
+select_testbed_machines() {
+  local testbed=$1 machine_lines
+  machine_lines=$(PYTHONPATH="$HOST_ROOT/scripts/host" python3 - "$testbed" <<'PY'
+import sys
+from configlib import load_yaml, resolve_path, selected_machine_names
+print(*selected_machine_names(load_yaml(resolve_path(sys.argv[1]))), sep="\n")
+PY
+  ) || return
+  [ -n "$machine_lines" ] || {
+    echo "selected TESTBED machine inventory is empty" >&2
+    return 1
+  }
+  mapfile -t MACHINES <<<"$machine_lines"
+  export TESTBED="$testbed"
+}
+
 provider_host_context_available() {
   local device=${1:-/dev/vboxdrv}
   # Require the host VirtualBox device namespace before a provider client can touch shared host IPC state.
@@ -20,6 +36,7 @@ require_testbed_selection() {
     echo "TESTBED must select an explicit testbed definition" >&2
     return 2
   fi
+  select_testbed_machines "$testbed"
 }
 
 require_provider_host_context() {
@@ -228,7 +245,7 @@ provider_live_vm_state_records() {
   done
 }
 
-provider_vm_up_preflight() {
+provider_runtime_state_records() {
   local metadata_root=${1:-$HOST_ROOT/.vagrant/machines}
   local processes_before processes_after metadata states
   require_provider_host_context || return
@@ -241,7 +258,24 @@ provider_vm_up_preflight() {
     echo "provider process inventory changed during Vagrant state query; refusing vm-up" >&2
     return 1
   }
-  validate_provider_runtime_inventory "$processes_after" "$metadata" "$states"
+  validate_provider_runtime_inventory "$processes_after" "$metadata" "$states" || return
+  printf '%s\n' "$states"
+}
+
+provider_vm_up_preflight() {
+  provider_runtime_state_records "${1:-$HOST_ROOT/.vagrant/machines}" >/dev/null
+}
+
+assert_selected_provider_running() {
+  local records machine state failures=0
+  records=$(provider_runtime_state_records) || return
+  while IFS='|' read -r machine state; do
+    if [ "$state" != running ]; then
+      echo "$machine must be running (state=${state:-unknown})" >&2
+      failures=$((failures + 1))
+    fi
+  done <<<"$records"
+  [ "$failures" -eq 0 ]
 }
 
 provider_vagrant_up() {
@@ -258,50 +292,61 @@ provider_vagrant_up() {
   ) 9>"$lock_root/vagrant-up.lock"
 }
 
+provider_vagrant_halt() {
+  local lock_root=${XDG_RUNTIME_DIR:-/tmp}/5g-nwdaf-infrastructure-$UID
+  require_provider_host_context || return
+  mkdir -p "$lock_root" && chmod 700 "$lock_root" || {
+    echo "provider runtime preflight cannot secure lifecycle lock directory: $lock_root" >&2
+    return 1
+  }
+  (
+    flock 9 || return
+    provider_runtime_state_records >/dev/null || return
+    provider_vagrant halt "$@"
+  ) 9>"$lock_root/vagrant-halt.lock"
+}
+
 vm_log_sources() {
   local machine=$1 filter=$2 config_dir=${3:-} logical unit unit_lines
   local -a template_units=()
   local -a special_sources=()
-  case "$machine" in
+  if [ -n "$config_dir" ]; then
+    [[ " ${MACHINES[*]} " == *" $machine "* ]] || {
+      echo "unknown VM for log source resolution: $machine" >&2
+      return 2
+    }
+    unit_lines=$(config_guest_units "$config_dir" "$machine") || return
+    [ -n "$unit_lines" ] || {
+      echo "selected Guest inventory is empty for $machine" >&2
+      return 1
+    }
+    mapfile -t template_units <<<"$unit_lines"
+    special_sources=('network|5g-nwdaf-network.service')
+    if [ "$machine" = core ]; then
+      [ -f "$config_dir/webuicfg.yaml" ] && template_units+=(webconsole)
+      [ -f "$config_dir/consumer.yaml" ] && special_sources+=('consumer|5g-nwdaf-consumer.service')
+    fi
+  else case "$machine" in
     core)
-      if [ -n "$config_dir" ]; then
-        unit_lines=$(config_guest_units "$config_dir" core) || return
-        [ -n "$unit_lines" ] || { echo "selected Guest inventory is empty for core" >&2; return 1; }
-        mapfile -t template_units <<<"$unit_lines"
-        template_units+=(webconsole)
-      else
-        template_units=("${CORE_UNITS[@]}" webconsole)
-      fi
+      template_units=("${CORE_UNITS[@]}" webconsole)
       special_sources=(
         'consumer|5g-nwdaf-consumer.service'
         'network|5g-nwdaf-network.service'
       )
       ;;
     path-a)
-      if [ -n "$config_dir" ]; then
-        unit_lines=$(config_guest_units "$config_dir" path-a) || return
-        [ -n "$unit_lines" ] || { echo "selected Guest inventory is empty for path-a" >&2; return 1; }
-        mapfile -t template_units <<<"$unit_lines"
-      else
-        template_units=("${PATH_A_UNITS[@]}")
-      fi
+      template_units=("${PATH_A_UNITS[@]}")
       special_sources=('network|5g-nwdaf-network.service')
       ;;
     path-b)
-      if [ -n "$config_dir" ]; then
-        unit_lines=$(config_guest_units "$config_dir" path-b) || return
-        [ -n "$unit_lines" ] || { echo "selected Guest inventory is empty for path-b" >&2; return 1; }
-        mapfile -t template_units <<<"$unit_lines"
-      else
-        template_units=("${PATH_B_UNITS[@]}")
-      fi
+      template_units=("${PATH_B_UNITS[@]}")
       special_sources=('network|5g-nwdaf-network.service')
       ;;
     *)
       echo "unknown VM for log source resolution: $machine" >&2
       return 2
       ;;
-  esac
+  esac; fi
 
   for logical in "${template_units[@]}"; do
     if [[ "$logical" == $filter ]]; then
@@ -337,7 +382,7 @@ vm_state_records() {
     cat "$VM_STATE_RECORDS_FILE"
     return
   fi
-  provider_live_vm_state_records
+  provider_runtime_state_records
 }
 
 vm_state_for() {
@@ -518,6 +563,21 @@ config_guest_units() {
   config_guest_service_records "$config_dir" | awk -F'|' -v machine="$wanted_machine" '$1 == machine {print $2}'
 }
 
+config_guest_service_machine() {
+  local config_dir=$1 wanted_unit=$2
+  PYTHONPATH="$HOST_ROOT/scripts/host" python3 - "$config_dir" "$wanted_unit" <<'PY'
+import sys
+from configlib import runtime_guest_services, resolve_path
+matches = [
+    item["machine"] for item in runtime_guest_services(resolve_path(sys.argv[1]))
+    if item["unit"] == sys.argv[2]
+]
+if len(matches) != 1:
+    raise SystemExit("Guest service must have exactly one machine: " + sys.argv[2])
+print(matches[0])
+PY
+}
+
 config_host_containers() {
   local config_dir=$1
   PYTHONPATH="$HOST_ROOT/scripts/host" python3 - "$config_dir" <<'PY'
@@ -554,12 +614,66 @@ for item in runtime_ml_volumes(resolve_path(sys.argv[1])):
 PY
 }
 
+check_reset_runtime_inventory() {
+  local selected_services=$1 selected_volume_specs=$2 container_inventory=$3 volume_inventory=$4 project=${5:-}
+  local actual_service actual_status physical logical expected_physical failures=0
+  local -A seen_services=() seen_volumes=()
+  while IFS='|' read -r actual_service actual_status; do
+    [ -n "$actual_service$actual_status" ] || continue
+    if [ -z "$actual_service" ]; then
+      echo "CONTAINER_INVALID service=unknown status=${actual_status:-unknown} retained=yes selected=no"
+      failures=$((failures + 1))
+      continue
+    fi
+    if ! grep -Fxq "$actual_service" <<<"$selected_services"; then
+      echo "CONTAINER_UNEXPECTED service=$actual_service status=${actual_status:-unknown} retained=yes selected=no"
+      failures=$((failures + 1))
+    elif [ -n "${seen_services[$actual_service]:-}" ]; then
+      echo "CONTAINER_DUPLICATE service=$actual_service status=${actual_status:-unknown} retained=yes selected=yes"
+      failures=$((failures + 1))
+    fi
+    seen_services[$actual_service]=1
+  done <<<"$container_inventory"
+  while IFS='|' read -r physical logical; do
+    [ -n "$physical$logical" ] || continue
+    if [ -z "$physical" ] || [ -z "$logical" ]; then
+      echo "VOLUME_INVALID logical=${logical:-unknown} physical=${physical:-unknown} retained=yes selected=no"
+      failures=$((failures + 1))
+      continue
+    fi
+    if ! awk -F'|' -v wanted="$logical" '$1 == wanted {found=1} END {exit !found}' <<<"$selected_volume_specs"; then
+      echo "VOLUME_UNEXPECTED logical=${logical:-unknown} physical=$physical retained=yes selected=no"
+      failures=$((failures + 1))
+      continue
+    fi
+    expected_physical=${project:+${project}_${logical}}
+    if [ -n "$expected_physical" ] && [ "$physical" != "$expected_physical" ]; then
+      echo "VOLUME_UNEXPECTED logical=$logical physical=$physical expected=$expected_physical retained=yes selected=no"
+      failures=$((failures + 1))
+    elif [ -n "${seen_volumes[$logical]:-}" ]; then
+      echo "VOLUME_DUPLICATE logical=$logical physical=$physical retained=yes selected=yes"
+      failures=$((failures + 1))
+    fi
+    seen_volumes[$logical]=1
+  done <<<"$volume_inventory"
+  [ "$failures" -eq 0 ]
+}
+
 config_subscriptions_mode() {
   local config_dir=$1
   PYTHONPATH="$HOST_ROOT/scripts/host" python3 - "$config_dir" <<'PY'
 import sys
 from configlib import runtime_subscriptions, resolve_path
 print(runtime_subscriptions(resolve_path(sys.argv[1])))
+PY
+}
+
+config_deployment_kind() {
+  local config_dir=$1
+  PYTHONPATH="$HOST_ROOT/scripts/host" python3 - "$config_dir" <<'PY'
+import sys
+from configlib import load_runtime_manifest, resolve_path
+print(load_runtime_manifest(resolve_path(sys.argv[1]))["runtime"]["deploymentKind"])
 PY
 }
 
@@ -573,7 +687,8 @@ PY
 }
 
 assert_ml_runtime_identity() {
-  local testbed=$1 config_dir=$2 policy=${3:-strict} project services coordinator config_set selected_hash
+  local testbed=$1 config_dir=$2 policy=${3:-strict} project service_lines volume_lines services coordinator config_set selected_hash
+  local container_inventory volume_inventory inventory_findings
   local -a policy_args=()
   case "$policy" in
     strict) ;;
@@ -581,11 +696,27 @@ assert_ml_runtime_identity() {
     *) echo "invalid ML identity policy: $policy" >&2; return 2 ;;
   esac
   project=$(ml_project_name)
-  services=$(config_host_containers "$config_dir" | paste -sd, -)
+  service_lines=$(config_host_containers "$config_dir")
+  volume_lines=$(config_ml_volume_records "$config_dir")
+  services=$(paste -sd, - <<<"$service_lines")
   [ -n "$services" ] || {
     echo "selected ML inventory is empty" >&2
     return 1
   }
+  [ -n "$volume_lines" ] || {
+    echo "selected ML volume inventory is empty" >&2
+    return 1
+  }
+  container_inventory=$(docker ps -a --filter "label=com.docker.compose.project=$project" \
+    --format '{{.Label "com.docker.compose.service"}}|{{.Status}}')
+  volume_inventory=$(docker volume ls --filter "label=com.docker.compose.project=$project" \
+    --format '{{.Name}}|{{.Label "com.docker.compose.volume"}}')
+  if ! inventory_findings=$(check_reset_runtime_inventory \
+      "$service_lines" "$volume_lines" "$container_inventory" "$volume_inventory" "$project"); then
+    [ -z "$inventory_findings" ] || printf '%s\n' "$inventory_findings" >&2
+    echo "refusing ML lifecycle while unexpected project containers or volumes exist" >&2
+    return 1
+  fi
   coordinator=$(config_coordinator_container "$config_dir")
   config_set=$(basename "$config_dir")
   selected_hash=$(config_hash "$config_dir")
@@ -810,6 +941,7 @@ ml_runtime_gate() {
 stage_config_all() {
   local config_dir=$1 hash=$2 name archive temporary machine destination identity rollback_machine
   local -A old_target=() old_hash=() activated=()
+  local -a rollback_failed=()
   name=$(basename "$config_dir")
   destination="/etc/5g-nwdaf-infrastructure/config-sets/${name}-${hash:0:16}"
   temporary=$(mktemp -d)
@@ -832,11 +964,18 @@ stage_config_all() {
     for rollback_machine in "${MACHINES[@]}"; do
       [ "${activated[$rollback_machine]:-false}" = true ] || continue
       if [ -n "${old_target[$rollback_machine]}" ] && [ -n "${old_hash[$rollback_machine]}" ]; then
-        vssh "$rollback_machine" "sudo /usr/local/libexec/5g-nwdaf-infrastructure/config-activate '$rollback_machine' '${old_target[$rollback_machine]}' '${old_hash[$rollback_machine]}'" || true
+        if ! vssh "$rollback_machine" "sudo /usr/local/libexec/5g-nwdaf-infrastructure/config-activate '$rollback_machine' '${old_target[$rollback_machine]}' '${old_hash[$rollback_machine]}'"; then
+          rollback_failed+=("$rollback_machine")
+        fi
       else
-        vssh "$rollback_machine" "sudo rm -f /etc/5g-nwdaf-infrastructure/active /etc/5g-nwdaf-infrastructure/active.sha256; sudo /usr/local/libexec/5g-nwdaf-infrastructure/network-setup --clear" || true
+        if ! vssh "$rollback_machine" "sudo rm -f /etc/5g-nwdaf-infrastructure/active /etc/5g-nwdaf-infrastructure/active.sha256 && sudo /usr/local/libexec/5g-nwdaf-infrastructure/network-setup --clear"; then
+          rollback_failed+=("$rollback_machine")
+        fi
       fi
     done
+    if [ "${#rollback_failed[@]}" -gt 0 ]; then
+      echo "config activation rollback incomplete: ${rollback_failed[*]}" >&2
+    fi
     return 1
   done
   trap - RETURN

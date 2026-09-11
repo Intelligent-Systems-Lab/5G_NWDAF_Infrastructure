@@ -10,9 +10,12 @@ from pathlib import Path
 
 from configlib import (
     ROOT,
+    deployment_kind,
     load_runtime_manifest,
     load_yaml,
+    nwdaf_definitions,
     resolve_config_dir,
+    resolve_config_scenario,
     resolve_ml_bind_address,
     resolve_ml_device_policy,
     resolve_path,
@@ -66,6 +69,8 @@ def main():
     resolved = compose_config(args.mode, device_policy, config_dir, bind_address)
     all_services = resolved.get("services", {})
     manifest = load_runtime_manifest(config_dir)
+    kind = deployment_kind(testbed)
+    _scenario_path, scenario = resolve_config_scenario(config_dir)
     selected_names = manifest["runtime"]["hostContainers"]
     services = {name: all_services.get(name, {}) for name in selected_names}
     expected_services = testbed["mlRuntime"]["services"]
@@ -146,14 +151,70 @@ def main():
         check.equal(name + " host device mapping", service.get("devices", []), [])
         check.true(name + " must not use legacy GPU request", not service.get("gpus"))
 
-        expected_seed_environment = {
-            "PYMTLF_SEED_SOURCE": "/opt/app/seed_models/initial",
-            "PYMTLF_SEED_MODEL_ID": "1",
-            "PYMTLF_SEED_INTEROPERABILITY": "001122",
-            "PYMTLF_SEED_ARTIFACT_KEY": "a2c796a001e2da2461418f80b01d7d1e33f0e3349c2817d92286f09e67aa6bef",
-        } if name == manifest["runtime"]["coordinatorContainer"] else {}
+        if name == manifest["runtime"]["coordinatorContainer"]:
+            expected_seed_environment = {
+                "PYMTLF_SEED_SOURCE": (
+                    "/opt/app/seed_models/image_classification/"
+                    + scenario["workload"]["dataset"]
+                    if kind == "protocol-hierarchical"
+                    else "/opt/app/seed_models/initial"
+                ),
+                "PYMTLF_SEED_MODEL_ID": str(
+                    scenario["workload"]["seedModelId"]
+                    if kind == "protocol-hierarchical" else 1
+                ),
+                "PYMTLF_SEED_INTEROPERABILITY": (
+                    scenario["workload"]["modelInteroperability"]
+                    if kind == "protocol-hierarchical" else "001122"
+                ),
+                "PYMTLF_SEED_ARTIFACT_KEY": (
+                    scenario["workload"]["seedArtifactKey"]
+                    if kind == "protocol-hierarchical"
+                    else "a2c796a001e2da2461418f80b01d7d1e33f0e3349c2817d92286f09e67aa6bef"
+                ),
+            }
+        else:
+            expected_seed_environment = {}
         for key, value in expected_seed_environment.items():
             check.equal(name + " " + key, environment.get(key), value)
+
+        if kind == "protocol-hierarchical":
+            definition = next(
+                item for item in nwdaf_definitions(testbed)
+                if item["backends"]["mtlf"] == name
+            )
+            topology_mounts = [
+                item for item in mounts
+                if item.get("target") == "/etc/5g-nwdaf/topology/protocol-hierarchical.yaml"
+            ]
+            check.equal(
+                name + " topology mount count", len(topology_mounts),
+                1 if definition["role"] == "root" else 0,
+            )
+            dataset_root = ROOT / ".generated" / "image-datasets" / scenario["name"]
+            if definition["role"] == "root":
+                expected_dataset_mount = (
+                    dataset_root / "validation.npz", "/data/validation.npz"
+                )
+            elif definition["role"] == "leaf":
+                expected_dataset_mount = (
+                    dataset_root / "leaves" / (definition["unit"] + ".npz"),
+                    "/data/train.npz",
+                )
+            else:
+                expected_dataset_mount = None
+            data_mounts = [
+                item for item in mounts if item.get("target", "").startswith("/data/")
+            ]
+            check.equal(
+                name + " dataset mount count", len(data_mounts),
+                1 if expected_dataset_mount else 0,
+            )
+            if expected_dataset_mount and data_mounts:
+                source, target = expected_dataset_mount
+                check.equal(name + " dataset source", Path(data_mounts[0]["source"]), source)
+                check.equal(name + " dataset target", data_mounts[0]["target"], target)
+                check.true(name + " dataset must be read-only", data_mounts[0].get("read_only") is True)
 
     if args.mode == "cpu-smoke":
         helper_source = (ROOT / "tests" / "support" / "pymtlf-smoke-health.py").resolve()

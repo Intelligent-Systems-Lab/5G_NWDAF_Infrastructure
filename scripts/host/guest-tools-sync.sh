@@ -2,6 +2,10 @@
 set -euo pipefail
 source "$(dirname "$0")/lib.sh"
 
+if [ -n "${TESTBED:-}" ]; then
+  select_testbed_machines "$TESTBED"
+fi
+
 files=(
   scripts/guest/runtime-tools-install.sh
   scripts/guest/service-run.sh
@@ -32,7 +36,10 @@ selected_machines=("${MACHINES[@]}")
 if [ "$#" -gt 0 ]; then
   selected_machines=("$@")
   for machine in "${selected_machines[@]}"; do
-    case "$machine" in core|path-a|path-b) ;; *) echo "invalid guest-tools-sync machine: $machine" >&2; exit 2;; esac
+    [[ " ${MACHINES[*]} " == *" $machine "* ]] || {
+      echo "invalid guest-tools-sync machine: $machine" >&2
+      exit 2
+    }
   done
 fi
 

@@ -920,7 +920,12 @@ def container_logs_since(container, service=None, cache_dir=None, until=None):
     return combined
 
 
-def print_fl_summary(by_service, coordinator_name="pymtlf-c", cache_dir=None):
+def print_fl_summary(
+    by_service,
+    coordinator_name="pymtlf-c",
+    cache_dir=None,
+    deployment_kind=None,
+):
     static_flat = coordinator_name == "pymtlf-server"
     static_hierarchical = coordinator_name == "pymtlf-root"
     supported = coordinator_name == "pymtlf-c" or static_flat or static_hierarchical
@@ -980,6 +985,17 @@ def print_fl_summary(by_service, coordinator_name="pymtlf-c", cache_dir=None):
                     coordinator_name, identity, service, service_identity
                 )
             )
+    if deployment_kind == "protocol-hierarchical":
+        print(
+            "FL CURRENT RUN config={} coordinator={} coordinator_started_at={}".format(
+                identity, coordinator_name, started_at
+            )
+        )
+        print(
+            "FL RESULT outcome=not-evaluated topology=protocol-hierarchical "
+            "status=use-fl-training-status"
+        )
+        return
     selected_fl_services = tuple(
         service for service in by_service if service.startswith("pymtlf-")
     )
@@ -1027,6 +1043,7 @@ def main():
     parser.add_argument("--cache-dir")
     parser.add_argument("--services", default=",".join(DEFAULT_SERVICES))
     parser.add_argument("--coordinator", default="pymtlf-c")
+    parser.add_argument("--deployment-kind")
     parser.add_argument("--config-set", required=True)
     parser.add_argument("--config-hash", required=True)
     parser.add_argument("--identity-only", action="store_true")
@@ -1106,11 +1123,23 @@ def main():
             file=sys.stderr,
         )
         return 1
-    unexpected_running = [
-        item for item in unexpected if item.get("State", {}).get("Running")
-    ]
-    if unexpected_running:
-        print("ERROR unexpected ML containers are running", file=sys.stderr)
+    if unexpected:
+        details = []
+        for container in unexpected:
+            labels = container.get("Config", {}).get("Labels", {})
+            identity = (
+                labels.get("com.docker.compose.service")
+                or container.get("Name", "").lstrip("/")
+                or container.get("Id", "unknown")[:12]
+            )
+            status = container.get("State", {}).get("Status", "unknown")
+            details.append("{}:{}".format(identity, status))
+        print(
+            "ERROR unexpected ML containers exist: {}".format(
+                ", ".join(sorted(details))
+            ),
+            file=sys.stderr,
+        )
         return 1
     if args.require_running_selected:
         unavailable = [
@@ -1192,7 +1221,12 @@ def main():
         )
 
     print()
-    print_fl_summary(by_service, args.coordinator, cache_dir)
+    print_fl_summary(
+        by_service,
+        args.coordinator,
+        cache_dir,
+        deployment_kind=args.deployment_kind,
+    )
     return 0
 
 

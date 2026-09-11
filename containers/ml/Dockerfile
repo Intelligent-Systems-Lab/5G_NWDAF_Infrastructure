@@ -45,7 +45,17 @@ RUN python -m pip install --no-cache-dir "uv==${UV_VERSION}" \
         /var/lib/5g-nwdaf-infrastructure/pymtlf-leaf-1 \
         /var/lib/5g-nwdaf-infrastructure/pymtlf-leaf-2 \
         /var/lib/5g-nwdaf-infrastructure/pymtlf-leaf-3 \
-        /var/lib/5g-nwdaf-infrastructure/pymtlf-leaf-4
+        /var/lib/5g-nwdaf-infrastructure/pymtlf-leaf-4 \
+        /var/lib/5g-nwdaf-infrastructure/pymtlf-branch-a-primary \
+        /var/lib/5g-nwdaf-infrastructure/pymtlf-branch-a-replacement \
+        /var/lib/5g-nwdaf-infrastructure/pymtlf-branch-b \
+        /var/lib/5g-nwdaf-infrastructure/pymtlf-branch-c \
+        /var/lib/5g-nwdaf-infrastructure/pymtlf-leaf-a1 \
+        /var/lib/5g-nwdaf-infrastructure/pymtlf-leaf-a2 \
+        /var/lib/5g-nwdaf-infrastructure/pymtlf-leaf-b1 \
+        /var/lib/5g-nwdaf-infrastructure/pymtlf-leaf-b2 \
+        /var/lib/5g-nwdaf-infrastructure/pymtlf-leaf-c1 \
+        /var/lib/5g-nwdaf-infrastructure/pymtlf-leaf-c2
 
 FROM torch-runtime AS pyanlf
 

@@ -334,6 +334,25 @@ def main():
     assert "lower_cleanup" in rendered.getvalue()
     assert "phase=top-level-status" in rendered.getvalue()
 
+    protocol_rendered = io.StringIO()
+    original_container_logs_since = MODULE.container_logs_since
+    try:
+        MODULE.container_logs_since = lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("protocol container status parsed legacy training logs")
+        )
+        with redirect_stdout(protocol_rendered):
+            MODULE.print_fl_summary(
+                {service: dict(hfl_container, Id=service) for service in hfl_logs},
+                "pymtlf-root",
+                deployment_kind="protocol-hierarchical",
+            )
+    finally:
+        MODULE.container_logs_since = original_container_logs_since
+    assert (
+        "outcome=not-evaluated topology=protocol-hierarchical "
+        "status=use-fl-training-status" in protocol_rendered.getvalue()
+    ), protocol_rendered.getvalue()
+
     original_run = MODULE.subprocess.run
     captured = {}
     try:
@@ -516,7 +535,7 @@ def main():
                         "io.5g-nwdaf.config-set": "other-topology",
                         "io.5g-nwdaf.config-hash": "other-hash",
                     }},
-                    "State": {"Running": True, "Status": "running"},
+                    "State": {"Running": False, "Status": "exited"},
                 }])
             raise AssertionError("unexpected-container check performed extra work")
 

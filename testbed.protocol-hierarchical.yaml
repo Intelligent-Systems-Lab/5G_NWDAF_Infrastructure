@@ -1,0 +1,330 @@
+schemaVersion: 1
+name: protocol-hierarchical
+
+config:
+  directory: config/local/protocol-hierarchical
+
+guest:
+  box: ubuntu/jammy64
+  boxVersion: 20241002.0.0
+  os: ubuntu
+  release: "22.04"
+
+hostSafety:
+  reserveMemoryMiB: 6144
+  containerBuildOverheadMemoryMiB: 2048
+  minimumGpuMemoryMiB: 0
+  swapPolicy: warn
+  minimumFreeSwapMiB: 1024
+  minimumFreeStorageGiB: 120
+
+machines:
+  core:
+    resources: {memoryMiB: 3072, cpus: 2, diskGiB: 24}
+    interfaces: {management: 192.168.56.10, sbi: 192.168.57.2}
+  path-a:
+    resources: {memoryMiB: 2048, cpus: 2, diskGiB: 20}
+    interfaces: {management: 192.168.56.11, sbi: 192.168.57.3}
+  path-b:
+    resources: {memoryMiB: 2048, cpus: 2, diskGiB: 20}
+    interfaces: {management: 192.168.56.12, sbi: 192.168.57.4}
+  path-c:
+    resources: {memoryMiB: 2048, cpus: 2, diskGiB: 20}
+    interfaces: {management: 192.168.56.13, sbi: 192.168.57.5}
+
+networks:
+  management: {cidr: 192.168.56.0/24, mode: private}
+  sbi: {cidr: 192.168.57.0/24, mode: private}
+
+mobileNetwork:
+  plmn: {mcc: "466", mnc: "92"}
+  snssai: {sst: 1, sd: "010203"}
+
+placement:
+  core: [mongodb, nrf, adrf, nwdaf-root]
+  path-a: [nwdaf-branch-a-primary, nwdaf-branch-a-replacement, nwdaf-leaf-a1, nwdaf-leaf-a2]
+  path-b: [nwdaf-branch-b, nwdaf-leaf-b1, nwdaf-leaf-b2]
+  path-c: [nwdaf-branch-c, nwdaf-leaf-c1, nwdaf-leaf-c2]
+  host-containers:
+    - pymtlf-root
+    - pymtlf-branch-a-primary
+    - pymtlf-branch-a-replacement
+    - pymtlf-branch-b
+    - pymtlf-branch-c
+    - pymtlf-leaf-a1
+    - pymtlf-leaf-a2
+    - pymtlf-leaf-b1
+    - pymtlf-leaf-b2
+    - pymtlf-leaf-c1
+    - pymtlf-leaf-c2
+
+optionalServices:
+  webconsole:
+    machine: core
+    endpoint: {network: management, address: 192.168.56.10, port: 5000}
+
+coreServices:
+  mongodb:
+    endpoint: {network: sbi, address: 192.168.57.18, port: 27017}
+    database: free5gc
+  nrf:
+    sbi: {network: sbi, address: 192.168.57.10, port: 8000}
+  adrf:
+    nfInstanceId: a0494f77-36db-4639-9f6f-e3e71fb5bfe6
+    sbi: {network: sbi, address: 192.168.57.19, port: 9888}
+    mongodb: {database: adrf}
+    modelStorage:
+      localDirectory: /var/lib/5g-nwdaf-infrastructure/adrf/models
+
+mlRuntime:
+  engine: docker-compose-v2
+  networkMode: bridge
+  bindAddress: 192.168.57.1
+  advertisedAddress: 192.168.57.1
+  services:
+    pymtlf-root:
+      image: pymtlf
+      publishedPort: 9292
+      containerPort: 9092
+      device: cpu
+      cpus: 1.0
+      memoryMiB: 1024
+      volume: {name: pymtlf-root-data, target: /var/lib/5g-nwdaf-infrastructure/pymtlf-root}
+    pymtlf-branch-a-primary:
+      image: pymtlf
+      publishedPort: 9293
+      containerPort: 9092
+      device: cpu
+      cpus: 0.75
+      memoryMiB: 768
+      volume: {name: pymtlf-branch-a-primary-data, target: /var/lib/5g-nwdaf-infrastructure/pymtlf-branch-a-primary}
+    pymtlf-branch-a-replacement:
+      image: pymtlf
+      publishedPort: 9294
+      containerPort: 9092
+      device: cpu
+      cpus: 0.75
+      memoryMiB: 768
+      volume: {name: pymtlf-branch-a-replacement-data, target: /var/lib/5g-nwdaf-infrastructure/pymtlf-branch-a-replacement}
+    pymtlf-branch-b:
+      image: pymtlf
+      publishedPort: 9295
+      containerPort: 9092
+      device: cpu
+      cpus: 0.75
+      memoryMiB: 768
+      volume: {name: pymtlf-branch-b-data, target: /var/lib/5g-nwdaf-infrastructure/pymtlf-branch-b}
+    pymtlf-branch-c:
+      image: pymtlf
+      publishedPort: 9296
+      containerPort: 9092
+      device: cpu
+      cpus: 0.75
+      memoryMiB: 768
+      volume: {name: pymtlf-branch-c-data, target: /var/lib/5g-nwdaf-infrastructure/pymtlf-branch-c}
+    pymtlf-leaf-a1:
+      image: pymtlf
+      publishedPort: 9092
+      containerPort: 9092
+      device: cpu
+      cpus: 1.0
+      memoryMiB: 768
+      volume: {name: pymtlf-leaf-a1-data, target: /var/lib/5g-nwdaf-infrastructure/pymtlf-leaf-a1}
+    pymtlf-leaf-a2:
+      image: pymtlf
+      publishedPort: 9093
+      containerPort: 9092
+      device: cpu
+      cpus: 1.0
+      memoryMiB: 768
+      volume: {name: pymtlf-leaf-a2-data, target: /var/lib/5g-nwdaf-infrastructure/pymtlf-leaf-a2}
+    pymtlf-leaf-b1:
+      image: pymtlf
+      publishedPort: 9094
+      containerPort: 9092
+      device: cpu
+      cpus: 1.0
+      memoryMiB: 768
+      volume: {name: pymtlf-leaf-b1-data, target: /var/lib/5g-nwdaf-infrastructure/pymtlf-leaf-b1}
+    pymtlf-leaf-b2:
+      image: pymtlf
+      publishedPort: 9095
+      containerPort: 9092
+      device: cpu
+      cpus: 1.0
+      memoryMiB: 768
+      volume: {name: pymtlf-leaf-b2-data, target: /var/lib/5g-nwdaf-infrastructure/pymtlf-leaf-b2}
+    pymtlf-leaf-c1:
+      image: pymtlf
+      publishedPort: 9096
+      containerPort: 9092
+      device: cpu
+      cpus: 1.0
+      memoryMiB: 768
+      volume: {name: pymtlf-leaf-c1-data, target: /var/lib/5g-nwdaf-infrastructure/pymtlf-leaf-c1}
+    pymtlf-leaf-c2:
+      image: pymtlf
+      publishedPort: 9097
+      containerPort: 9092
+      device: cpu
+      cpus: 1.0
+      memoryMiB: 768
+      volume: {name: pymtlf-leaf-c2-data, target: /var/lib/5g-nwdaf-infrastructure/pymtlf-leaf-c2}
+
+analytics:
+  topology: protocol-hierarchical
+  nwdaf-root:
+    machine: core
+    role: root
+    nfInstanceId: 10000000-0000-4000-8000-000000000001
+    sbi: {network: sbi, address: 192.168.57.30, port: 8080}
+    backends: {mtlf: pymtlf-root}
+  nwdaf-branch-a-primary:
+    machine: path-a
+    role: branch
+    nfInstanceId: 10000000-0000-4000-8000-000000000101
+    sbi: {network: sbi, address: 192.168.57.41, port: 8080}
+    backends: {mtlf: pymtlf-branch-a-primary}
+  nwdaf-branch-a-replacement:
+    machine: path-a
+    role: branch
+    nfInstanceId: 10000000-0000-4000-8000-000000000111
+    sbi: {network: sbi, address: 192.168.57.42, port: 8080}
+    backends: {mtlf: pymtlf-branch-a-replacement}
+  nwdaf-leaf-a1:
+    machine: path-a
+    role: leaf
+    nfInstanceId: 10000000-0000-4000-8000-000000001101
+    sbi: {network: sbi, address: 192.168.57.43, port: 8080}
+    tai: "001101"
+    backends: {mtlf: pymtlf-leaf-a1}
+  nwdaf-leaf-a2:
+    machine: path-a
+    role: leaf
+    nfInstanceId: 10000000-0000-4000-8000-000000001102
+    sbi: {network: sbi, address: 192.168.57.44, port: 8080}
+    tai: "001102"
+    backends: {mtlf: pymtlf-leaf-a2}
+  nwdaf-branch-b:
+    machine: path-b
+    role: branch
+    nfInstanceId: 10000000-0000-4000-8000-000000000102
+    sbi: {network: sbi, address: 192.168.57.51, port: 8080}
+    backends: {mtlf: pymtlf-branch-b}
+  nwdaf-leaf-b1:
+    machine: path-b
+    role: leaf
+    nfInstanceId: 10000000-0000-4000-8000-000000001201
+    sbi: {network: sbi, address: 192.168.57.52, port: 8080}
+    tai: "001201"
+    backends: {mtlf: pymtlf-leaf-b1}
+  nwdaf-leaf-b2:
+    machine: path-b
+    role: leaf
+    nfInstanceId: 10000000-0000-4000-8000-000000001202
+    sbi: {network: sbi, address: 192.168.57.53, port: 8080}
+    tai: "001202"
+    backends: {mtlf: pymtlf-leaf-b2}
+  nwdaf-branch-c:
+    machine: path-c
+    role: branch
+    nfInstanceId: 10000000-0000-4000-8000-000000000103
+    sbi: {network: sbi, address: 192.168.57.61, port: 8080}
+    backends: {mtlf: pymtlf-branch-c}
+  nwdaf-leaf-c1:
+    machine: path-c
+    role: leaf
+    nfInstanceId: 10000000-0000-4000-8000-000000001301
+    sbi: {network: sbi, address: 192.168.57.62, port: 8080}
+    tai: "001301"
+    backends: {mtlf: pymtlf-leaf-c1}
+  nwdaf-leaf-c2:
+    machine: path-c
+    role: leaf
+    nfInstanceId: 10000000-0000-4000-8000-000000001302
+    sbi: {network: sbi, address: 192.168.57.63, port: 8080}
+    tai: "001302"
+    backends: {mtlf: pymtlf-leaf-c2}
+  protocolTopology:
+    policy:
+      allow_additional_candidates: false
+      additional_candidate_priority: 0
+      selection_method: priority
+      min_available_nodes: 2
+      fraction_train: 1.0
+      min_train_nodes: 2
+      accept_failures: true
+      min_completion_rate: 0.66
+    strategy:
+      method: fedProx
+      aggregation: sampleWeighted
+      method_parameters: {proximal_mu: 0.01}
+    branchGroups:
+      - name: area-a
+        branches:
+          - {node: nwdaf-branch-a-primary, enabled: true, priority: 100, reportAfter: {count: 1, unit: round}}
+          - {node: nwdaf-branch-a-replacement, enabled: true, priority: 50, reportAfter: {count: 1, unit: round}}
+        leaves:
+          - {node: nwdaf-leaf-a1, enabled: true, priority: 100, reportAfter: {count: 1, unit: epoch}}
+          - {node: nwdaf-leaf-a2, enabled: true, priority: 90, reportAfter: {count: 1, unit: epoch}}
+        policy:
+          allow_additional_candidates: false
+          additional_candidate_priority: 0
+          selection_method: priority
+          min_available_nodes: 2
+          fraction_train: 1.0
+          min_train_nodes: 2
+          accept_failures: false
+          min_completion_rate: 1.0
+        strategy:
+          method: fedProx
+          aggregation: sampleWeighted
+          method_parameters: {proximal_mu: 0.01}
+      - name: area-b
+        branches:
+          - {node: nwdaf-branch-b, enabled: true, priority: 100, reportAfter: {count: 1, unit: round}}
+        leaves:
+          - {node: nwdaf-leaf-b1, enabled: true, priority: 100, reportAfter: {count: 1, unit: epoch}}
+          - {node: nwdaf-leaf-b2, enabled: true, priority: 90, reportAfter: {count: 1, unit: epoch}}
+        policy:
+          allow_additional_candidates: false
+          additional_candidate_priority: 0
+          selection_method: priority
+          min_available_nodes: 2
+          fraction_train: 1.0
+          min_train_nodes: 2
+          accept_failures: false
+          min_completion_rate: 1.0
+        strategy:
+          method: fedProx
+          aggregation: sampleWeighted
+          method_parameters: {proximal_mu: 0.01}
+      - name: area-c
+        branches:
+          - {node: nwdaf-branch-c, enabled: true, priority: 100, reportAfter: {count: 1, unit: round}}
+        leaves:
+          - {node: nwdaf-leaf-c1, enabled: true, priority: 100, reportAfter: {count: 1, unit: epoch}}
+          - {node: nwdaf-leaf-c2, enabled: true, priority: 90, reportAfter: {count: 1, unit: epoch}}
+        policy:
+          allow_additional_candidates: false
+          additional_candidate_priority: 0
+          selection_method: priority
+          min_available_nodes: 2
+          fraction_train: 1.0
+          min_train_nodes: 2
+          accept_failures: false
+          min_completion_rate: 1.0
+        strategy:
+          method: fedProx
+          aggregation: sampleWeighted
+          method_parameters: {proximal_mu: 0.01}
+
+security: {tls: false, oauth: false}
+
+operations:
+  clockSkewToleranceMs: 1000
+  journalMaxUseMiB: 512
+  serviceReadyTimeoutSeconds: 120
+  preparationTimeoutSeconds: 300
+  preparationDataWindowSeconds: 600
+  roundTimeoutSeconds: 300

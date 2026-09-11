@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-machine=${1:?usage: common.sh core|path-a|path-b}
-case "$machine" in core|path-a|path-b) ;; *) echo "invalid machine: $machine" >&2; exit 2;; esac
+machine=${1:?usage: common.sh machine}
+[[ "$machine" =~ ^[a-z0-9][a-z0-9-]*$ ]] || { echo "invalid machine: $machine" >&2; exit 2; }
 test "$(id -u)" -eq 0 || { echo "common setup requires root" >&2; exit 1; }
 
 # The base box enables randomized unattended upgrades.  Package changes and a
@@ -20,8 +20,10 @@ export DEBIAN_FRONTEND=noninteractive
 apt-get update
 apt-get install -y --no-install-recommends \
   build-essential ca-certificates cmake curl git gnupg iproute2 jq libssl-dev \
-  libsctp-dev linux-headers-"$(uname -r)" ninja-build python3 \
+  libsctp-dev linux-headers-"$(uname -r)" ninja-build python3 chrony \
   python3-yaml rsync socat util-linux
+
+systemctl enable --now chrony
 
 source_root=/opt/5g-nwdaf-infrastructure/source
 provision_lock=$source_root/provisioning.lock.yaml
@@ -78,10 +80,6 @@ install -d -o 5g-nwdaf -g 5g-nwdaf /var/lib/5g-nwdaf-infrastructure
 install -d -o 5g-nwdaf -g 5g-nwdaf /var/lib/5g-nwdaf-infrastructure/datasets /var/lib/5g-nwdaf-infrastructure/datasets/sets
 install -d /etc/5g-nwdaf-infrastructure/config-sets /opt/5g-nwdaf-infrastructure/work /usr/local/libexec/5g-nwdaf-infrastructure/bin
 printf '%s\n' "$machine" >/etc/5g-nwdaf-infrastructure/machine
-
-python3 "$provision_tool" write-manifest "$provision_lock" \
-  --machine "$machine" \
-  --output /etc/5g-nwdaf-infrastructure/provisioning-manifest.yaml
 
 /opt/5g-nwdaf-infrastructure/source/scripts/guest/runtime-tools-install.sh \
   "$machine" /opt/5g-nwdaf-infrastructure/source

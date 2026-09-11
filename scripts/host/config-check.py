@@ -13,7 +13,8 @@ from pathlib import Path
 from configlib import (
     ROOT, SCENARIO_SCHEMA, get_path, deployment_kind,
     expected_runtime_inventory, guest_network_configs,
-    load_runtime_manifest, load_yaml, nwdaf_definitions, resolve_config_dir,
+    image_scenario_contract, load_runtime_manifest, load_yaml, nwdaf_definitions,
+    protocol_topology, resolve_config_dir,
     repository_relative_paths, resolve_config_scenario, resolve_ml_bind_address,
     resolve_mobile_identities, resolve_path, resolve_scenario_profile_paths,
     sha256_tree,
@@ -38,6 +39,18 @@ REQUIRED = {
 
 def required_files(testbed):
     kind = deployment_kind(testbed)
+    if kind == "protocol-hierarchical":
+        required = {
+            "nrfcfg.yaml", "adrfcfg.yaml", "manifest.yaml", "compose.yaml",
+            "topology/protocol-hierarchical.yaml",
+        }
+        required.update(
+            "network/{}.yaml".format(machine) for machine in testbed["machines"]
+        )
+        for definition in nwdaf_definitions(testbed):
+            required.add("nwdafcfg-{}.yaml".format(definition["unit"][len("nwdaf-"):]))
+            required.add(definition["backends"]["mtlf"] + ".yaml")
+        return required
     if kind == "production-flat":
         return set(REQUIRED)
     required = {
@@ -252,7 +265,12 @@ def check_manifest_exact(check, testbed_path, testbed, config_dir, actual_files)
         manifest.get("seedRestoration"),
         {
             "coordinatorContainer": coordinator,
-            "canonicalSource": "/opt/app/seed_models/initial",
+            "canonicalSource": (
+                "/opt/app/seed_models/image_classification/"
+                + manifest.get("scenario", {}).get("workload", {}).get("dataset", "")
+                if deployment_kind(testbed) == "protocol-hierarchical"
+                else "/opt/app/seed_models/initial"
+            ),
             "modelId": descriptor.get("model_id"),
             "modelInteroperability": descriptor.get("model_interoperability"),
             "artifactKey": descriptor.get("artifact_key"),
@@ -411,6 +429,194 @@ def group_id_for_owner(testbed, owner):
     )
 
 
+def check_protocol_native(check, config_dir, runtime, scenario):
+    interpreter = ROOT / "ML" / "PyMTLF" / ".venv" / "bin" / "python"
+    if not interpreter.is_file():
+        check.true("PyMTLF project interpreter is unavailable", False)
+        return
+    services = runtime["hostContainers"]
+    coordinator = runtime["coordinatorContainer"]
+    root_id = next(
+        item["nfInstanceId"] for item in runtime["nwdafs"] if item["role"] == "root"
+    )
+    program = r'''import sys
+import tempfile
+from pathlib import Path
+from py_mtlf.config import load_settings
+from py_mtlf.core.artifacts import ArtifactRepository
+from py_mtlf.core.fl_topology import StaticTopologyPlanner
+from py_mtlf.core.seed_import import build_seed_bundle
+config_root, coordinator, root_id, dataset, *names = sys.argv[1:]
+settings = {name: load_settings(Path(config_root) / (name + ".yaml")) for name in names}
+root = settings[coordinator]
+assignment = StaticTopologyPlanner.load(
+    root.federated_learning.topology.config_file
+).build(root_nf_instance_id=root_id)
+assert len(assignment.branch_groups) == 3
+seed = root.model_provision.seed_models[0]
+with tempfile.TemporaryDirectory(prefix="protocol-seed-check-") as temporary:
+    temporary = Path(temporary)
+    bundle = temporary / "seed.tar.gz"
+    build_seed_bundle(
+        Path("seed_models/image_classification") / dataset,
+        bundle,
+        model_id=seed.model_id,
+        event=seed.event,
+        model_interoperability=seed.model_interoperability,
+    )
+    repository = ArtifactRepository(temporary / "artifacts", root.artifact)
+    repository.open()
+    metadata = repository.publish(bundle)
+    assert metadata.key == seed.artifact_key
+'''
+    result = subprocess.run(
+        [
+            str(interpreter), "-c", program, str(config_dir), coordinator,
+            root_id, scenario["workload"]["dataset"], *services,
+        ],
+        cwd=ROOT / "ML" / "PyMTLF", text=True, capture_output=True, check=False,
+    )
+    detail = (result.stderr or result.stdout).strip()
+    check.true(
+        "PyMTLF native settings/topology/seed validation failed{}".format(
+            ": " + detail if detail else ""
+        ),
+        result.returncode == 0,
+    )
+
+
+def check_protocol(testbed_path, testbed, config_dir, check):
+    check.equal("schemaVersion", testbed.get("schemaVersion"), 1)
+    check.equal(
+        "canonical machine set", list(testbed.get("machines", {})),
+        ["core", "path-a", "path-b", "path-c"],
+    )
+    check.equal(
+        "placement groups", list(testbed.get("placement", {})),
+        ["core", "path-a", "path-b", "path-c", "host-containers"],
+    )
+    check.true("TLS must remain disabled", not testbed.get("security", {}).get("tls"))
+    check.true("OAuth must remain disabled", not testbed.get("security", {}).get("oauth"))
+    try:
+        runtime = expected_runtime_inventory(testbed)
+    except (KeyError, TypeError, ValueError) as exc:
+        check.true("invalid TESTBED runtime inventory: {}".format(exc), False)
+        return finish(check, testbed_path, config_dir)
+    check.equal("Guest machine count", len(runtime["guestMachines"]), 4)
+    check.equal("Guest NWDAF count", len(runtime["nwdafs"]), 11)
+    check.equal("Host PyMTLF count", len(runtime["hostContainers"]), 11)
+    check.equal("ML volume count", len(runtime["mlVolumes"]), 11)
+
+    required = required_files(testbed)
+    missing = sorted(name for name in required if not (config_dir / name).is_file())
+    check.true("missing config files: {}".format(", ".join(missing)), not missing)
+    if missing:
+        return finish(check, testbed_path, config_dir)
+    actual_files = {
+        path.relative_to(config_dir).as_posix()
+        for path in config_dir.rglob("*") if path.is_file()
+    }
+    check.true(
+        "generated config file set differs: missing={} extra={}".format(
+            sorted(required - actual_files), sorted(actual_files - required)
+        ),
+        actual_files == required,
+    )
+    try:
+        _scenario_path, scenario = resolve_config_scenario(config_dir)
+        image_scenario_contract(scenario)
+    except (KeyError, OSError, TypeError, ValueError) as exc:
+        check.true("invalid image scenario contract: {}".format(exc), False)
+        return finish(check, testbed_path, config_dir)
+    check.equal("scenario schema", scenario.get("schemaVersion"), SCENARIO_SCHEMA)
+    check.equal("scenario accepted rounds", scenario["training"]["acceptedRounds"], 2)
+
+    manifest = check_manifest_exact(check, testbed_path, testbed, config_dir, actual_files)
+    if manifest is None:
+        return finish(check, testbed_path, config_dir)
+    check.equal("manifest scenario name", manifest.get("scenario", {}).get("name"), scenario["name"])
+    check.equal("manifest scenario workload", manifest.get("scenario", {}).get("workload"), scenario["workload"])
+    dataset_root = ROOT / ".generated" / "image-datasets" / scenario["name"]
+    expected_datasets = {
+        "root": str(dataset_root),
+        "validation": str(dataset_root / "validation.npz"),
+        "heldOut": str(dataset_root / "held-out.npz"),
+        "leaves": {
+            item["unit"]: str(dataset_root / "leaves" / (item["unit"] + ".npz"))
+            for item in nwdaf_definitions(testbed) if item["role"] == "leaf"
+        },
+    }
+    check.equal("manifest image datasets", manifest.get("datasets"), expected_datasets)
+    check.equal("manifest PseudoDriver profiles", manifest.get("constraints", {}).get("pseudoDriverProfiles"), {})
+    check.equal(
+        "native protocol topology",
+        load_yaml(config_dir / "topology" / "protocol-hierarchical.yaml"),
+        protocol_topology(testbed),
+    )
+    for machine, expected in guest_network_configs(testbed, include_consumer=False).items():
+        check.equal(
+            "{} network aliases".format(machine),
+            load_yaml(config_dir / "network" / (machine + ".yaml")), expected,
+        )
+
+    nrf_uri = uri(
+        testbed["coreServices"]["nrf"]["sbi"]["address"],
+        testbed["coreServices"]["nrf"]["sbi"]["port"],
+    )
+    ml_services = testbed["mlRuntime"]["services"]
+    for definition in nwdaf_definitions(testbed):
+        unit = definition["unit"]
+        native = load_yaml(
+            config_dir / "nwdafcfg-{}.yaml".format(unit[len("nwdaf-"):])
+        )["configuration"]
+        check.equal(unit + " ID", native.get("nfInstanceId"), definition["nfInstanceId"])
+        check.equal(unit + " SBI address", native.get("sbi", {}).get("registerIPv4"), definition["sbi"]["address"])
+        check.equal(unit + " SBI port", native.get("sbi", {}).get("port"), definition["sbi"]["port"])
+        check.equal(unit + " NRF", native.get("nrfUri"), nrf_uri)
+        check.equal(unit + " AnLF disabled", native.get("anlfBackend"), {"enabled": False})
+        backend_name = definition["backends"]["mtlf"]
+        check.equal(
+            unit + " MTLF backend", native.get("mtlfBackend", {}).get("endpoint"),
+            uri(testbed["mlRuntime"]["advertisedAddress"], ml_services[backend_name]["publishedPort"]),
+        )
+        capability = native["nwdafInfo"]["mlAnalyticsList"][0]
+        check.equal(
+            unit + " FL capability", capability.get("flCapabilityType"),
+            {"root": "FL_SERVER", "branch": "FL_SERVER_AND_CLIENT", "leaf": "FL_CLIENT"}[definition["role"]],
+        )
+        check.equal(unit + " analytics event", capability.get("mlAnalyticsIds"), [scenario["workload"]["event"]])
+        if definition["role"] == "leaf":
+            check.equal(unit + " TAI", capability.get("trackingAreaList", [None])[0].get("tac"), definition["tai"])
+        pymtlf = load_yaml(config_dir / (backend_name + ".yaml"))
+        check.equal(backend_name + " port", pymtlf["server"]["port"], ml_services[backend_name]["containerPort"])
+        check.equal(backend_name + " containing NWDAF", pymtlf["containing_nwdaf"]["internal_api_root"], uri(definition["sbi"]["address"], 8091))
+        check_pymtlf_data_paths(check, backend_name, pymtlf)
+        client = pymtlf.get("federated_learning", {}).get("client")
+        if definition["role"] == "leaf":
+            check.equal(backend_name + " dataset", client.get("training_data", {}).get("dataset"), scenario["workload"]["dataset"])
+            check.equal(backend_name + " shard", client.get("training_data", {}).get("shard_path"), "/data/train.npz")
+        elif definition["role"] == "branch":
+            check.true(backend_name + " must not own a local shard", not client.get("training_data", {}).get("shard_path"))
+
+    check_protocol_native(check, config_dir, runtime, scenario)
+    interpreter = ROOT / "ML" / "PyMTLF" / ".venv" / "bin" / "python"
+    dataset_result = subprocess.run(
+        [
+            str(interpreter), str(ROOT / "scripts" / "host" / "image_dataset.py"),
+            "--testbed", str(testbed_path), "--config-dir", str(config_dir), "check",
+        ],
+        cwd=ROOT, text=True, capture_output=True, check=False,
+    )
+    detail = (dataset_result.stderr or dataset_result.stdout).strip()
+    check.true(
+        "PyMTLF native image dataset validation failed{}".format(
+            ": " + detail if detail else ""
+        ),
+        dataset_result.returncode == 0,
+    )
+    return finish(check, testbed_path, config_dir)
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--testbed", required=True)
@@ -421,6 +627,9 @@ def main():
     testbed = load_yaml(testbed_path)
     config_dir = resolve_config_dir(testbed, args.config_dir)
     check = Check()
+
+    if deployment_kind(testbed) == "protocol-hierarchical":
+        return check_protocol(testbed_path, testbed, config_dir, check)
 
     try:
         identities = resolve_mobile_identities(testbed)

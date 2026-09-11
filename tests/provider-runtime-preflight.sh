@@ -185,4 +185,22 @@ provider_vagrant_up
   exit 1
 }
 
+: >"$invocation_log"
+provider_runtime_state_records() { printf '%s\n' preflight >>"$invocation_log"; return 1; }
+if provider_vagrant_halt; then
+  echo "provider halt wrapper ignored a rejected runtime preflight" >&2
+  exit 1
+fi
+[ "$(<"$invocation_log")" = preflight ] || {
+  echo "provider halt wrapper started Vagrant after preflight rejection" >&2
+  exit 1
+}
+: >"$invocation_log"
+provider_runtime_state_records() { printf '%s\n' preflight >>"$invocation_log"; }
+provider_vagrant_halt
+[ "$(<"$invocation_log")" = "$(printf '%s\n' preflight 'provider|halt')" ] || {
+  echo "provider halt wrapper did not preserve preflight-before-provider ordering" >&2
+  exit 1
+}
+
 echo "PROVIDER_RUNTIME_PREFLIGHT_TEST status=passed provider_process=mocked"

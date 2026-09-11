@@ -54,6 +54,7 @@ services_status_main() {
   local -A vm_states=()
   local -A snapshot_pids=()
   local testbed=${1:?usage: services-status.sh testbed [config-dir]} explicit_config=${2:-} config_dir
+  select_testbed_machines "$testbed" || return
   config_dir=$(effective_config_dir "$testbed" "$explicit_config")
   assert_guest_runtime_identity "$config_dir" || return
   vm_records=$(vm_state_records) || return
@@ -63,7 +64,7 @@ services_status_main() {
 
   snapshot_dir=$(mktemp -d -t 5g-nwdaf-service-status.XXXXXX)
   SERVICE_STATUS_ACTIVE_DIR=$snapshot_dir
-  for machine in core path-a path-b; do
+  for machine in "${MACHINES[@]}"; do
     unit_lines=$(config_guest_units "$config_dir" "$machine")
     [ -n "$unit_lines" ] || {
       echo "selected Guest service inventory is empty for $machine" >&2
@@ -85,7 +86,7 @@ services_status_main() {
   done
 
   snapshot_failure=0
-  for machine in core path-a path-b; do
+  for machine in "${MACHINES[@]}"; do
     [ -n "${snapshot_pids[$machine]:-}" ] || continue
     if ! wait "${snapshot_pids[$machine]}"; then
       cat "$snapshot_dir/$machine.error" >&2
@@ -97,7 +98,7 @@ services_status_main() {
     return 1
   fi
 
-  for machine in core path-a path-b; do
+  for machine in "${MACHINES[@]}"; do
     [ -n "${snapshot_pids[$machine]:-}" ] || continue
     snapshot=$(<"$snapshot_dir/$machine")
     while IFS= read -r line; do

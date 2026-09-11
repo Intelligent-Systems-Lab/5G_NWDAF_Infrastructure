@@ -85,10 +85,8 @@ assert_selection_rejected() {
   fi
 }
 
-assert_selection_rejected \
-  "config validation" \
-  "TESTBED must select an explicit testbed definition" \
-  make --no-print-directory -C "$HOST_ROOT" config-validate
+grep -Fx 'TESTBED ?= testbed.protocol-hierarchical.yaml' "$HOST_ROOT/Makefile" >/dev/null
+make --no-print-directory -C "$HOST_ROOT" config-validate >/dev/null
 assert_selection_rejected \
   "experiment start" \
   "usage: experiment-start.sh testbed" \
@@ -101,16 +99,7 @@ assert_selection_rejected \
   "experiment reset" \
   "usage: experiment-reset.sh plan|apply|verify testbed" \
   "$HOST_ROOT/scripts/host/experiment-reset.sh" plan
-if provider_selection_error=$(make --no-print-directory -C "$HOST_ROOT" vm-status 2>&1); then
-  echo "vm-status accepted a missing TESTBED selection" >&2
-  exit 1
-fi
-[[ "$provider_selection_error" == *"TESTBED must select an explicit testbed definition"* ]]
-if [[ "$provider_selection_error" == *"provider execution refused"* ]]; then
-  echo "vm-status reached the provider boundary without a TESTBED selection" >&2
-  exit 1
-fi
-echo "PASS deployment entrypoints reject missing testbed selection before action"
+echo "PASS Make uses canonical TESTBED default while direct deployment scripts require selection"
 
 "$HOST_ROOT/tests/provider-runtime-preflight.sh"
 
@@ -199,6 +188,10 @@ if make --no-print-directory -C "$HOST_ROOT" config-create \
   exit 1
 fi
 echo "PASS explicit scenario path interface"
+
+"$HOST_ROOT/ML/PyMTLF/.venv/bin/python" "$HOST_ROOT/tests/image-dataset.py"
+python3 "$HOST_ROOT/tests/clock-skew.py"
+node "$HOST_ROOT/tests/experiment-reset.js"
 echo "PASS canonical config hash identity"
 
 expected='consumer|5g-nwdaf-consumer.service'
@@ -467,6 +460,57 @@ echo "PASS partial Guest stop and inventory failure detection"
 
 (
   source "$HOST_ROOT/scripts/host/lib.sh"
+  selected_services=$(printf '%s\n' pymtlf-root pymtlf-leaf-a)
+  selected_volumes=$(printf '%s\n' 'root-state|image-a' 'leaf-a-state|image-b')
+  selected_containers=$(printf '%s\n' 'pymtlf-root|Exited (0)' 'pymtlf-leaf-a|Exited (0)')
+  selected_volume_inventory=$(printf '%s\n' 'project_root-state|root-state' 'project_leaf-a-state|leaf-a-state')
+  selected_output=$(check_reset_runtime_inventory \
+    "$selected_services" "$selected_volumes" "$selected_containers" "$selected_volume_inventory" project)
+  [ -z "$selected_output" ]
+
+  unexpected_containers=$(printf '%s\n' 'pymtlf-root|Exited (0)' 'pymtlf-root|Created' 'unselected-service|Up 1 minute' '|Exited (0)')
+  unexpected_volumes=$(printf '%s\n' 'project_root-state|root-state' 'project_duplicate|root-state' 'project_unknown|unknown-state')
+  if unexpected_output=$(check_reset_runtime_inventory \
+      "$selected_services" "$selected_volumes" "$unexpected_containers" "$unexpected_volumes" project); then
+    echo "reset inventory accepted unexpected project resources" >&2
+    exit 1
+  fi
+  grep -Fx 'CONTAINER_DUPLICATE service=pymtlf-root status=Created retained=yes selected=yes' \
+    <<<"$unexpected_output" >/dev/null
+  grep -Fx 'CONTAINER_UNEXPECTED service=unselected-service status=Up 1 minute retained=yes selected=no' \
+    <<<"$unexpected_output" >/dev/null
+  grep -Fx 'CONTAINER_INVALID service=unknown status=Exited (0) retained=yes selected=no' \
+    <<<"$unexpected_output" >/dev/null
+  grep -Fx 'VOLUME_UNEXPECTED logical=root-state physical=project_duplicate expected=project_root-state retained=yes selected=no' \
+    <<<"$unexpected_output" >/dev/null
+  grep -Fx 'VOLUME_UNEXPECTED logical=unknown-state physical=project_unknown retained=yes selected=no' \
+    <<<"$unexpected_output" >/dev/null
+)
+echo "PASS reset exact-scope runtime inventory"
+
+(
+  source "$HOST_ROOT/scripts/host/lib.sh"
+  config_host_containers() { printf '%s\n' pymtlf-root; }
+  config_ml_volume_records() { printf '%s\n' 'root-state|image-a'; }
+  docker() {
+    if [ "$1" = ps ]; then
+      printf '%s\n' 'pymtlf-root|Exited (0)'
+    elif [ "$1" = volume ] && [ "$2" = ls ]; then
+      printf '%s\n' 'project_old-state|old-state'
+    else
+      echo "unexpected Docker command in ML inventory test: $*" >&2
+      return 2
+    fi
+  }
+  if assert_ml_runtime_identity ignored /unused start; then
+    echo "ML startup identity guard accepted an unexpected project volume" >&2
+    exit 1
+  fi
+)
+echo "PASS ML startup exact project inventory"
+
+(
+  source "$HOST_ROOT/scripts/host/lib.sh"
   activation_fixture=$(mktemp -d)
   activation_log="$activation_fixture/activation.log"
   trap 'rm -rf "$activation_fixture"' EXIT
@@ -499,6 +543,35 @@ echo "PASS partial Guest stop and inventory failure detection"
   fi
 )
 echo "PASS partial Guest config activation rollback"
+
+(
+  source "$HOST_ROOT/scripts/host/lib.sh"
+  MACHINES=(core path-a)
+  activation_fixture=$(mktemp -d)
+  trap 'rm -rf "$activation_fixture"' EXIT
+  printf '%s\n' fixture >"$activation_fixture/payload"
+  provider_vagrant() { :; }
+  vssh() {
+    local machine=$1 command=$2
+    case "$command" in
+      printf*) printf '/old/%s|old-%s\n' "$machine" "$machine" ;;
+      *"config-activate 'core' '/etc/5g-nwdaf-infrastructure/config-sets/"*) return 0 ;;
+      *"config-activate 'path-a' '/etc/5g-nwdaf-infrastructure/config-sets/"*) return 23 ;;
+      *"config-activate 'core' '/old/core' 'old-core'"*) return 29 ;;
+      *) return 0 ;;
+    esac
+  }
+  if activation_error=$(stage_config_all "$activation_fixture" selected-hash 2>&1); then
+    echo "partial config activation with rollback failure unexpectedly succeeded" >&2
+    exit 1
+  fi
+  if ! grep -Fq 'config activation rollback incomplete: core' <<<"$activation_error"; then
+    echo "rollback failure did not identify the exact machine" >&2
+    printf '%s\n' "$activation_error" >&2
+    exit 1
+  fi
+)
+echo "PASS config activation rollback failure attribution"
 
 (
   source "$HOST_ROOT/scripts/host/lib.sh"
@@ -601,6 +674,7 @@ echo "PASS isolated Vagrantfile Ruby syntax"
   trap 'rm -rf "$vagrantfile_fixture"' EXIT
   cp "$HOST_ROOT/Vagrantfile" "$vagrantfile_fixture/Vagrantfile"
   cp "$HOST_ROOT/testbed.yaml" "$vagrantfile_fixture/testbed.yaml"
+  cp "$HOST_ROOT/components.lock.yaml" "$vagrantfile_fixture/components.lock.yaml"
   if selection_output=$(cd "$vagrantfile_fixture" && env -u TESTBED \
       "$embedded_ruby" Vagrantfile 2>&1); then
     echo "Vagrantfile accepted a missing TESTBED selection" >&2

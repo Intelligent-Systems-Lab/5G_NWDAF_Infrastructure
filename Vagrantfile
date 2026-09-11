@@ -13,6 +13,25 @@ abort "testbed definition not found: #{definition_path}" unless File.file?(defin
 testbed = YAML.safe_load(File.read(definition_path), aliases: false)
 abort "unsupported testbed schema" unless testbed["schemaVersion"] == 1
 
+component_lock_path = File.join(ROOT, "components.lock.yaml")
+component_lock = YAML.safe_load(File.read(component_lock_path), aliases: false)
+abort "unsupported component lock schema" unless component_lock["schemaVersion"] == 1
+component_revisions = component_lock.fetch("components").to_h do |component|
+  [component.fetch("path"), component.fetch("commit")]
+end
+
+component_path_for_service = lambda do |service|
+  case service
+  when "mongodb" then nil
+  when "nrf", "nssf", "udr", "udm", "ausf", "pcf", "amf", "smf", "adrf"
+    "NFs/#{service}"
+  when /^nwdaf-/ then "NFs/nwdaf"
+  when /^upf-/ then "NFs/upf"
+  when /^gnb-/, /^ue[0-9]+$/ then "RAN/UERANSIM"
+  else abort "unsupported Guest service for component identity: #{service}"
+  end
+end
+
 legacy_local_path = File.join(ROOT, "testbed.local.yaml")
 abort "testbed.local.yaml is no longer supported; move topology settings into #{definition_path}" if File.exist?(legacy_local_path)
 requested_provider = ENV["VAGRANT_DEFAULT_PROVIDER"]
@@ -21,8 +40,13 @@ provider_name = "virtualbox"
 
 machines = testbed.fetch("machines")
 networks = testbed.fetch("networks")
-expected_names = %w[core path-a path-b]
-abort "machines must be exactly #{expected_names.join(', ')}" unless machines.keys.sort == expected_names.sort
+abort "machines must be a non-empty mapping" unless machines.is_a?(Hash) && !machines.empty?
+machines.each_key do |machine_name|
+  abort "invalid machine name: #{machine_name}" unless machine_name.match?(/\A[a-z0-9][a-z0-9-]*\z/)
+end
+placement = testbed.fetch("placement")
+abort "placement machine inventory must exactly match machines" unless \
+  (placement.keys - ["host-containers"]).sort == machines.keys.sort
 
 machines.each do |machine_name, machine|
   machine.fetch("interfaces").each do |network_name, address|
@@ -45,6 +69,14 @@ Vagrant.configure("2") do |config|
     ]
 
   machines.each do |machine_name, machine|
+    guest_services = placement.fetch(machine_name)
+    abort "placement.#{machine_name} must be non-empty" unless guest_services.is_a?(Array) && !guest_services.empty?
+    provision_inventory = guest_services.join(",")
+    revision_inventory = guest_services.filter_map { |service| component_path_for_service.call(service) }
+      .uniq.sort.map do |path|
+        "#{path}=#{component_revisions.fetch(path) { abort "component lock omits #{path}" }}"
+      end.join(",")
+    abort "component revision inventory is empty for #{machine_name}" if revision_inventory.empty?
     config.vm.define machine_name do |node|
       node.vm.hostname = "5g-nwdaf-#{machine_name}"
 
@@ -61,12 +93,12 @@ Vagrant.configure("2") do |config|
       end
       node.vm.provision "shell", path: "scripts/guest/common.sh",
         args: [machine_name], run: "once"
-      if machine_name == "core"
-        node.vm.provision "shell", path: "scripts/guest/core.sh", args: ["setup"], run: "once"
+      if guest_services.include?("mongodb")
+        node.vm.provision "shell", path: "scripts/guest/core.sh",
+          args: ["setup", provision_inventory, revision_inventory], run: "once"
       else
-        path_name = machine_name.end_with?("a") ? "A" : "B"
         node.vm.provision "shell", path: "scripts/guest/path.sh",
-          args: [path_name, "setup"], run: "once"
+          args: [machine_name, "setup", provision_inventory, revision_inventory], run: "once"
       end
 
     end
