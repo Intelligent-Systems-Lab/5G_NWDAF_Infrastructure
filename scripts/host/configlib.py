@@ -100,10 +100,11 @@ def image_scenario_contract(scenario):
     if not isinstance(seed, int) or isinstance(seed, bool) or seed < 0:
         raise ValueError("partition.seed must be a non-negative integer")
     training = scenario.get("training", {})
-    for field in ("acceptedRounds", "batchSize"):
+    for field in ("acceptedRounds", "batchSize", "localEpochs"):
         value = training.get(field)
         if not isinstance(value, int) or isinstance(value, bool) or value <= 0:
             raise ValueError("training.{} must be a positive integer".format(field))
+    local_epochs = training["localEpochs"]
     learning_rate = training.get("learningRate")
     if (
         not isinstance(learning_rate, (int, float))
@@ -111,15 +112,85 @@ def image_scenario_contract(scenario):
         or learning_rate <= 0
     ):
         raise ValueError("training.learningRate must be positive")
-    if training.get("device") != "cpu":
-        raise ValueError("image-classification scenario training.device must be cpu")
+    if "device" in training:
+        raise ValueError(
+            "image-classification scenario must not duplicate TESTBED-owned device selection"
+        )
+    fault = scenario.get("fault")
+    observation = scenario.get("observation")
+    if fault is None:
+        if training["acceptedRounds"] != 2:
+            raise ValueError("normal image scenario training.acceptedRounds must be 2")
+        if local_epochs != 1:
+            raise ValueError("normal image scenario training.localEpochs must be 1")
+        if observation is not None:
+            raise ValueError("normal image scenario must not define replacement observation")
+        return scenario
+    if not isinstance(fault, dict) or set(fault) != {
+        "mode", "branchGroup", "normalAcceptedRounds", "restoredAcceptedRounds",
+    }:
+        raise ValueError("branch replacement fault contract has invalid fields")
+    if fault.get("mode") != "branch-replacement":
+        raise ValueError("fault.mode must be branch-replacement")
+    if not isinstance(fault.get("branchGroup"), str) or not fault["branchGroup"]:
+        raise ValueError("fault.branchGroup must be a non-empty group name")
+    if fault.get("normalAcceptedRounds") != 2:
+        raise ValueError("fault.normalAcceptedRounds must be 2")
+    if fault.get("restoredAcceptedRounds") != 1:
+        raise ValueError("fault.restoredAcceptedRounds must be 1")
+    if training["acceptedRounds"] != 8:
+        raise ValueError("branch replacement training.acceptedRounds must be 8")
+    if partition["samplesPerLeaf"] != 8000 or local_epochs != 32:
+        raise ValueError(
+            "branch replacement workload must use 8000 samples per Leaf and 32 local epochs"
+        )
+    if not isinstance(observation, dict) or set(observation) != {
+        "pollIntervalMilliseconds", "heartbeatSeconds",
+    }:
+        raise ValueError("branch replacement observation contract has invalid fields")
+    if observation.get("pollIntervalMilliseconds") != 250:
+        raise ValueError("observation.pollIntervalMilliseconds must be 250")
+    if observation.get("heartbeatSeconds") != 30:
+        raise ValueError("observation.heartbeatSeconds must be 30")
     return scenario
 
 
-def protocol_topology(testbed):
+def resolve_branch_replacement(testbed, scenario):
+    """Resolve the faulted Branch group without selecting on behalf of the Root."""
+    image_scenario_contract(scenario)
+    fault = scenario.get("fault")
+    if fault is None:
+        raise ValueError("scenario does not define a branch replacement fault")
+    protocol_topology(testbed, scenario["training"]["localEpochs"])
+    groups = testbed["analytics"]["protocolTopology"]["branchGroups"]
+    matches = [group for group in groups if group.get("name") == fault["branchGroup"]]
+    if len(matches) != 1:
+        raise ValueError("fault.branchGroup must resolve exactly one protocol group")
+    enabled = [item for item in matches[0]["branches"] if item.get("enabled") is True]
+    if len(enabled) < 2:
+        raise ValueError("fault Branch group requires a primary and replacement candidate")
+    priorities = [item["priority"] for item in enabled]
+    if len(priorities) != len(set(priorities)):
+        raise ValueError("fault Branch candidates require unique priorities")
+    ordered = sorted(enabled, key=lambda item: item["priority"], reverse=True)
+    definitions = {item["unit"]: item for item in nwdaf_definitions(testbed)}
+    return {
+        "group": fault["branchGroup"],
+        "primary": copy.deepcopy(definitions[ordered[0]["node"]]),
+        "replacement": copy.deepcopy(definitions[ordered[1]["node"]]),
+    }
+
+
+def protocol_topology(testbed, local_epochs):
     """Resolve logical node references into the current PyMTLF topology contract."""
     if deployment_kind(testbed) != "protocol-hierarchical":
         raise ValueError("selected TESTBED is not protocol-hierarchical")
+    if (
+        not isinstance(local_epochs, int)
+        or isinstance(local_epochs, bool)
+        or local_epochs <= 0
+    ):
+        raise ValueError("Leaf local epochs must be a positive integer")
     definitions = {item["unit"]: item for item in nwdaf_definitions(testbed)}
     source = testbed.get("analytics", {}).get("protocolTopology")
     if not isinstance(source, dict):
@@ -134,16 +205,23 @@ def protocol_topology(testbed):
         node = candidate.get("node")
         if node not in definitions or definitions[node].get("role") != role:
             raise ValueError("protocol topology references an invalid {} node".format(role))
-        report = candidate.get("reportAfter")
-        expected_unit = "round" if role == "branch" else "epoch"
-        if (
-            not isinstance(report, dict)
-            or not isinstance(report.get("count"), int)
-            or isinstance(report.get("count"), bool)
-            or report["count"] <= 0
-            or report.get("unit") != expected_unit
-        ):
-            raise ValueError("{} {} has an invalid reportAfter".format(role, node))
+        if role == "branch":
+            report = candidate.get("reportAfter")
+            if (
+                not isinstance(report, dict)
+                or not isinstance(report.get("count"), int)
+                or isinstance(report.get("count"), bool)
+                or report["count"] <= 0
+                or report.get("unit") != "round"
+            ):
+                raise ValueError("branch {} has an invalid reportAfter".format(node))
+            report_after = {"count": report["count"], "unit": "round"}
+        else:
+            if "reportAfter" in candidate:
+                raise ValueError(
+                    "leaf {} must not define TESTBED reportAfter".format(node)
+                )
+            report_after = {"count": local_epochs, "unit": "epoch"}
         priority = candidate.get("priority")
         if not isinstance(priority, int) or isinstance(priority, bool):
             raise ValueError("{} {} priority must be an integer".format(role, node))
@@ -153,7 +231,7 @@ def protocol_topology(testbed):
             "nf_instance_id": definitions[node]["nfInstanceId"],
             "enabled": candidate["enabled"],
             "priority": priority,
-            "report_after": {"count": report["count"], "unit": report["unit"]},
+            "report_after": report_after,
         }
 
     native_groups = []
@@ -350,6 +428,8 @@ def expected_runtime_inventory(testbed):
     gpu_participants = 0
     for name in containers:
         service = services[name]
+        if service.get("device") not in ("cpu", "cuda:0"):
+            raise ValueError("mlRuntime.services.{}.device must be cpu or cuda:0".format(name))
         port = service.get("publishedPort")
         if not isinstance(port, int) or port in published:
             raise ValueError("ML published ports must be unique integers")
@@ -426,6 +506,23 @@ def expected_runtime_inventory(testbed):
         raise ValueError("hostSafety.containerBuildOverheadMemoryMiB must be non-negative")
     if not isinstance(gpu_memory, int) or gpu_memory < 0:
         raise ValueError("hostSafety.minimumGpuMemoryMiB must be non-negative")
+    if kind == "protocol-hierarchical":
+        accelerated = {
+            item["backends"]["mtlf"]
+            for item in nwdaf_definitions(testbed)
+            if item["role"] in ("root", "leaf")
+        }
+        actual_accelerated = {
+            name for name in containers if services[name]["device"] == "cuda:0"
+        }
+        if actual_accelerated not in (set(), accelerated):
+            raise ValueError(
+                "protocol runtime must assign CUDA to Root and all Leaves, or use CPU for all"
+            )
+        if actual_accelerated and gpu_memory < 8192:
+            raise ValueError(
+                "protocol GPU runtime requires at least 8192 MiB pre-start free memory"
+            )
     runtime = {
         "deploymentKind": kind,
         "guestMachines": machines,

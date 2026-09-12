@@ -94,7 +94,12 @@ def main():
         elif native.get("federated_learning", {}).get("client") is not None:
             configured_device = native["federated_learning"]["client"]["training"]["device"]
         else:
-            configured_device = "cpu"
+            configured_device = (
+                native.get("federated_learning", {})
+                .get("experiment_recording", {})
+                .get("validation", {})
+                .get("device", "cpu")
+            )
         image_type = expected["image"]
         check.equal(name + " build target", service.get("build", {}).get("target"), image_type)
         check.equal(name + " image", service.get("image"), "5g-nwdaf-infrastructure/{}:local".format(image_type))

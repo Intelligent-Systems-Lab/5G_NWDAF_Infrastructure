@@ -13,7 +13,7 @@ guest:
 hostSafety:
   reserveMemoryMiB: 6144
   containerBuildOverheadMemoryMiB: 2048
-  minimumGpuMemoryMiB: 0
+  minimumGpuMemoryMiB: 8192
   swapPolicy: warn
   minimumFreeSwapMiB: 1024
   minimumFreeStorageGiB: 120
@@ -86,7 +86,7 @@ mlRuntime:
       image: pymtlf
       publishedPort: 9292
       containerPort: 9092
-      device: cpu
+      device: cuda:0
       cpus: 1.0
       memoryMiB: 1024
       volume: {name: pymtlf-root-data, target: /var/lib/5g-nwdaf-infrastructure/pymtlf-root}
@@ -126,49 +126,49 @@ mlRuntime:
       image: pymtlf
       publishedPort: 9092
       containerPort: 9092
-      device: cpu
+      device: cuda:0
       cpus: 1.0
-      memoryMiB: 768
+      memoryMiB: 2048
       volume: {name: pymtlf-leaf-a1-data, target: /var/lib/5g-nwdaf-infrastructure/pymtlf-leaf-a1}
     pymtlf-leaf-a2:
       image: pymtlf
       publishedPort: 9093
       containerPort: 9092
-      device: cpu
+      device: cuda:0
       cpus: 1.0
-      memoryMiB: 768
+      memoryMiB: 2048
       volume: {name: pymtlf-leaf-a2-data, target: /var/lib/5g-nwdaf-infrastructure/pymtlf-leaf-a2}
     pymtlf-leaf-b1:
       image: pymtlf
       publishedPort: 9094
       containerPort: 9092
-      device: cpu
+      device: cuda:0
       cpus: 1.0
-      memoryMiB: 768
+      memoryMiB: 2048
       volume: {name: pymtlf-leaf-b1-data, target: /var/lib/5g-nwdaf-infrastructure/pymtlf-leaf-b1}
     pymtlf-leaf-b2:
       image: pymtlf
       publishedPort: 9095
       containerPort: 9092
-      device: cpu
+      device: cuda:0
       cpus: 1.0
-      memoryMiB: 768
+      memoryMiB: 2048
       volume: {name: pymtlf-leaf-b2-data, target: /var/lib/5g-nwdaf-infrastructure/pymtlf-leaf-b2}
     pymtlf-leaf-c1:
       image: pymtlf
       publishedPort: 9096
       containerPort: 9092
-      device: cpu
+      device: cuda:0
       cpus: 1.0
-      memoryMiB: 768
+      memoryMiB: 2048
       volume: {name: pymtlf-leaf-c1-data, target: /var/lib/5g-nwdaf-infrastructure/pymtlf-leaf-c1}
     pymtlf-leaf-c2:
       image: pymtlf
       publishedPort: 9097
       containerPort: 9092
-      device: cpu
+      device: cuda:0
       cpus: 1.0
-      memoryMiB: 768
+      memoryMiB: 2048
       volume: {name: pymtlf-leaf-c2-data, target: /var/lib/5g-nwdaf-infrastructure/pymtlf-leaf-c2}
 
 analytics:
@@ -265,8 +265,8 @@ analytics:
           - {node: nwdaf-branch-a-primary, enabled: true, priority: 100, reportAfter: {count: 1, unit: round}}
           - {node: nwdaf-branch-a-replacement, enabled: true, priority: 50, reportAfter: {count: 1, unit: round}}
         leaves:
-          - {node: nwdaf-leaf-a1, enabled: true, priority: 100, reportAfter: {count: 1, unit: epoch}}
-          - {node: nwdaf-leaf-a2, enabled: true, priority: 90, reportAfter: {count: 1, unit: epoch}}
+          - {node: nwdaf-leaf-a1, enabled: true, priority: 100}
+          - {node: nwdaf-leaf-a2, enabled: true, priority: 90}
         policy:
           allow_additional_candidates: false
           additional_candidate_priority: 0
@@ -284,8 +284,8 @@ analytics:
         branches:
           - {node: nwdaf-branch-b, enabled: true, priority: 100, reportAfter: {count: 1, unit: round}}
         leaves:
-          - {node: nwdaf-leaf-b1, enabled: true, priority: 100, reportAfter: {count: 1, unit: epoch}}
-          - {node: nwdaf-leaf-b2, enabled: true, priority: 90, reportAfter: {count: 1, unit: epoch}}
+          - {node: nwdaf-leaf-b1, enabled: true, priority: 100}
+          - {node: nwdaf-leaf-b2, enabled: true, priority: 90}
         policy:
           allow_additional_candidates: false
           additional_candidate_priority: 0
@@ -303,8 +303,8 @@ analytics:
         branches:
           - {node: nwdaf-branch-c, enabled: true, priority: 100, reportAfter: {count: 1, unit: round}}
         leaves:
-          - {node: nwdaf-leaf-c1, enabled: true, priority: 100, reportAfter: {count: 1, unit: epoch}}
-          - {node: nwdaf-leaf-c2, enabled: true, priority: 90, reportAfter: {count: 1, unit: epoch}}
+          - {node: nwdaf-leaf-c1, enabled: true, priority: 100}
+          - {node: nwdaf-leaf-c2, enabled: true, priority: 90}
         policy:
           allow_additional_candidates: false
           additional_candidate_priority: 0

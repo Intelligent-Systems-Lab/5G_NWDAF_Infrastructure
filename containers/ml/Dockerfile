@@ -92,6 +92,7 @@ RUN uv export --quiet --frozen --no-dev --no-emit-project --format requirements-
 COPY ML/PyMTLF/run.py ./run.py
 COPY ML/PyMTLF/src ./src
 COPY ML/PyMTLF/tools/import_seed_model.py ./tools/import_seed_model.py
+COPY ML/PyMTLF/tools/evaluate_image_model.py ./tools/evaluate_image_model.py
 COPY ML/PyMTLF/seed_models ./seed_models
 COPY --chmod=0755 containers/ml/pymtlf-entrypoint.sh ./pymtlf-entrypoint.sh
 

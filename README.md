@@ -119,6 +119,40 @@ operating an old active runtime. Canonical normal-topology acceptance requires
 at least two accepted hierarchical rounds for each dataset; Branch failure and
 replacement are intentionally outside this workflow.
 
+For the bounded GPU Branch-replacement flow, select one of the dedicated
+scenarios and keep the canonical config directory. The foreground runner starts
+the selected processes, submits the request, hard fail-stops the exact Area A
+primary Guest NWDAF and Host PyMTLF with `SIGKILL` after two accepted rounds,
+prevents either process from automatically restarting, observes the Root's
+priority-based replacement, collects the final model and held-out result, then
+stops and resets the selected experiment state:
+
+```sh
+make config-create \
+  FROM=experiments/protocol-hierarchical/branch-replacement/mnist/scenario.yaml \
+  DEVICE=gpu FORCE=true
+make dataset-generate
+make vm-up
+make fl-branch-replacement-run RUN_NAME=123
+```
+
+The runner creates and checkpoints the UUIDv4 request identity before submitting
+training. If training completed but final collection or held-out evaluation
+failed, retry only that stage without retraining:
+
+```sh
+make fl-branch-replacement-collect RUN_NAME=123
+```
+
+Repeat with the CIFAR-10 scenario and a new run name only after the first runner has
+reported successful cleanup. Each run must produce eight accepted rounds and at
+least one round containing the priority-selected replacement. Evidence is kept
+under ignored `runs/protocol-hierarchical/<dataset>/<run-name>/` as
+`events.jsonl`, `run.json`, and `final-root-model.tar.gz`; bounded diagnostics
+are added only on failure. The runner does not control replacement preparation
+timing or silently fall back to CPU. VMs remain running after the selected
+process and data reset.
+
 ## Legacy production topology reference
 
 | Location | Main processes |

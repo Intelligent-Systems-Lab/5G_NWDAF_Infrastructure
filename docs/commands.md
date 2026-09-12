@@ -2,8 +2,8 @@
 
 The Make interface is layered so normal operators can use a small workflow
 while advanced and developer commands remain available. `TESTBED` defaults to
-`testbed.yaml`; commands accepting `CONFIG_DIR` otherwise use that testbed's
-`config.directory`.
+`testbed.protocol-hierarchical.yaml`; commands accepting `CONFIG_DIR` otherwise
+use that testbed's `config.directory`.
 
 ## Help and aggregate experiment lifecycle
 
@@ -24,10 +24,10 @@ while advanced and developer commands remain available. `TESTBED` defaults to
 
 | Command | Function and effect |
 | --- | --- |
-| `make config-create TESTBED=... NAME=... FROM=experiments/.../scenario.yaml DEVICE=... WEBCONSOLE=...` | Render an ignored config under `config/local/NAME`. `TESTBED` selects one complete production Flat, static Flat, or static Hierarchical definition; static definitions require `WEBCONSOLE=false`. |
+| `make config-create TESTBED=... NAME=... FROM=experiments/.../scenario.yaml DEVICE=... WEBCONSOLE=...` | Render an ignored config under `config/local/NAME`. `TESTBED` selects one complete production Flat, static Flat, static Hierarchical, or protocol Hierarchical definition; non-production definitions require `WEBCONSOLE=false`. |
 | `make config-validate CONFIG_DIR=...` | Diagnose native fields plus cross-file topology, endpoint, identity, timing, fixture, and manifest relationships against `TESTBED`. Read-only; findings do not block startup. |
-| `make dataset-generate CONFIG_DIR=...` | Generate or reuse the content-addressed Path A/B Parquet set described by the selected config. Writes ignored artifacts. |
-| `make dataset-validate CONFIG_DIR=...` | Audit actual Parquet files and their manifest, schema, hashes, rows, IPs, timestamps, and scenario capacity. Read-only. |
+| `make dataset-generate CONFIG_DIR=...` | Generate or reuse the selected scenario's ignored dataset artifacts. Protocol image scenarios create deterministic Leaf shards plus separate Root validation and held-out sets. |
+| `make dataset-validate CONFIG_DIR=...` | Validate the selected dataset's native structure and scenario semantics. Read-only. |
 | `make dataset-show CONFIG_DIR=...` | Verify and print dataset identity plus per-Path artifact, aggregation, reporting, timeline, model-window, trigger, and sample summaries. Read-only. |
 | `make dataset-load CONFIG_DIR=...` | Upload, verify, and atomically activate only the matching dataset on each Path VM. Changes guest dataset state. |
 
@@ -37,12 +37,12 @@ while advanced and developer commands remain available. `TESTBED` defaults to
 | --- | --- |
 | `make vm-up` | After a fail-closed Host process/Vagrant UUID and state preflight, create/provision missing VMs or power on existing Core/Path VMs. Does not start experiment processes. |
 | `make vm-status` | Show Vagrant VM power state from an approved Host context; this provider query does not prove that no orphan process exists. |
-| `make vm-halt` | Gracefully power off all three VMs without deleting them. |
+| `make vm-halt` | Gracefully power off all selected VMs without deleting them. |
 | `make services-start CONFIG_DIR=...` | Sync helpers, stage config/data, apply subscriber fixtures, and start guest units in dependency order. Does not start ML or subscriptions. |
-| `make services-status CONFIG_DIR=...` | Show manifest-selected guest units plus current-invocation Registration/PDU readiness for six or eight UEs. Read-only. |
+| `make services-status CONFIG_DIR=...` | Show manifest-selected Guest units and the readiness evidence applicable to the selected deployment. Read-only. |
 | `make services-stop CONFIG_DIR=...` | Stop manifest-selected guest experiment units in reverse order without halting VMs or deleting persistent data. |
-| `make ml-start CONFIG_DIR=...` | Enforce bind-address and CPU/GPU requirements, build/reuse images, and start the selected five or seven containers. |
-| `make ml-status CONFIG_DIR=...` | Show selected container/device/image identity. Production Flat renders the A/B/C milestone summary, static Flat renders the Server/four-Client publication and exact cleanup summary, and static Hierarchical remains explicitly unevaluated until its execution phase. |
+| `make ml-start CONFIG_DIR=...` | Enforce bind-address and CPU/GPU requirements, build/reuse images, and start the manifest-selected containers. |
+| `make ml-status CONFIG_DIR=...` | Show selected container/device/image identity and the deployment-specific status view when one exists. |
 | `make ml-stop CONFIG_DIR=...` | Stop only the Compose project's running containers and retain containers, images, and selected volumes. |
 | `make webconsole-start CONFIG_DIR=...` | If enabled, prepare/reuse the Core artifact and start WebConsole. MongoDB and NRF must be active. |
 | `make webconsole-status` | Show the WebConsole unit and endpoint state. Read-only. |
@@ -67,6 +67,42 @@ or contradictory resource fails closed.
 | `make fl-collection-stop TESTBED=... CONFIG_DIR=... RUN_ID=...` | Delete the four exact peer collection resources and succeed only after every request retains its descriptor with zero active/pending peer resources and no cleanup pending. |
 | `make fl-training-start TESTBED=... CONFIG_DIR=... RUN_ID=... [MODEL_FAMILY_ID=...]` | Require four current retained descriptors, resolve the selected Server family, and create or idempotently recover one manual static Flat training request. |
 | `make fl-training-status TESTBED=... CONFIG_DIR=... RUN_ID=... [MODEL_FAMILY_ID=...]` | Show the exact top-level request identity, family, mode, participant source, state, rounds, candidate digest, and bounded failure detail. Read-only. |
+
+## Protocol Hierarchical Branch replacement flow
+
+`make fl-branch-replacement-run TESTBED=... CONFIG_DIR=... RUN_NAME=...` accepts
+only a generated protocol Hierarchical Branch-replacement scenario with seven
+GPU participants. It starts the selected Guest and Host processes, submits one
+eight-accepted-round request, sends `SIGKILL` to the exact highest-priority Area
+A Branch pair after two normal rounds have completed and the next round is in
+flight, verifies both original processes are dead, and prevents automatic
+restart. The Guest unit is frozen with `SIGSTOP` while its Host backend is still
+available, and the Host container is then frozen with `SIGSTOP`. Only after both
+application owners are unable to run cleanup does the runner install the Guest
+runtime mask and terminate both original processes with `SIGKILL`. This ordering
+also prevents either owner from observing the other owner's failure and deleting
+the downstream Leaf resources. The mask prevents `Restart=on-failure` from
+undoing the injected crash; normal cleanup removes it after all selected
+processes have stopped. The runner then observes the Root's natural priority replacement. It collects the Root
+event stream, final model, and held-out result before stopping and resetting the
+exact selected runtime. The operator-facing run name identifies the local evidence
+directory; the runner generates and checkpoints the UUIDv4 request identity before
+submitting training. It retains the selected VMs, images, datasets, and run evidence.
+
+If training reached its terminal checkpoint but final artifact collection,
+evidence finalization, or held-out evaluation failed, run
+`make fl-branch-replacement-collect TESTBED=... CONFIG_DIR=... RUN_NAME=<same-name>`.
+This entrypoint reuses the checkpoint and persistent Root experiment record; it
+does not submit training or create a new request identity. Successful collection
+then performs the normal exact reset.
+
+Normal output contains milestones and a 30-second heartbeat. Successful evidence
+is written below `runs/protocol-hierarchical/<dataset>/<run-name>/`; general
+container and Guest logs are collected into its optional `diagnostics/`
+directory only when the run fails. The runner fails closed on a selected/active
+identity mismatch, fewer than seven actual CUDA participants, a missed fault
+barrier, the wrong replacement identity, incomplete round/evaluation evidence,
+or incomplete cleanup.
 
 Collection stop retains the stored descriptor and data for the configured
 retention window; it is not a data reset. If more than one retained collection

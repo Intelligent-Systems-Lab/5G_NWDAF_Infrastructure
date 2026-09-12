@@ -60,6 +60,43 @@ runtime choices such as device, batch size, learning rate, validation ratio,
 and random seed, but a federated Client config must not declare its own
 `epochs`.
 
+### Protocol image-classification scenarios
+
+An image scenario uses `workload.profile: image-classification` and selects
+MNIST or CIFAR-10 plus its component-native model identity. `partition` owns the
+seed and Leaf/validation/held-out sample counts. `training` owns accepted rounds,
+batch size, learning rate, and the required positive `localEpochs`; it must not
+contain a device. Physical device assignment belongs to
+`TESTBED.mlRuntime.services`, while `DEVICE=cpu` remains the coordinated
+render-time fallback.
+
+For protocol Hierarchical image scenarios, `training.localEpochs` is the only
+operator-authored Leaf epoch value. Normal scenarios set it to `1`, and the
+Branch-replacement scenarios set it to `32`. The renderer uses that value and
+the Leaf role to generate each native
+`report_after: {count: <localEpochs>, unit: epoch}` instruction. It does not use
+a default when the field is absent.
+
+The retained normal scenarios contain two accepted rounds and no fault block.
+A Branch-replacement scenario contains eight accepted rounds, 8,000 samples per
+Leaf, 32 local epochs, plus:
+
+```yaml
+fault:
+  mode: branch-replacement
+  branchGroup: area-a
+  normalAcceptedRounds: 2
+  restoredAcceptedRounds: 1
+observation:
+  pollIntervalMilliseconds: 250
+  heartbeatSeconds: 30
+```
+
+The group name is resolved against the selected protocol topology. The runner
+stops its current highest-priority Branch pair, but the Root remains responsible
+for selecting and preparing the next candidate. No scenario field fixes a
+degraded-round count or gates replacement timing.
+
 ## Committed examples
 
 - `experiments/examples/full-core-cat-transition/scenario.yaml` is the business
@@ -70,4 +107,4 @@ and random seed, but a federated Client config must not declare its own
 
 Copy an entire example directory to `experiments/local/` before modifying it.
 The local directory is ignored; generated configs record the selected path and
-content hash.
+validated scenario semantics.

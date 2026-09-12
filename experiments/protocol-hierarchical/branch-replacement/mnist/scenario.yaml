@@ -1,5 +1,5 @@
 schemaVersion: 2
-name: protocol-hierarchical-mnist
+name: protocol-hierarchical-branch-replacement-mnist
 kind: bounded-smoke
 workload:
   profile: image-classification
@@ -11,11 +11,19 @@ workload:
   seedArtifactKey: 5cdf82a5fa073eee543bd101f15402df1fdc082f70dfbe38942aa9cfe8e81b84
 partition:
   seed: 42
-  samplesPerLeaf: 100
+  samplesPerLeaf: 8000
   validationSamples: 200
   heldOutSamples: 200
 training:
-  acceptedRounds: 2
+  acceptedRounds: 8
   batchSize: 16
   learningRate: 0.001
-  localEpochs: 1
+  localEpochs: 32
+fault:
+  mode: branch-replacement
+  branchGroup: area-a
+  normalAcceptedRounds: 2
+  restoredAcceptedRounds: 1
+observation:
+  pollIntervalMilliseconds: 250
+  heartbeatSeconds: 30

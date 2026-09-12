@@ -410,7 +410,7 @@ def render_protocol_pymtlf(testbed, output, item, scenario, allowed_origins):
             "round_timeout_seconds": testbed["operations"]["roundTimeoutSeconds"],
             "round_count": scenario["training"]["acceptedRounds"],
             "max_active_processes": 1,
-            "client_training": {"epochs": 1},
+            "client_training": {"epochs": scenario["training"]["localEpochs"]},
         })
     if item["role"] == "root":
         fl["topology"] = {
@@ -423,7 +423,7 @@ def render_protocol_pymtlf(testbed, output, item, scenario, allowed_origins):
         fl["experiment_recording"]["validation"] = {
             "dataset": scenario["workload"]["dataset"],
             "path": "/data/validation.npz",
-            "device": "cpu",
+            "device": service["device"],
             "batch_size": 128,
         }
         fl.pop("strategy", None)
@@ -441,6 +441,7 @@ def render_protocol_pymtlf(testbed, output, item, scenario, allowed_origins):
             public_origin + "/internal/v1/ml-model-monitor/notifications"
         )
     elif item["role"] == "branch":
+        fl["client"]["training"]["device"] = service["device"]
         fl.pop("orchestration", None)
         fl.pop("topology", None)
         fl.pop("training_trigger", None)
@@ -459,7 +460,7 @@ def render_protocol_pymtlf(testbed, output, item, scenario, allowed_origins):
             scenario["workload"]["modelInteroperability"]
         ]
         client["training"].update({
-            "device": "cpu",
+            "device": service["device"],
             "batch_size": scenario["training"]["batchSize"],
             "learning_rate": scenario["training"]["learningRate"],
             "validation_ratio": 0.1,
@@ -510,7 +511,11 @@ def render_protocol(testbed, output, scenario):
     adrf_native["locality"] = "protocol-hierarchical"
     write(output, "adrfcfg.yaml", adrf)
 
-    write(output, "topology/protocol-hierarchical.yaml", protocol_topology(testbed))
+    write(
+        output,
+        "topology/protocol-hierarchical.yaml",
+        protocol_topology(testbed, scenario["training"]["localEpochs"]),
+    )
     for machine, network in guest_network_configs(testbed, include_consumer=False).items():
         write(output, "network/{}.yaml".format(machine), network)
     origins = protocol_origins(testbed)
@@ -1060,6 +1065,11 @@ def main():
     }
     if kind == "protocol-hierarchical":
         manifest["scenario"]["workload"] = copy.deepcopy(scenario["workload"])
+        manifest["scenario"]["partition"] = copy.deepcopy(scenario["partition"])
+        manifest["scenario"]["training"] = copy.deepcopy(scenario["training"])
+        for section in ("fault", "observation"):
+            if section in scenario:
+                manifest["scenario"][section] = copy.deepcopy(scenario[section])
     try:
         topology_path = testbed_path.relative_to(ROOT).as_posix()
     except ValueError:

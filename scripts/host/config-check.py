@@ -14,7 +14,7 @@ from configlib import (
     ROOT, SCENARIO_SCHEMA, get_path, deployment_kind,
     expected_runtime_inventory, guest_network_configs,
     image_scenario_contract, load_runtime_manifest, load_yaml, nwdaf_definitions,
-    protocol_topology, resolve_config_dir,
+    protocol_topology, resolve_branch_replacement, resolve_config_dir,
     repository_relative_paths, resolve_config_scenario, resolve_ml_bind_address,
     resolve_mobile_identities, resolve_path, resolve_scenario_profile_paths,
     sha256_tree,
@@ -506,6 +506,11 @@ def check_protocol(testbed_path, testbed, config_dir, check):
     check.equal("Guest NWDAF count", len(runtime["nwdafs"]), 11)
     check.equal("Host PyMTLF count", len(runtime["hostContainers"]), 11)
     check.equal("ML volume count", len(runtime["mlVolumes"]), 11)
+    check.equal(
+        "protocol GPU admission floor",
+        testbed.get("hostSafety", {}).get("minimumGpuMemoryMiB"),
+        8192,
+    )
 
     required = required_files(testbed)
     missing = sorted(name for name in required if not (config_dir / name).is_file())
@@ -529,13 +534,36 @@ def check_protocol(testbed_path, testbed, config_dir, check):
         check.true("invalid image scenario contract: {}".format(exc), False)
         return finish(check, testbed_path, config_dir)
     check.equal("scenario schema", scenario.get("schemaVersion"), SCENARIO_SCHEMA)
-    check.equal("scenario accepted rounds", scenario["training"]["acceptedRounds"], 2)
+    if scenario.get("fault") is not None:
+        try:
+            resolve_branch_replacement(testbed, scenario)
+        except (KeyError, TypeError, ValueError) as exc:
+            check.true("invalid branch replacement target: {}".format(exc), False)
 
     manifest = check_manifest_exact(check, testbed_path, testbed, config_dir, actual_files)
     if manifest is None:
         return finish(check, testbed_path, config_dir)
     check.equal("manifest scenario name", manifest.get("scenario", {}).get("name"), scenario["name"])
     check.equal("manifest scenario workload", manifest.get("scenario", {}).get("workload"), scenario["workload"])
+    check.equal("manifest scenario partition", manifest.get("scenario", {}).get("partition"), scenario["partition"])
+    check.equal("manifest scenario training", manifest.get("scenario", {}).get("training"), scenario["training"])
+    for section in ("fault", "observation"):
+        check.equal(
+            "manifest scenario {}".format(section),
+            manifest.get("scenario", {}).get(section),
+            scenario.get(section),
+        )
+    device_policy = manifest["runtime"]["mlDevicePolicy"]
+    check.equal(
+        "protocol GPU participant count",
+        manifest["runtime"]["capacity"]["gpuParticipants"],
+        7 if device_policy == "gpu" else 0,
+    )
+    check.equal(
+        "protocol effective GPU admission floor",
+        manifest["runtime"]["capacity"]["minimumGpuMemoryMiB"],
+        8192 if device_policy == "gpu" else 0,
+    )
     dataset_root = ROOT / ".generated" / "image-datasets" / scenario["name"]
     expected_datasets = {
         "root": str(dataset_root),
@@ -551,7 +579,7 @@ def check_protocol(testbed_path, testbed, config_dir, check):
     check.equal(
         "native protocol topology",
         load_yaml(config_dir / "topology" / "protocol-hierarchical.yaml"),
-        protocol_topology(testbed),
+        protocol_topology(testbed, scenario["training"]["localEpochs"]),
     )
     for machine, expected in guest_network_configs(testbed, include_consumer=False).items():
         check.equal(
@@ -579,6 +607,11 @@ def check_protocol(testbed_path, testbed, config_dir, check):
             unit + " MTLF backend", native.get("mtlfBackend", {}).get("endpoint"),
             uri(testbed["mlRuntime"]["advertisedAddress"], ml_services[backend_name]["publishedPort"]),
         )
+        check.equal(
+            unit + " MTLF request timeout",
+            native.get("mtlfBackend", {}).get("requestTimeout"),
+            testbed["operations"]["serviceReadyTimeoutSeconds"],
+        )
         capability = native["nwdafInfo"]["mlAnalyticsList"][0]
         check.equal(
             unit + " FL capability", capability.get("flCapabilityType"),
@@ -591,7 +624,55 @@ def check_protocol(testbed_path, testbed, config_dir, check):
         check.equal(backend_name + " port", pymtlf["server"]["port"], ml_services[backend_name]["containerPort"])
         check.equal(backend_name + " containing NWDAF", pymtlf["containing_nwdaf"]["internal_api_root"], uri(definition["sbi"]["address"], 8091))
         check_pymtlf_data_paths(check, backend_name, pymtlf)
-        client = pymtlf.get("federated_learning", {}).get("client")
+        fl = pymtlf.get("federated_learning", {})
+        client = fl.get("client")
+        server = fl.get("server")
+        expected_device = (
+            "cpu" if device_policy == "cpu" else ml_services[backend_name]["device"]
+        )
+        if client is not None:
+            check.equal(
+                backend_name + " training device",
+                client.get("training", {}).get("device"),
+                expected_device,
+            )
+        if server is not None:
+            check.equal(
+                backend_name + " preparation timeout",
+                server.get("preparation_timeout_seconds"),
+                testbed["operations"]["preparationTimeoutSeconds"],
+            )
+            check.equal(
+                backend_name + " preparation data window",
+                server.get("preparation_data_window_seconds"),
+                testbed["operations"]["preparationDataWindowSeconds"],
+            )
+            check.equal(
+                backend_name + " round timeout",
+                server.get("round_timeout_seconds"),
+                testbed["operations"]["roundTimeoutSeconds"],
+            )
+            check.equal(
+                backend_name + " accepted rounds",
+                server.get("round_count"),
+                scenario["training"]["acceptedRounds"],
+            )
+            check.equal(
+                backend_name + " local epochs",
+                server.get("client_training", {}).get("epochs"),
+                scenario["training"]["localEpochs"],
+            )
+        check.equal(
+            backend_name + " artifact download timeout",
+            fl.get("artifact_download", {}).get("timeout_seconds"),
+            testbed["operations"]["roundTimeoutSeconds"],
+        )
+        if definition["role"] == "root":
+            check.equal(
+                backend_name + " validation device",
+                fl.get("experiment_recording", {}).get("validation", {}).get("device"),
+                expected_device,
+            )
         if definition["role"] == "leaf":
             check.equal(backend_name + " dataset", client.get("training_data", {}).get("dataset"), scenario["workload"]["dataset"])
             check.equal(backend_name + " shard", client.get("training_data", {}).get("shard_path"), "/data/train.npz")

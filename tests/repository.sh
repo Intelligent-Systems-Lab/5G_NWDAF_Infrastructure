@@ -629,6 +629,7 @@ python3 "$HOST_ROOT/tests/runtime-inventory.py"
 python3 "$HOST_ROOT/tests/consumer-state.py"
 python3 "$HOST_ROOT/tests/ml-status.py"
 python3 "$HOST_ROOT/tests/fl-control.py"
+python3 "$HOST_ROOT/tests/branch-replacement.py"
 (
   source "$HOST_ROOT/scripts/host/subscriptions-status.sh"
   state_fixture='{"status":"active","notificationCount":3,"subscriptions":[{"path":"a","status":"active","nfInstanceId":"provider-a","tac":"000001","correlationId":"corr-a","location":"http://a/subscriptions/1"},{"path":"b","status":"active","nfInstanceId":"provider-b","tac":"000002","correlationId":"corr-b","location":"http://b/subscriptions/2"}],"callbacksByPath":{"a":{"requestCount":2,"lastCallbackAt":"2026-08-13T00:00:00Z","correlationId":"corr-a"},"b":{"requestCount":1,"lastCallbackAt":"2026-08-13T00:00:01Z","correlationId":"corr-b"}}}'

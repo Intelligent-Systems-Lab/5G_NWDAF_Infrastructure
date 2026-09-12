@@ -24,8 +24,9 @@ build locks are tied to the Guest environment.
 ## Host guidance and VM resources
 
 `machines.<name>.resources` controls VirtualBox RAM in MiB, vCPU count, and the
-dynamically growing primary disk ceiling in GiB. The fixed machine keys are
-`core`, `path-a`, and `path-b`.
+dynamically growing primary disk ceiling in GiB. The production reference uses
+`core`, `path-a`, and `path-b`; the protocol Hierarchical definition adds
+`path-c`.
 
 `hostSafety` contains recommendations reported by explicit validation and
 status commands:
@@ -87,9 +88,10 @@ not derived from PLMN.
 
 ## Placement and endpoints
 
-`placement` is the exact ownership inventory: Core Guest units, Path A/B Guest
-units, and the selected five or seven Host containers. The generated manifest
-must be exactly reconstructible from it and the other `TESTBED` fields.
+`placement` is the exact ownership inventory: Guest units for every selected
+machine and the selected Host containers. The protocol Hierarchical definition
+uses eleven one-to-one NWDAF/PyMTLF pairs. The generated manifest must be exactly
+reconstructible from placement and the other `TESTBED` fields.
 
 Endpoint objects use `network`, `address`, and usually `port`:
 
@@ -98,14 +100,22 @@ Endpoint objects use `network`, `address`, and usually `port`:
 - `paths.<a|b>.gnb` owns N2/N3 addresses.
 - `paths.<a|b>.upf` owns N3/N4/N6, Event Exposure, GTP interface name, and UE
   pool.
-- `analytics.topology` selects `production-flat`, `static-flat`, or
-  `static-hierarchical` inside the complete definition.
+- `analytics.topology` selects `production-flat`, `static-flat`,
+  `static-hierarchical`, or `protocol-hierarchical` inside the complete
+  definition.
 - `analytics.nwdaf-*` owns stable lowercase UUIDv4 NF instance IDs, SBI
   addresses, FL role, Host backend mapping, and static data-owner/Branch edges
   where applicable.
 - `analytics.dataOwners` assigns the four static logical positions to disjoint
   two-SUPI partitions. Production Flat continues to use `analytics.backends`
   for its legacy A/B/C native endpoint mapping.
+
+Within `analytics.protocolTopology`, Branch candidates define a positive
+`reportAfter.count` with `unit: round`. Leaf candidates must omit
+`reportAfter`: the renderer combines the Leaf role with the selected image
+scenario's required `training.localEpochs` to generate the complete native
+`report_after: {count: <localEpochs>, unit: epoch}` instruction. This keeps the
+Leaf epoch count in one operator-authored source.
 
 ADRF's `nfInstanceId` is stable so retained NRF and model state can be scoped
 exactly. `modelStorage.localDirectory` must remain an absolute directory below
