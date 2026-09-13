@@ -104,7 +104,6 @@ def image_scenario_contract(scenario):
         value = training.get(field)
         if not isinstance(value, int) or isinstance(value, bool) or value <= 0:
             raise ValueError("training.{} must be a positive integer".format(field))
-    local_epochs = training["localEpochs"]
     learning_rate = training.get("learningRate")
     if (
         not isinstance(learning_rate, (int, float))
@@ -119,10 +118,6 @@ def image_scenario_contract(scenario):
     fault = scenario.get("fault")
     observation = scenario.get("observation")
     if fault is None:
-        if training["acceptedRounds"] != 2:
-            raise ValueError("normal image scenario training.acceptedRounds must be 2")
-        if local_epochs != 1:
-            raise ValueError("normal image scenario training.localEpochs must be 1")
         if observation is not None:
             raise ValueError("normal image scenario must not define replacement observation")
         return scenario
@@ -134,24 +129,22 @@ def image_scenario_contract(scenario):
         raise ValueError("fault.mode must be branch-replacement")
     if not isinstance(fault.get("branchGroup"), str) or not fault["branchGroup"]:
         raise ValueError("fault.branchGroup must be a non-empty group name")
-    if fault.get("normalAcceptedRounds") != 2:
-        raise ValueError("fault.normalAcceptedRounds must be 2")
-    if fault.get("restoredAcceptedRounds") != 1:
-        raise ValueError("fault.restoredAcceptedRounds must be 1")
-    if training["acceptedRounds"] != 8:
-        raise ValueError("branch replacement training.acceptedRounds must be 8")
-    if partition["samplesPerLeaf"] != 8000 or local_epochs != 32:
-        raise ValueError(
-            "branch replacement workload must use 8000 samples per Leaf and 32 local epochs"
-        )
+    for field in ("normalAcceptedRounds", "restoredAcceptedRounds"):
+        value = fault[field]
+        if not isinstance(value, int) or isinstance(value, bool) or value <= 0:
+            raise ValueError("fault.{} must be a positive integer".format(field))
+    if training["acceptedRounds"] < (
+        fault["normalAcceptedRounds"] + fault["restoredAcceptedRounds"] + 1
+    ):
+        raise ValueError("accepted rounds must allow normal, degraded, and restored phases")
     if not isinstance(observation, dict) or set(observation) != {
         "pollIntervalMilliseconds", "heartbeatSeconds",
     }:
         raise ValueError("branch replacement observation contract has invalid fields")
-    if observation.get("pollIntervalMilliseconds") != 250:
-        raise ValueError("observation.pollIntervalMilliseconds must be 250")
-    if observation.get("heartbeatSeconds") != 30:
-        raise ValueError("observation.heartbeatSeconds must be 30")
+    for field in ("pollIntervalMilliseconds", "heartbeatSeconds"):
+        value = observation[field]
+        if not isinstance(value, int) or isinstance(value, bool) or value <= 0:
+            raise ValueError("observation.{} must be a positive integer".format(field))
     return scenario
 
 

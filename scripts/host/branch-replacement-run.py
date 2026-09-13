@@ -1257,8 +1257,9 @@ def complete_collection(
         writer.update(status="collection-failed", finalized=False, finishedAt=None)
         raise
     print(
-        "MILESTONE run-complete dataset={} accepted=8 degraded={} restored={}".format(
+        "MILESTONE run-complete dataset={} accepted={} degraded={} restored={}".format(
             contract.dataset,
+            contract.accepted_rounds,
             writer.run["phases"]["phaseCounts"]["degraded"],
             writer.run["phases"]["phaseCounts"]["restored"],
         ),

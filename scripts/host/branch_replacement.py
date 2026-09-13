@@ -203,7 +203,7 @@ class PhaseTracker:
         if self.stop_at is not None:
             raise BranchReplacementError("primary stop was recorded more than once")
         if len(self.accepted) != self.contract.normal_accepted_rounds:
-            raise BranchReplacementError("primary stop did not follow exactly two normal rounds")
+            raise BranchReplacementError("primary stop did not follow the selected normal rounds")
         self.stop_at = parse_timestamp(recorded_at)
 
     def ready_for_fault(self, status: dict) -> bool:
@@ -424,12 +424,12 @@ class PhaseTracker:
         if terminal_status.get("state") != "COMPLETE":
             raise BranchReplacementError("training resource did not reach COMPLETE")
         if terminal_status.get("completedRounds") != self.contract.accepted_rounds:
-            raise BranchReplacementError("training status completedRounds is not 8")
+            raise BranchReplacementError("training status completedRounds differs from scenario")
         if len(self.accepted) != self.contract.accepted_rounds:
-            raise BranchReplacementError("Root evidence does not contain 8 accepted rounds")
+            raise BranchReplacementError("Root evidence lacks the selected accepted rounds")
         phases = [item["phase"] for item in self.accepted]
         if phases.count("normal") != self.contract.normal_accepted_rounds:
-            raise BranchReplacementError("Root evidence does not contain exactly 2 normal rounds")
+            raise BranchReplacementError("Root evidence lacks the selected normal rounds")
         if phases.count("degraded") < 1:
             raise BranchReplacementError("Root evidence has no natural degraded round")
         if phases.count("restored") < self.contract.restored_accepted_rounds:

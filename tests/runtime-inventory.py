@@ -91,9 +91,6 @@ def main():
     )
     image_scenario_contract(normal_scenario)
     image_scenario_contract(replacement_scenario)
-    assert normal_scenario["training"]["localEpochs"] == 1
-    assert replacement_scenario["partition"]["samplesPerLeaf"] == 8000
-    assert replacement_scenario["training"]["localEpochs"] == 32
     for group in protocol_definition["analytics"]["protocolTopology"]["branchGroups"]:
         assert all(
             candidate["reportAfter"]["unit"] == "round"
@@ -106,7 +103,10 @@ def main():
     replacement_topology = protocol_topology(
         protocol_definition, replacement_scenario["training"]["localEpochs"]
     )
-    for topology, expected_epochs in ((normal_topology, 1), (replacement_topology, 32)):
+    for topology, expected_epochs in (
+        (normal_topology, normal_scenario["training"]["localEpochs"]),
+        (replacement_topology, replacement_scenario["training"]["localEpochs"]),
+    ):
         source_groups = protocol_definition["analytics"]["protocolTopology"][
             "branchGroups"
         ]
@@ -144,14 +144,17 @@ def main():
         pass
     else:
         raise AssertionError("image scenario accepted a missing local epoch source")
-    invalid_scenario = copy.deepcopy(normal_scenario)
-    invalid_scenario["training"]["localEpochs"] = 2
-    try:
-        image_scenario_contract(invalid_scenario)
-    except ValueError:
-        pass
-    else:
-        raise AssertionError("normal scenario accepted a non-smoke local epoch count")
+    alternate_normal = copy.deepcopy(normal_scenario)
+    alternate_normal["training"].update(acceptedRounds=4, localEpochs=2)
+    image_scenario_contract(alternate_normal)
+    alternate_replacement = copy.deepcopy(replacement_scenario)
+    alternate_replacement["partition"]["samplesPerLeaf"] = 100
+    alternate_replacement["training"].update(acceptedRounds=6, localEpochs=1)
+    alternate_replacement["fault"].update(normalAcceptedRounds=3, restoredAcceptedRounds=1)
+    alternate_replacement["observation"].update(
+        pollIntervalMilliseconds=500, heartbeatSeconds=10
+    )
+    image_scenario_contract(alternate_replacement)
     invalid_definition = copy.deepcopy(protocol_definition)
     invalid_definition["analytics"]["protocolTopology"]["branchGroups"][0][
         "leaves"
@@ -172,20 +175,23 @@ def main():
         pass
     else:
         raise AssertionError("protocol topology accepted a Branch without reportAfter")
-    for field, value in (("samplesPerLeaf", 100), ("localEpochs", 1)):
+    for field, value in (("localEpochs", 0), ("acceptedRounds", 0)):
         invalid_scenario = copy.deepcopy(replacement_scenario)
-        owner = (
-            invalid_scenario["partition"]
-            if field == "samplesPerLeaf"
-            else invalid_scenario["training"]
-        )
-        owner[field] = value
+        invalid_scenario["training"][field] = value
         try:
             image_scenario_contract(invalid_scenario)
         except ValueError:
             pass
         else:
-            raise AssertionError("replacement scenario accepted an undersized workload")
+            raise AssertionError("replacement scenario accepted invalid training input")
+    invalid_scenario = copy.deepcopy(replacement_scenario)
+    invalid_scenario["training"]["acceptedRounds"] = 3
+    try:
+        image_scenario_contract(invalid_scenario)
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("replacement scenario cannot fit its required phases")
     protocol_components = selected_component_paths(
         protocol_definition, expected_runtime_inventory(protocol_definition)
     )
