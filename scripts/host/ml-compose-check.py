@@ -11,6 +11,7 @@ from pathlib import Path
 from configlib import (
     ROOT,
     deployment_kind,
+    image_dataset_name,
     load_runtime_manifest,
     load_yaml,
     nwdaf_definitions,
@@ -196,7 +197,7 @@ def main():
                 name + " topology mount count", len(topology_mounts),
                 1 if definition["role"] == "root" else 0,
             )
-            dataset_root = ROOT / ".generated" / "image-datasets" / scenario["name"]
+            dataset_root = ROOT / ".generated" / "image-datasets" / image_dataset_name(scenario)
             if definition["role"] == "root":
                 expected_dataset_mount = (
                     dataset_root / "validation.npz", "/data/validation.npz"

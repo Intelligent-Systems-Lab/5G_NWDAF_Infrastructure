@@ -19,7 +19,7 @@ import numpy as np
 import yaml
 
 from configlib import (
-    ROOT, image_scenario_contract, nwdaf_definitions, resolve_config_dir,
+    ROOT, image_dataset_name, image_scenario_contract, nwdaf_definitions, resolve_config_dir,
     resolve_config_scenario,
 )
 from py_mtlf.core.image_classification import ImageDatasetLoader
@@ -231,6 +231,24 @@ def _write_npz(path: Path, images: np.ndarray, labels: np.ndarray) -> None:
     np.savez(path, images=images, labels=labels)
 
 
+def _leaf_quotas(partition: dict, legacy_leaves: tuple[str, ...]) -> tuple[tuple[str, ...], dict]:
+    class_counts = partition.get("leafClassCounts")
+    leaf_labels = partition.get("leafLabels")
+    if class_counts is not None:
+        leaves = tuple(sorted(class_counts))
+        return leaves, class_counts
+    if leaf_labels is not None:
+        leaves = tuple(sorted(leaf_labels))
+        return leaves, {
+            leaf: {label: partition["samplesPerLeaf"] // len(leaf_labels[leaf]) for label in leaf_labels[leaf]}
+            for leaf in leaves
+        }
+    per_class = partition["samplesPerLeaf"] // 10
+    return legacy_leaves, {
+        leaf: {label: per_class for label in range(10)} for leaf in legacy_leaves
+    }
+
+
 def build_split(
     scenario: dict,
     train_images: np.ndarray,
@@ -243,14 +261,8 @@ def build_split(
     (destination / "leaves").mkdir(parents=True, exist_ok=True)
     partition = scenario["partition"]
     per_leaf = partition["samplesPerLeaf"]
-    leaf_labels = partition.get("leafLabels")
-    leaf_units = tuple(sorted(leaf_labels)) if leaf_labels is not None else legacy_leaves
-    labels_by_leaf = leaf_labels if leaf_labels is not None else {
-        leaf: list(range(10)) for leaf in leaf_units
-    }
-    quotas = {
-        leaf: per_leaf // len(labels_by_leaf[leaf]) for leaf in leaf_units
-    }
+    leaf_units, quotas = _leaf_quotas(partition, legacy_leaves)
+    explicit_quotas = "leafLabels" in partition or "leafClassCounts" in partition
     validation_source = partition.get("validationSource", "official-test")
     validation_count = partition["validationSamples"]
     held_out_count = partition["heldOutSamples"]
@@ -263,7 +275,7 @@ def build_split(
         validation_per_class = validation_count // 10
         for label in range(10):
             candidates = generator.permutation(np.flatnonzero(train_labels == label))
-            needed = sum(quotas[leaf] for leaf in leaf_units if label in labels_by_leaf[leaf])
+            needed = sum(quotas[leaf].get(label, 0) for leaf in leaf_units)
             if len(candidates) < validation_per_class + needed:
                 raise DatasetError("official train split has insufficient samples for class {}".format(label))
             validation_indices.extend(candidates[:validation_per_class].tolist())
@@ -271,8 +283,8 @@ def build_split(
                 validation_per_class : validation_per_class + needed
             ].tolist()
     else:
-        if leaf_labels is not None:
-            raise DatasetError("leafLabels requires official-train validation")
+        if explicit_quotas:
+            raise DatasetError("explicit Leaf quotas require official-train validation")
         per_leaf_class = per_leaf // 10
         train_selected = balanced_indices(
             train_labels, per_leaf_class * len(leaf_units), partition["seed"]
@@ -297,13 +309,12 @@ def build_split(
     class_offsets = {label: 0 for label in range(10)}
     for leaf_offset, leaf in enumerate(leaf_units):
         indices = []
-        for label in labels_by_leaf[leaf]:
+        for label, quota in quotas[leaf].items():
             start = (
                 class_offsets[label]
                 if validation_source == "official-train"
                 else leaf_offset * per_leaf_class
             )
-            quota = quotas[leaf]
             indices.extend(train_by_class[label][start : start + quota])
             if validation_source == "official-train":
                 class_offsets[label] += quota
@@ -388,8 +399,7 @@ def validate_output(root: Path, scenario: dict, legacy_leaves: tuple[str, ...]) 
         expected_seed["test"] = partition["seed"] + 1
     if manifest.get("seed") != expected_seed:
         raise DatasetError("split manifest seeds do not match the scenario")
-    leaf_labels = partition.get("leafLabels")
-    leaf_units = tuple(sorted(leaf_labels)) if leaf_labels is not None else legacy_leaves
+    leaf_units, quotas = _leaf_quotas(partition, legacy_leaves)
     expected = _expected_counts(scenario, leaf_units)
     artifacts = manifest.get("artifacts", {})
     if set(artifacts) != set(expected):
@@ -427,12 +437,10 @@ def validate_output(root: Path, scenario: dict, legacy_leaves: tuple[str, ...]) 
             raise DatasetError("split class histogram is invalid for {}".format(name))
         if name == "held-out" and validation_source == "official-train":
             continue
-        if name in leaf_units and leaf_labels is not None:
-            labels = leaf_labels[name]
-            expected_histogram = {
-                label: count // len(labels) if label in labels else 0
-                for label in range(10)
-            }
+        if name in leaf_units and (
+            "leafLabels" in partition or "leafClassCounts" in partition
+        ):
+            expected_histogram = {label: quotas[name].get(label, 0) for label in range(10)}
         else:
             expected_histogram = {label: count // 10 for label in range(10)}
         if item["classHistogram"] != expected_histogram:
@@ -442,6 +450,10 @@ def validate_output(root: Path, scenario: dict, legacy_leaves: tuple[str, ...]) 
 
 def generate(root: Path, scenario: dict, legacy_leaves: tuple[str, ...]) -> None:
     dataset = scenario["workload"]["dataset"]
+    if "datasetId" in scenario["partition"] and root.exists():
+        validate_output(root, scenario, legacy_leaves)
+        print("REUSED dataset={} root={}".format(dataset, root))
+        return
     train_images, train_labels, test_images, test_labels = load_source(dataset)
     root.parent.mkdir(parents=True, exist_ok=True)
     temporary = Path(tempfile.mkdtemp(prefix=".image-dataset-", dir=root.parent))
@@ -482,14 +494,13 @@ def main() -> int:
         )
         _scenario_path, scenario = resolve_config_scenario(config_dir)
         image_scenario_contract(scenario)
-        root = OUTPUT_ROOT / scenario["name"]
+        root = OUTPUT_ROOT / image_dataset_name(scenario)
         if args.action == "generate":
             generate(root, scenario, legacy_leaves)
         else:
             manifest = validate_output(root, scenario, legacy_leaves)
             if args.action == "show":
-                leaf_labels = scenario["partition"].get("leafLabels")
-                leaf_units = tuple(sorted(leaf_labels)) if leaf_labels is not None else legacy_leaves
+                leaf_units, _quotas = _leaf_quotas(scenario["partition"], legacy_leaves)
                 print(
                     "DATASET name={} dataset={} root={} artifacts={} train_samples={} validation_samples={} held_out_samples={}".format(
                         scenario["name"],

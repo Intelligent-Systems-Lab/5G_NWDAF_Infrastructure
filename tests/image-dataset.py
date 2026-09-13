@@ -66,6 +66,26 @@ def main() -> int:
         if first_manifest != second_manifest:
             raise AssertionError("the same source and seed did not reproduce the split")
 
+        shared = copy.deepcopy(scenario)
+        shared["partition"]["datasetId"] = "shared-split"
+        shared_root = Path(temporary) / "shared-split"
+        with mock.patch.object(
+            dataset_module, "load_source",
+            return_value=(train_images, train_labels, test_images, test_labels),
+        ) as load_source:
+            dataset_module.generate(shared_root, shared, legacy_leaves)
+            dataset_module.generate(shared_root, shared, legacy_leaves)
+            if load_source.call_count != 1:
+                raise AssertionError("an existing shared dataset was regenerated")
+        changed = copy.deepcopy(shared)
+        changed["partition"]["seed"] += 1
+        try:
+            dataset_module.generate(shared_root, changed, legacy_leaves)
+        except DatasetError:
+            pass
+        else:
+            raise AssertionError("a mismatched shared dataset was reused")
+
         train_indices = []
         for leaf in legacy_leaves:
             item = first_manifest["artifacts"][leaf]
@@ -172,6 +192,41 @@ def main() -> int:
         ]
         if len(set().union(*map(set, train_sources))) != sum(map(len, train_sources)):
             raise AssertionError("training and validation source indices overlap")
+
+        quota_leaves = ("sample-leaf-0", "sample-leaf-1")
+        quota_scenario = copy.deepcopy(selected)
+        quota_scenario["partition"].pop("leafLabels")
+        quota_scenario["partition"]["leafClassCounts"] = {
+            quota_leaves[0]: {
+                label: 3 if label < 5 else 1 for label in range(10)
+            },
+            quota_leaves[1]: {
+                label: 1 if label < 5 else 3 for label in range(10)
+            },
+        }
+        image_scenario_contract(quota_scenario)
+        quota_first = Path(temporary) / "quota-first"
+        quota_second = Path(temporary) / "quota-second"
+        quota_first.mkdir()
+        quota_second.mkdir()
+        quota_manifest = build_split(
+            quota_scenario, train_images, train_labels, test_images, uneven_test_labels,
+            quota_first, legacy_leaves,
+        )
+        reversed_quotas = copy.deepcopy(quota_scenario)
+        reversed_quotas["partition"]["leafClassCounts"] = dict(
+            reversed(list(reversed_quotas["partition"]["leafClassCounts"].items()))
+        )
+        repeated_quota_manifest = build_split(
+            reversed_quotas, train_images, train_labels, test_images, uneven_test_labels,
+            quota_second, legacy_leaves,
+        )
+        validate_output(quota_first, quota_scenario, legacy_leaves)
+        if quota_manifest != repeated_quota_manifest:
+            raise AssertionError("class-quota split changed with mapping order")
+        for leaf, expected in quota_scenario["partition"]["leafClassCounts"].items():
+            if quota_manifest["artifacts"][leaf]["classHistogram"] != expected:
+                raise AssertionError("Leaf class quotas do not match the selected partition")
 
     print("PASS deterministic image partitions and native validation")
     return 0

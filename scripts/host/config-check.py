@@ -13,7 +13,7 @@ from pathlib import Path
 from configlib import (
     ROOT, SCENARIO_SCHEMA, get_path, deployment_kind,
     expected_runtime_inventory, guest_network_configs,
-    image_scenario_contract, load_runtime_manifest, load_yaml, nwdaf_definitions,
+    image_dataset_name, image_scenario_contract, load_runtime_manifest, load_yaml, nwdaf_definitions,
     protocol_topology, resolve_branch_replacement, resolve_config_dir,
     repository_relative_paths, resolve_config_scenario, resolve_ml_bind_address,
     resolve_mobile_identities, resolve_path, resolve_scenario_profile_paths,
@@ -564,7 +564,7 @@ def check_protocol(testbed_path, testbed, config_dir, check):
         manifest["runtime"]["capacity"]["minimumGpuMemoryMiB"],
         8192 if device_policy == "gpu" else 0,
     )
-    dataset_root = ROOT / ".generated" / "image-datasets" / scenario["name"]
+    dataset_root = ROOT / ".generated" / "image-datasets" / image_dataset_name(scenario)
     expected_datasets = {
         "root": str(dataset_root),
         "validation": str(dataset_root / "validation.npz"),
@@ -579,7 +579,11 @@ def check_protocol(testbed_path, testbed, config_dir, check):
     check.equal(
         "native protocol topology",
         load_yaml(config_dir / "topology" / "protocol-hierarchical.yaml"),
-        protocol_topology(testbed, scenario["training"]["localEpochs"]),
+        protocol_topology(
+            testbed,
+            scenario["training"]["localEpochs"],
+            scenario["training"].get("proximalMu"),
+        ),
     )
     for machine, expected in guest_network_configs(testbed, include_consumer=False).items():
         check.equal(

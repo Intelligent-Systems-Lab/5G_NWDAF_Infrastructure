@@ -517,6 +517,7 @@ def test_exact_pair_stop_and_partial_failure():
             assert result["guest"]["restartSuppressed"] is True
             assert result["container"]["originalPid"] == 4321
             assert result["container"]["exitCode"] == 137
+            assert result["effectiveAt"] <= result["hardStoppedAt"]
             runner.quiet_command = lambda *_args, **_kwargs: ""
             environment.stop_all()
         finally:
@@ -551,6 +552,10 @@ def test_exact_pair_stop_and_partial_failure():
             and item[1][:4] == ["docker", "kill", "--signal", "KILL"]
         )
         assert guest_freeze_call < container_freeze_call < guest_kill_call < container_kill_call
+        assert guest_freeze_call < next(
+            index for index, item in enumerate(calls)
+            if item[0] == "command" and item[1][:2] == ["docker", "inspect"]
+        )
         fail_stop_body = calls[guest_kill_call][2]
         assert "mask --runtime" in fail_stop_body
         assert "--signal=SIGKILL" in fail_stop_body
@@ -589,6 +594,46 @@ def test_exact_pair_stop_and_partial_failure():
             item[0] == "command" and item[1][:2] == ["docker", "kill"]
             for item in calls
         ), "container was mutated after the Guest freeze failed"
+
+
+def test_blocked_stop_preserves_event_order_and_rejects_an_extra_normal_round():
+    runner = load_runner()
+    contract = replacement_contract()
+    records = successful_records(contract)
+    stop_payload = {"nfInstanceId": contract.primary_nf_instance_id}
+    with tempfile.TemporaryDirectory(prefix="fl-experiment-observation-") as temporary:
+        writer = EvidenceWriter(Path(temporary) / "successful-stop", {})
+        tracker = PhaseTracker(contract, PLAN_ID)
+        runner.record_observations(writer, tracker, records[:4])
+        runner.record_observations(
+            writer, tracker, records[4:7],
+            stop_payload=stop_payload, stop_at=timestamp(5),
+        )
+        assert tracker.summary()["phaseCounts"] == {
+            "normal": 2, "degraded": 1, "restored": 0,
+        }
+        assert [event["eventType"] for event in writer.events()][-4:] == [
+            "MODEL_EVALUATION", "BRANCH_PROCESS_STOPPED",
+            "ROOT_ROUND_OUTCOME", "BRANCH_FAILURE_DETECTED",
+        ]
+
+        writer = EvidenceWriter(Path(temporary) / "missed-stop", {})
+        tracker = PhaseTracker(contract, PLAN_ID)
+        runner.record_observations(writer, tracker, records[:4])
+        primary_set = (
+            contract.primary_nf_instance_id, *contract.surviving_nf_instance_ids
+        )
+        try:
+            runner.record_observations(
+                writer, tracker,
+                [records[4], outcome(contract, 2, 5, primary_set)],
+                stop_payload=stop_payload, stop_at=timestamp(6),
+            )
+        except FLExperimentError as error:
+            assert "missed the post-normal" in str(error)
+        else:
+            raise AssertionError("extra normal round was accepted before the fault")
+        assert writer.events()[-1]["eventType"] == "BRANCH_PROCESS_STOPPED"
 
 
 def test_timed_command_terminates_its_child():
@@ -1217,6 +1262,7 @@ def test_incremental_reader_and_two_file_consistency():
                 "nfInstanceId": contract.primary_nf_instance_id,
                 "guestStopped": True,
                 "containerStopped": True,
+                "hardStoppedAt": timestamp(6),
                 "guest": {
                     "machine": contract.primary_machine,
                     "unit": contract.primary_unit,
@@ -1334,6 +1380,8 @@ def test_incremental_reader_and_two_file_consistency():
             },
             planId=PLAN_ID,
             mlCorreId=PLAN_ID,
+            primaryStoppedAt=timestamp(5),
+            primaryHardStoppedAt=timestamp(6),
             phases=phases,
             terminalStatus=terminal(contract),
             gpuAdmission={"minimumFreeMiB": 8192, "memoryFreeMiB": 9000},
@@ -1488,6 +1536,8 @@ def test_incremental_reader_and_two_file_consistency():
             },
             protocolResources=normal_resources,
         )
+        normal_run.pop("primaryStoppedAt")
+        normal_run.pop("primaryHardStoppedAt")
         normal_writer = EvidenceWriter(Path(temporary) / "normal-run", normal_run)
         (normal_writer.run_directory / "final-root-model.tar.gz").write_bytes(b"artifact")
         previous_events = [json.loads(line) for line in original_events.splitlines()]
@@ -1524,6 +1574,7 @@ def main():
     test_invalid_replacement_and_incomplete_recovery_fail_closed()
     test_final_model_record_must_match_terminal_artifact()
     test_exact_pair_stop_and_partial_failure()
+    test_blocked_stop_preserves_event_order_and_rejects_an_extra_normal_round()
     test_final_artifact_uses_persistent_procedure_record()
     test_held_out_evaluator_has_bounded_temporary_storage()
     test_collection_retry_reuses_checkpoint_without_training_or_early_reset()

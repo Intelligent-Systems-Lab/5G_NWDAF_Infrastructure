@@ -25,6 +25,7 @@ from fl_experiment import (
     IncrementalJsonlReader,
     PhaseTracker,
     check_evidence,
+    parse_timestamp,
     parse_resource_log,
     utc_now,
     validate_run_name,
@@ -479,23 +480,35 @@ print(json.dumps({"offset":offset+len(data),"data":base64.b64encode(data).decode
             frozen = self._provider_shell(
                 r'''source "$1"
 select_testbed_machines "$2"
-assert_selected_provider_running
-assert_guest_runtime_identity "$3"
+require_provider_host_context
 actual=$(config_guest_service_machine "$3" "$5")
 [ "$actual" = "$4" ] || { echo "selected Guest target mismatch" >&2; exit 1; }
 service="5g-nwdaf@$5.service"
-state=$(vssh "$4" "systemctl is-active '$service' 2>/dev/null || true" | tr -d '\r' | tail -n 1)
+expected=$(config_hash "$3")
+remote=$(printf 'expected=%q; service=%q; ' "$expected" "$service")
+remote+='set -eu
+stored=$(cat /etc/5g-nwdaf-infrastructure/active.sha256 2>/dev/null || true)
+actual=$(sudo /usr/local/libexec/5g-nwdaf-infrastructure/config-hash /etc/5g-nwdaf-infrastructure/active 2>/dev/null || true)
+[ "$stored" = "$expected" ] && [ "$actual" = "$expected" ] || {
+  echo "selected/active Guest config mismatch" >&2; exit 1;
+}
+state=$(systemctl is-active "$service" 2>/dev/null || true)
 [ "$state" = active ] || { echo "Guest Branch is not active: $state" >&2; exit 1; }
-pid=$(vssh "$4" "systemctl show '$service' --property=MainPID --value" | tr -d '\r' | tail -n 1)
-[[ "$pid" =~ ^[1-9][0-9]*$ ]] || { echo "Guest Branch MainPID is invalid: $pid" >&2; exit 1; }
-link=$(vssh "$4" "readlink '/run/systemd/system/$service' 2>/dev/null || true" | tr -d '\r' | tail -n 1)
+pid=$(systemctl show "$service" --property=MainPID --value)
+case "$pid" in
+  ""|0|*[!0-9]*) echo "Guest Branch MainPID is invalid: $pid" >&2; exit 1;;
+esac
+link=$(readlink "/run/systemd/system/$service" 2>/dev/null || true)
 [ "$link" != /dev/null ] || { echo "Guest Branch already has a runtime mask" >&2; exit 1; }
+sudo systemctl kill --kill-who=all --signal=SIGSTOP "$service"
+current_pid=$(systemctl show "$service" --property=MainPID --value)
+[ "$current_pid" = "$pid" ] || {
+  echo "Guest Branch MainPID changed while freezing: $current_pid" >&2; exit 1;
+}
+printf "GUEST_FROZEN|%s\n" "$pid"'
 # Freeze the Guest owner before the Host backend can disappear. Otherwise the
 # still-running Go process can observe that loss and clean up its Leaf edges.
-vssh "$4" "sudo systemctl kill --kill-who=all --signal=SIGSTOP '$service'"
-current_pid=$(vssh "$4" "systemctl show '$service' --property=MainPID --value" | tr -d '\r' | tail -n 1)
-[ "$current_pid" = "$pid" ] || { echo "Guest Branch MainPID changed while freezing: $current_pid" >&2; exit 1; }
-printf 'GUEST_FROZEN|%s\n' "$pid"''',
+vssh "$4" "$remote"''',
                 [
                     str(ROOT / "scripts/host/lib.sh"), str(self.testbed_path),
                     str(self.config_dir), contract.primary_machine, contract.primary_unit,
@@ -518,8 +531,7 @@ printf 'GUEST_FROZEN|%s\n' "$pid"''',
             killed = self._provider_shell(
                 r'''source "$1"
 select_testbed_machines "$2"
-assert_selected_provider_running
-assert_guest_runtime_identity "$3"
+require_provider_host_context
 actual=$(config_guest_service_machine "$3" "$5")
 [ "$actual" = "$4" ] || { echo "selected Guest target mismatch" >&2; exit 1; }
 service="5g-nwdaf@$5.service"
@@ -637,13 +649,15 @@ exit 1''',
                 "exitCode": stopped_state["ExitCode"],
             }
 
-        container_target = inspect_container()
+        container_target = None
         guest_target = None
         container_frozen = False
         try:
             # Both application owners must be unable to perform protocol cleanup
             # before either dependency is killed.
             guest_target = freeze_guest()
+            effective_at = utc_now()
+            container_target = inspect_container()
             container_frozen = True
             freeze_container(container_target)
             guest_result = kill_frozen_guest(guest_target)
@@ -691,7 +705,12 @@ printf 'GUEST_RESUMED|%s\n' "$current_pid"''',
                 detail += "; " + "; ".join(recovery_errors)
             raise FLExperimentError("partial primary stop: " + detail) from error
         print("MILESTONE primary-fail-stopped", flush=True)
-        return {"guest": guest_result, "container": container_result}
+        return {
+            "guest": guest_result,
+            "container": container_result,
+            "effectiveAt": effective_at,
+            "hardStoppedAt": utc_now(),
+        }
 
     def _restore_faulted_guest(self) -> None:
         if self._faulted_guest is None:
@@ -1142,6 +1161,55 @@ def event_payload(writer: EvidenceWriter, source: str, event_type: str) -> dict 
     return matches[0]["payload"] if matches else None
 
 
+def record_observations(
+    writer: EvidenceWriter,
+    tracker: PhaseTracker,
+    root_records: list[dict],
+    *,
+    stop_payload: dict | None = None,
+    stop_at: str | None = None,
+) -> None:
+    entries = [
+        (parse_timestamp(record["recordedAt"]), 1, "root", record)
+        for record in root_records
+    ]
+    if stop_payload is not None:
+        if stop_at is None:
+            raise FLExperimentError("confirmed stop has no effective time")
+        if any(entries[index][0] < entries[index - 1][0] for index in range(1, len(entries))):
+            raise FLExperimentError("Root observation timestamps are out of order")
+        entries.append((parse_timestamp(stop_at), 0, "stop", stop_payload))
+        entries.sort(key=lambda item: (item[0], item[1]))
+
+    # The provider call blocks observation. Persist its pending Root records in
+    # source-time order with the confirmed stop before classifying the rounds.
+    for _timestamp, _priority, kind, record in entries:
+        if kind == "stop":
+            writer.append(
+                "controller", "BRANCH_PROCESS_STOPPED", record,
+                recorded_at=stop_at, nf_instance_id=tracker.contract.primary_nf_instance_id,
+            )
+        else:
+            writer.append_root(record)
+    for _timestamp, _priority, kind, record in entries:
+        if kind == "stop":
+            tracker.mark_stopped(stop_at)
+            continue
+        transition = tracker.ingest(record)
+        if transition == "round-accepted":
+            latest = tracker.accepted[-1]
+            print(
+                "MILESTONE accepted={} attempt={} phase={} degraded={}".format(
+                    len(tracker.accepted), latest["roundInd"], latest["phase"],
+                    tracker.summary()["phaseCounts"]["degraded"],
+                ),
+                flush=True,
+            )
+            writer.update(phases=tracker.summary())
+        elif transition:
+            print("MILESTONE " + transition, flush=True)
+
+
 def validate_collection_checkpoint(
     writer: EvidenceWriter,
     run_name: str,
@@ -1525,21 +1593,7 @@ def run(args: argparse.Namespace) -> int:
             fault_injected = False
             terminal = None
             while time.monotonic() < deadline:
-                for record in reader.poll():
-                    writer.append_root(record)
-                    transition = tracker.ingest(record)
-                    if transition == "round-accepted":
-                        latest = tracker.accepted[-1]
-                        print(
-                            "MILESTONE accepted={} attempt={} phase={} degraded={}".format(
-                                len(tracker.accepted), latest["roundInd"], latest["phase"],
-                                tracker.summary()["phaseCounts"]["degraded"],
-                            ),
-                            flush=True,
-                        )
-                        writer.update(phases=tracker.summary())
-                    elif transition:
-                        print("MILESTONE " + transition, flush=True)
+                record_observations(writer, tracker, reader.poll())
                 status = controller.training_status(request_id)
                 if status.get("state") == "FAILED":
                     raise FLExperimentError(
@@ -1549,19 +1603,21 @@ def run(args: argparse.Namespace) -> int:
                     )
                 if contract.fault_enabled and not fault_injected and tracker.ready_for_fault(status):
                     fail_stop = environment.fail_stop_primary(contract)
-                    stopped_at = utc_now()
-                    tracker.mark_stopped(stopped_at)
+                    stopped_at = fail_stop["effectiveAt"]
                     stop_payload = {
                         "nfInstanceId": contract.primary_nf_instance_id,
                         "guestStopped": True,
                         "containerStopped": True,
                         **fail_stop,
                     }
-                    writer.append(
-                        "controller", "BRANCH_PROCESS_STOPPED", stop_payload,
-                        recorded_at=stopped_at, nf_instance_id=contract.primary_nf_instance_id,
+                    writer.update(
+                        primaryStoppedAt=stopped_at,
+                        primaryHardStoppedAt=fail_stop["hardStoppedAt"],
                     )
-                    writer.update(primaryStoppedAt=stopped_at)
+                    record_observations(
+                        writer, tracker, reader.poll(),
+                        stop_payload=stop_payload, stop_at=stopped_at,
+                    )
                     fault_injected = True
                 if status.get("state") == "COMPLETE":
                     evidence_deadline = min(deadline, time.monotonic() + 30)
@@ -1570,9 +1626,7 @@ def run(args: argparse.Namespace) -> int:
                         and time.monotonic() < evidence_deadline
                     ):
                         records = reader.poll()
-                        for record in records:
-                            writer.append_root(record)
-                            tracker.ingest(record)
+                        record_observations(writer, tracker, records)
                         if tracker.final_model_saved is None:
                             time.sleep(contract.poll_seconds)
                     reader.finish()

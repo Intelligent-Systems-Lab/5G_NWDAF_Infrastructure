@@ -1,0 +1,38 @@
+schemaVersion: 2
+name: protocol-hierarchical-cifar10-all-class-skew-replacement
+kind: diagnostic
+workload:
+  profile: image-classification
+  dataset: cifar10
+  event: X_IMAGE_CLASSIFICATION
+  modelInteroperability: pymtlf-image-classification-cifar10
+  modelFamilyId: image-classification-cifar10
+  seedModelId: 1002
+  seedArtifactKey: 066e77fe72d3bef3f17a54368843616545809b587bca9f0561a3ca4d70388b51
+partition:
+  datasetId: cifar10-all-class-skew
+  seed: 42
+  samplesPerLeaf: 8000
+  validationSource: official-train
+  validationSamples: 2000
+  heldOutSamples: 10000
+  leafClassCounts:
+    nwdaf-leaf-a1: {0: 1300, 1: 1300, 2: 1300, 3: 1300, 4: 1300, 5: 300, 6: 300, 7: 300, 8: 300, 9: 300}
+    nwdaf-leaf-a2: {0: 1300, 1: 1300, 2: 1300, 3: 1300, 4: 1300, 5: 300, 6: 300, 7: 300, 8: 300, 9: 300}
+    nwdaf-leaf-b1: {0: 800, 1: 800, 2: 800, 3: 800, 4: 800, 5: 800, 6: 800, 7: 800, 8: 800, 9: 800}
+    nwdaf-leaf-b2: {0: 800, 1: 800, 2: 800, 3: 800, 4: 800, 5: 800, 6: 800, 7: 800, 8: 800, 9: 800}
+    nwdaf-leaf-c1: {0: 300, 1: 300, 2: 300, 3: 300, 4: 300, 5: 1300, 6: 1300, 7: 1300, 8: 1300, 9: 1300}
+    nwdaf-leaf-c2: {0: 300, 1: 300, 2: 300, 3: 300, 4: 300, 5: 1300, 6: 1300, 7: 1300, 8: 1300, 9: 1300}
+training:
+  acceptedRounds: 40
+  batchSize: 16
+  learningRate: 0.001
+  localEpochs: 5
+fault:
+  mode: branch-replacement
+  branchGroup: area-a
+  normalAcceptedRounds: 20
+  restoredAcceptedRounds: 1
+observation:
+  pollIntervalMilliseconds: 250
+  heartbeatSeconds: 30

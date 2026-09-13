@@ -11,7 +11,7 @@ from pathlib import Path
 from configlib import (
     ROOT, dump_yaml, deployment_kind, expected_runtime_inventory,
     guest_network_configs, load_yaml, load_scenario_definition,
-    image_scenario_contract, nwdaf_definitions, protocol_topology,
+    image_dataset_name, image_scenario_contract, nwdaf_definitions, protocol_topology,
     resolve_path, repository_relative_paths,
     resolve_mobile_identities, resolve_scenario_profile_paths, set_path,
 )
@@ -514,7 +514,11 @@ def render_protocol(testbed, output, scenario):
     write(
         output,
         "topology/protocol-hierarchical.yaml",
-        protocol_topology(testbed, scenario["training"]["localEpochs"]),
+        protocol_topology(
+            testbed,
+            scenario["training"]["localEpochs"],
+            scenario["training"].get("proximalMu"),
+        ),
     )
     for machine, network in guest_network_configs(testbed, include_consumer=False).items():
         write(output, "network/{}.yaml".format(machine), network)
@@ -605,7 +609,7 @@ def render_compose(testbed, output, runtime, scenario=None):
                 item["backends"]["mtlf"]: item for item in nwdaf_definitions(testbed)
             }
             node = definition_by_backend[name]
-            dataset_root = ROOT / ".generated" / "image-datasets" / scenario["name"]
+            dataset_root = ROOT / ".generated" / "image-datasets" / image_dataset_name(scenario)
             if node["role"] == "root":
                 service["volumes"].append({
                     "type": "bind", "source": str(dataset_root / "validation.npz"),
@@ -1114,7 +1118,7 @@ def main():
         },
     }
     if kind == "protocol-hierarchical":
-        dataset_root = ROOT / ".generated" / "image-datasets" / scenario["name"]
+        dataset_root = ROOT / ".generated" / "image-datasets" / image_dataset_name(scenario)
         manifest["datasets"] = {
             "root": str(dataset_root),
             "validation": str(dataset_root / "validation.npz"),

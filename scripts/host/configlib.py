@@ -3,6 +3,7 @@
 
 import ipaddress
 import copy
+import math
 import re
 import sys
 import uuid
@@ -61,6 +62,16 @@ def scenario_profile(scenario):
     return "ue-communication"
 
 
+def image_dataset_name(scenario):
+    """Return the image dataset directory selected by the scenario."""
+    dataset_id = scenario["partition"].get("datasetId")
+    if dataset_id is None:
+        return scenario["name"]
+    if not isinstance(dataset_id, str) or re.fullmatch(r"[a-z0-9][a-z0-9-]*", dataset_id) is None:
+        raise ValueError("partition.datasetId must be a single directory name")
+    return dataset_id
+
+
 def image_scenario_contract(scenario):
     """Validate and return the bounded image-classification run contract."""
     if scenario_profile(scenario) != "image-classification":
@@ -90,15 +101,20 @@ def image_scenario_contract(scenario):
     if not isinstance(artifact_key, str) or re.fullmatch(r"[0-9a-f]{64}", artifact_key) is None:
         raise ValueError("workload.seedArtifactKey must use the component-native artifact identity")
     partition = scenario.get("partition", {})
+    if "datasetId" in partition:
+        image_dataset_name(scenario)
     for field in ("samplesPerLeaf", "validationSamples", "heldOutSamples"):
         value = partition.get(field)
         if not isinstance(value, int) or isinstance(value, bool) or value <= 0:
             raise ValueError("partition.{} must be a positive integer".format(field))
     leaf_labels = partition.get("leafLabels")
-    if "leafLabels" not in partition:
+    leaf_class_counts = partition.get("leafClassCounts")
+    if "leafLabels" in partition and "leafClassCounts" in partition:
+        raise ValueError("partition.leafLabels and leafClassCounts are mutually exclusive")
+    if "leafLabels" not in partition and "leafClassCounts" not in partition:
         if partition["samplesPerLeaf"] % 10:
             raise ValueError("partition.samplesPerLeaf must be divisible by ten classes")
-    else:
+    elif "leafLabels" in partition:
         if not isinstance(leaf_labels, dict) or not leaf_labels:
             raise ValueError("partition.leafLabels must map Leaf names to class lists")
         for leaf, labels in leaf_labels.items():
@@ -124,11 +140,39 @@ def image_scenario_contract(scenario):
                 raise ValueError(
                     "partition.leafLabels.{} must contain distinct classes with an equal quota".format(leaf)
                 )
+    else:
+        if not isinstance(leaf_class_counts, dict) or not leaf_class_counts:
+            raise ValueError("partition.leafClassCounts must map Leaf names to class quotas")
+        for leaf, counts in leaf_class_counts.items():
+            if (
+                not isinstance(leaf, str)
+                or not leaf
+                or "/" in leaf
+                or leaf in ("validation", "held-out")
+            ):
+                raise ValueError("partition.leafClassCounts contains an invalid artifact name")
+            if (
+                not isinstance(counts, dict)
+                or not counts
+                or any(
+                    not isinstance(label, int)
+                    or isinstance(label, bool)
+                    or label not in range(10)
+                    or not isinstance(count, int)
+                    or isinstance(count, bool)
+                    or count <= 0
+                    for label, count in counts.items()
+                )
+                or sum(counts.values()) != partition["samplesPerLeaf"]
+            ):
+                raise ValueError(
+                    "partition.leafClassCounts.{} must have positive class quotas totaling samplesPerLeaf".format(leaf)
+                )
     validation_source = partition.get("validationSource", "official-test")
     if validation_source not in ("official-train", "official-test"):
         raise ValueError("partition.validationSource must be official-train or official-test")
-    if leaf_labels is not None and validation_source != "official-train":
-        raise ValueError("partition.leafLabels requires official-train validation")
+    if (leaf_labels is not None or leaf_class_counts is not None) and validation_source != "official-train":
+        raise ValueError("partition Leaf quotas require official-train validation")
     if partition["validationSamples"] % 10:
         raise ValueError("partition.validationSamples must be divisible by ten classes")
     if validation_source == "official-test" and partition["heldOutSamples"] % 10:
@@ -148,6 +192,15 @@ def image_scenario_contract(scenario):
         or learning_rate <= 0
     ):
         raise ValueError("training.learningRate must be positive")
+    if "proximalMu" in training:
+        proximal_mu = training["proximalMu"]
+        if (
+            not isinstance(proximal_mu, (int, float))
+            or isinstance(proximal_mu, bool)
+            or not math.isfinite(proximal_mu)
+            or proximal_mu < 0
+        ):
+            raise ValueError("training.proximalMu must be finite and non-negative")
     if "device" in training:
         raise ValueError(
             "image-classification scenario must not duplicate TESTBED-owned device selection"
@@ -191,7 +244,11 @@ def resolve_branch_replacement(testbed, scenario):
     fault = scenario.get("fault")
     if fault is None:
         raise ValueError("scenario does not define a branch replacement fault")
-    protocol_topology(testbed, scenario["training"]["localEpochs"])
+    protocol_topology(
+        testbed,
+        scenario["training"]["localEpochs"],
+        scenario["training"].get("proximalMu"),
+    )
     groups = testbed["analytics"]["protocolTopology"]["branchGroups"]
     matches = [group for group in groups if group.get("name") == fault["branchGroup"]]
     if len(matches) != 1:
@@ -211,7 +268,7 @@ def resolve_branch_replacement(testbed, scenario):
     }
 
 
-def protocol_topology(testbed, local_epochs):
+def protocol_topology(testbed, local_epochs, proximal_mu=None):
     """Resolve logical node references into the current PyMTLF topology contract."""
     if deployment_kind(testbed) != "protocol-hierarchical":
         raise ValueError("selected TESTBED is not protocol-hierarchical")
@@ -228,6 +285,17 @@ def protocol_topology(testbed, local_epochs):
     groups = source.get("branchGroups")
     if not isinstance(groups, list) or not groups:
         raise ValueError("analytics.protocolTopology.branchGroups must be non-empty")
+
+    def resolved_strategy(value):
+        strategy = copy.deepcopy(value)
+        if proximal_mu is not None:
+            if not isinstance(strategy, dict) or strategy.get("method") != "fedProx":
+                raise ValueError("training.proximalMu requires a fedProx topology strategy")
+            parameters = strategy.get("method_parameters")
+            if not isinstance(parameters, dict):
+                raise ValueError("fedProx topology strategy has no method parameters")
+            parameters["proximal_mu"] = proximal_mu
+        return strategy
 
     def resolve_candidate(candidate, role):
         if not isinstance(candidate, dict):
@@ -278,7 +346,7 @@ def protocol_topology(testbed, local_epochs):
         native_groups.append({
             "branches": branches,
             "policy": copy.deepcopy(group.get("policy")),
-            "strategy": copy.deepcopy(group.get("strategy")),
+            "strategy": resolved_strategy(group.get("strategy")),
             "leaves": leaves,
         })
     expected_nodes = {
@@ -289,7 +357,7 @@ def protocol_topology(testbed, local_epochs):
     return {
         "admission": {"mode": "complete_required"},
         "policy": copy.deepcopy(source.get("policy")),
-        "strategy": copy.deepcopy(source.get("strategy")),
+        "strategy": resolved_strategy(source.get("strategy")),
         "branch_groups": native_groups,
     }
 

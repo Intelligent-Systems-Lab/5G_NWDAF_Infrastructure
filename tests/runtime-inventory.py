@@ -103,6 +103,24 @@ def main():
     replacement_topology = protocol_topology(
         protocol_definition, replacement_scenario["training"]["localEpochs"]
     )
+    default_mu = protocol_definition["analytics"]["protocolTopology"]["strategy"][
+        "method_parameters"
+    ]["proximal_mu"]
+    overridden_mu = default_mu + 0.25
+    overridden = copy.deepcopy(normal_scenario)
+    overridden["training"]["proximalMu"] = overridden_mu
+    image_scenario_contract(overridden)
+    overridden_topology = protocol_topology(
+        protocol_definition,
+        overridden["training"]["localEpochs"],
+        overridden["training"]["proximalMu"],
+    )
+    assert overridden_topology["strategy"]["method_parameters"]["proximal_mu"] == overridden_mu
+    assert all(
+        group["strategy"]["method_parameters"]["proximal_mu"] == overridden_mu
+        for group in overridden_topology["branch_groups"]
+    )
+    assert normal_topology["strategy"]["method_parameters"]["proximal_mu"] == default_mu
     for topology, expected_epochs in (
         (normal_topology, normal_scenario["training"]["localEpochs"]),
         (replacement_topology, replacement_scenario["training"]["localEpochs"]),
@@ -144,6 +162,14 @@ def main():
         pass
     else:
         raise AssertionError("image scenario accepted a missing local epoch source")
+    invalid_scenario = copy.deepcopy(normal_scenario)
+    invalid_scenario["training"]["proximalMu"] = -1
+    try:
+        image_scenario_contract(invalid_scenario)
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("image scenario accepted a negative proximal penalty")
     alternate_normal = copy.deepcopy(normal_scenario)
     alternate_normal["training"].update(acceptedRounds=4, localEpochs=2)
     image_scenario_contract(alternate_normal)

@@ -75,7 +75,11 @@ class FLExperimentContract:
 
     @classmethod
     def build(cls, testbed: dict, scenario: dict) -> "FLExperimentContract":
-        protocol_topology(testbed, scenario["training"]["localEpochs"])
+        protocol_topology(
+            testbed,
+            scenario["training"]["localEpochs"],
+            scenario["training"].get("proximalMu"),
+        )
         definitions = {item["unit"]: item for item in nwdaf_definitions(testbed)}
         root = [item for item in definitions.values() if item["role"] == "root"]
         if len(root) != 1:
@@ -901,6 +905,13 @@ def check_evidence(
         stop_payload = stop_record["payload"]
         guest_stop = stop_payload.get("guest", {})
         container_stop = stop_payload.get("container", {})
+        hard_stopped_at = stop_payload.get("hardStoppedAt")
+        if hard_stopped_at is not None and (
+            run.get("primaryStoppedAt") != stop_record["recordedAt"]
+            or run.get("primaryHardStoppedAt") != hard_stopped_at
+            or parse_timestamp(hard_stopped_at) < parse_timestamp(stop_record["recordedAt"])
+        ):
+            raise FLExperimentError("confirmed primary stop timing is inconsistent")
         if (
             stop_record.get("nfInstanceId") != contract.primary_nf_instance_id
             or stop_payload.get("nfInstanceId") != contract.primary_nf_instance_id
