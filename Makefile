@@ -16,8 +16,8 @@ require_testbed = @source scripts/host/lib.sh; require_testbed_selection "$(TEST
 	services-start services-status services-stop subscriptions-start \
 	subscriptions-status subscriptions-stop subscriber-data-apply \
 	subscriber-data-show subscriber-data-clear fl-collection-start fl-collection-status \
-	fl-collection-stop fl-training-start fl-training-status fl-branch-replacement-run \
-	fl-branch-replacement-collect observe logs
+	fl-collection-stop fl-training-start fl-training-status fl-experiment-run \
+	fl-experiment-collect fl-branch-replacement-run fl-branch-replacement-collect observe logs
 
 help:
 	@echo "5G NWDAF Infrastructure"
@@ -49,6 +49,8 @@ help-advanced:
 	@echo "  make subscriptions-start | subscriptions-status | subscriptions-stop"
 	@echo "  make fl-collection-start|status|stop TESTBED=... [CONFIG_DIR=...] RUN_ID=<uuid>"
 	@echo "  make fl-training-start|status TESTBED=... [CONFIG_DIR=...] RUN_ID=<uuid> [MODEL_FAMILY_ID=...]"
+	@echo "  make fl-experiment-run TESTBED=... [CONFIG_DIR=...] RUN_NAME=<name>"
+	@echo "  make fl-experiment-collect TESTBED=... [CONFIG_DIR=...] RUN_NAME=<same-name>"
 	@echo "  make fl-branch-replacement-run TESTBED=... [CONFIG_DIR=...] RUN_NAME=<name>"
 	@echo "  make fl-branch-replacement-collect TESTBED=... [CONFIG_DIR=...] RUN_NAME=<same-name>"
 	@echo "  make observe TESTBED=... [CONFIG_DIR=...]"
@@ -220,15 +222,25 @@ fl-training-status:
 	$(require_testbed)
 	@python3 scripts/host/fl-control.py training-status --testbed "$(TESTBED)" --config-dir "$(CONFIG_DIR)" --run-id "$(RUN_ID)" $(if $(MODEL_FAMILY_ID),--model-family-id "$(MODEL_FAMILY_ID)")
 
+fl-experiment-run:
+	$(require_testbed)
+	@test -n "$(RUN_NAME)" || { echo "RUN_NAME=<safe-run-name> is required" >&2; exit 2; }
+	@python3 scripts/host/fl-experiment-run.py --testbed "$(TESTBED)" --config-dir "$(CONFIG_DIR)" --run-name "$(RUN_NAME)"
+
+fl-experiment-collect:
+	$(require_testbed)
+	@test -n "$(RUN_NAME)" || { echo "RUN_NAME=<existing-run-name> is required" >&2; exit 2; }
+	@python3 scripts/host/fl-experiment-run.py --testbed "$(TESTBED)" --config-dir "$(CONFIG_DIR)" --run-name "$(RUN_NAME)" --collect-only
+
 fl-branch-replacement-run:
 	$(require_testbed)
 	@test -n "$(RUN_NAME)" || { echo "RUN_NAME=<safe-run-name> is required" >&2; exit 2; }
-	@python3 scripts/host/branch-replacement-run.py --testbed "$(TESTBED)" --config-dir "$(CONFIG_DIR)" --run-name "$(RUN_NAME)"
+	@python3 scripts/host/fl-experiment-run.py --testbed "$(TESTBED)" --config-dir "$(CONFIG_DIR)" --run-name "$(RUN_NAME)" --require-fault
 
 fl-branch-replacement-collect:
 	$(require_testbed)
 	@test -n "$(RUN_NAME)" || { echo "RUN_NAME=<existing-run-name> is required" >&2; exit 2; }
-	@python3 scripts/host/branch-replacement-run.py --testbed "$(TESTBED)" --config-dir "$(CONFIG_DIR)" --run-name "$(RUN_NAME)" --collect-only
+	@python3 scripts/host/fl-experiment-run.py --testbed "$(TESTBED)" --config-dir "$(CONFIG_DIR)" --run-name "$(RUN_NAME)" --collect-only --require-fault
 
 observe:
 	$(require_testbed)

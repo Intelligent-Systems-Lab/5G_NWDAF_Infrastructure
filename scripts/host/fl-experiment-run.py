@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run one protocol-driven GPU Branch replacement acceptance flow."""
+"""Run one protocol-driven GPU hierarchical FL experiment."""
 
 from __future__ import annotations
 
@@ -18,9 +18,9 @@ import uuid
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
-from branch_replacement import (
-    BranchReplacementContract,
-    BranchReplacementError,
+from fl_experiment import (
+    FLExperimentContract,
+    FLExperimentError,
     EvidenceWriter,
     IncrementalJsonlReader,
     PhaseTracker,
@@ -45,7 +45,7 @@ def _load_fl_control():
     path = ROOT / "scripts" / "host" / "fl-control.py"
     spec = importlib.util.spec_from_file_location("testbed_fl_control", path)
     if spec is None or spec.loader is None:
-        raise BranchReplacementError("cannot load the existing FL controller")
+        raise FLExperimentError("cannot load the existing FL controller")
     module = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = module
     spec.loader.exec_module(module)
@@ -75,7 +75,7 @@ def command_output(
     )
     if result.returncode:
         detail = (result.stderr or result.stdout).strip()[-4000:]
-        raise BranchReplacementError(
+        raise FLExperimentError(
             "command failed ({}): {}".format(command[0], detail or "no diagnostic output")
         )
     output = result.stdout
@@ -108,7 +108,7 @@ def quiet_command(
             while process.poll() is None:
                 elapsed = time.monotonic() - started
                 if elapsed >= timeout:
-                    raise BranchReplacementError(
+                    raise FLExperimentError(
                         "{} exceeded {} seconds".format(label, timeout)
                     )
                 if time.monotonic() - last_heartbeat >= 30:
@@ -136,7 +136,7 @@ def quiet_command(
         transcript.seek(0)
         output = transcript.read()
     if process.returncode:
-        raise BranchReplacementError(
+        raise FLExperimentError(
             "{} failed: {}".format(label, output.strip()[-4000:] or "no diagnostic output")
         )
     return output
@@ -185,14 +185,14 @@ class LiveEnvironment:
         states = self.vm_states()
         unavailable = [name for name, state in states.items() if state != "running"]
         if unavailable:
-            raise BranchReplacementError(
+            raise FLExperimentError(
                 "selected VMs are not running: {}".format(", ".join(unavailable))
             )
         return states
 
     def _provider_shell(self, body: str, arguments: list[str], *, timeout: int = 180) -> str:
         return command_output(
-            ["bash", "-c", body, "branch-replacement", *arguments], timeout=timeout
+            ["bash", "-c", body, "fl-experiment", *arguments], timeout=timeout
         )
 
     def vm_states(self) -> dict[str, str]:
@@ -207,7 +207,7 @@ class LiveEnvironment:
                 values[fields[0]] = fields[1]
         expected = self.runtime["guestMachines"]
         if sorted(values) != sorted(expected):
-            raise BranchReplacementError("provider state omitted or added a selected VM")
+            raise FLExperimentError("provider state omitted or added a selected VM")
         return values
 
     def start(self) -> None:
@@ -241,13 +241,13 @@ done''',
         )
         lines = [line.split("|", 3) for line in output.splitlines() if line.startswith("ACTIVE|")]
         if len(lines) != len(self.runtime["guestMachines"]):
-            raise BranchReplacementError("active Guest config identity is incomplete")
+            raise FLExperimentError("active Guest config identity is incomplete")
         values = {
             fields[1]: {"activeTarget": fields[2], "activeIdentity": fields[3]}
             for fields in lines if len(fields) == 4
         }
         if sorted(values) != sorted(self.runtime["guestMachines"]):
-            raise BranchReplacementError("active Guest identity added or omitted a machine")
+            raise FLExperimentError("active Guest identity added or omitted a machine")
         return values
 
     def guest_runtime_snapshot(self) -> dict[str, dict[str, str]]:
@@ -277,13 +277,13 @@ done < <(config_guest_service_records "$3")''',
         }
         actual = {(fields[1], fields[2], fields[3]) for fields in records if len(fields) == 5}
         if actual != expected or len(records) != len(expected):
-            raise BranchReplacementError("actual Guest service inventory is not exact")
+            raise FLExperimentError("actual Guest service inventory is not exact")
         values = {
             fields[2]: {"machine": fields[1], "kind": fields[3], "state": fields[4]}
             for fields in records
         }
         if any(value["state"] != "active" for value in values.values()):
-            raise BranchReplacementError("selected Guest services are not all active")
+            raise FLExperimentError("selected Guest services are not all active")
         return values
 
     def registration_snapshot(self) -> dict:
@@ -299,7 +299,7 @@ done < <(config_guest_service_records "$3")''',
         identities = self.runtime["resetScope"]["nrf"]["nfInstanceIds"]
         marker = "NRF REGISTRATIONS selected={} state=ready".format(len(identities))
         if marker not in output.splitlines():
-            raise BranchReplacementError("exact NRF registration evidence is incomplete")
+            raise FLExperimentError("exact NRF registration evidence is incomplete")
         return {"nfInstanceIds": identities, "state": "ready"}
 
     def _container_id(self, service: str, *, running: bool = True) -> str:
@@ -315,7 +315,7 @@ done < <(config_guest_service_records "$3")''',
         )
         values = command_output(command).splitlines()
         if len(values) != 1:
-            raise BranchReplacementError(
+            raise FLExperimentError(
                 "expected exactly one {} container for {}".format(
                     "running" if running else "selected", service
                 )
@@ -357,7 +357,7 @@ done < <(config_guest_service_records "$3")''',
                     inspected["HostConfig"].get("Runtime") != "nvidia"
                     or environment.get("NVIDIA_VISIBLE_DEVICES") != "nvidia.com/gpu=all"
                 ):
-                    raise BranchReplacementError(
+                    raise FLExperimentError(
                         service + " does not use the selected NVIDIA runtime/CDI mapping"
                     )
                 probe = json.loads(
@@ -370,22 +370,22 @@ done < <(config_guest_service_records "$3")''',
                     )
                 )
                 if probe.get("available") is not True:
-                    raise BranchReplacementError(service + " cannot see CUDA")
+                    raise FLExperimentError(service + " cannot see CUDA")
                 selected[service]["cuda"] = probe
             elif (
                 inspected["HostConfig"].get("Runtime") == "nvidia"
                 or environment.get("NVIDIA_VISIBLE_DEVICES") is not None
             ):
-                raise BranchReplacementError(service + " is CPU-owned but exposes a GPU")
+                raise FLExperimentError(service + " is CPU-owned but exposes a GPU")
             if (
                 selected[service]["state"] != "running"
                 or selected[service]["health"] != "healthy"
             ):
-                raise BranchReplacementError(service + " is not running and healthy")
+                raise FLExperimentError(service + " is not running and healthy")
         if len([value for value in selected.values() if value["device"] == "cuda:0"]) != 7:
-            raise BranchReplacementError("actual runtime does not contain seven CUDA participants")
+            raise FLExperimentError("actual runtime does not contain seven CUDA participants")
         if len(image_ids) != 1:
-            raise BranchReplacementError("selected PyMTLF containers do not share one image")
+            raise FLExperimentError("selected PyMTLF containers do not share one image")
         image = json.loads(
             command_output(["docker", "image", "inspect", next(iter(image_ids))])
         )[0]
@@ -410,7 +410,7 @@ done < <(config_guest_service_records "$3")''',
             ]
         ).splitlines()
         if len(gpu) != 1:
-            raise BranchReplacementError("acceptance requires exactly one selected Host GPU")
+            raise FLExperimentError("acceptance requires exactly one selected Host GPU")
         uuid_value, name, driver, total, free = [item.strip() for item in gpu[0].split(",")]
         return {
             "uuid": uuid_value,
@@ -423,7 +423,7 @@ done < <(config_guest_service_records "$3")''',
     def selected_image_snapshot(self) -> dict:
         inspected = json.loads(command_output(["docker", "image", "inspect", IMAGE]))
         if len(inspected) != 1:
-            raise BranchReplacementError("selected PyMTLF image is ambiguous")
+            raise FLExperimentError("selected PyMTLF image is ambiguous")
         image = inspected[0]
         return {
             "id": image["Id"],
@@ -469,10 +469,10 @@ print(json.dumps({"offset":offset+len(data),"data":base64.b64encode(data).decode
     def _single_record(output: str, prefix: str) -> list[str]:
         records = [line.split("|") for line in output.splitlines() if line.startswith(prefix)]
         if len(records) != 1:
-            raise BranchReplacementError("missing or duplicate {} evidence".format(prefix[:-1]))
+            raise FLExperimentError("missing or duplicate {} evidence".format(prefix[:-1]))
         return records[0]
 
-    def fail_stop_primary(self, contract: BranchReplacementContract) -> dict:
+    def fail_stop_primary(self, contract: FLExperimentContract) -> dict:
         print("MILESTONE primary-fail-stop-starting", flush=True)
 
         def freeze_guest() -> dict:
@@ -556,7 +556,7 @@ exit 1''',
             )
             killed_record = self._single_record(killed, "GUEST_KILLED|")
             if int(killed_record[1]) != original_pid:
-                raise BranchReplacementError("Guest fail-stop PID evidence changed")
+                raise FLExperimentError("Guest fail-stop PID evidence changed")
             return {
                 **target,
                 "freezeSignal": "SIGSTOP",
@@ -574,16 +574,16 @@ exit 1''',
                 labels.get("com.docker.compose.project") != PROJECT
                 or labels.get("com.docker.compose.service") != contract.primary_service
             ):
-                raise BranchReplacementError("primary PyMTLF container identity mismatch")
+                raise FLExperimentError("primary PyMTLF container identity mismatch")
             state = inspected["State"]
             original_pid = state.get("Pid")
             restart_policy = inspected.get("HostConfig", {}).get(
                 "RestartPolicy", {}
             ).get("Name", "")
             if state.get("Running") is not True or not isinstance(original_pid, int) or original_pid <= 0:
-                raise BranchReplacementError("primary PyMTLF container is not running")
+                raise FLExperimentError("primary PyMTLF container is not running")
             if restart_policy not in ("", "no"):
-                raise BranchReplacementError(
+                raise FLExperimentError(
                     "primary PyMTLF container has an automatic restart policy"
                 )
             return {
@@ -604,12 +604,12 @@ exit 1''',
                 or inspected["State"].get("Running") is not True
                 or inspected["State"].get("Pid") != target["originalPid"]
             ):
-                raise BranchReplacementError("primary PyMTLF container changed while freezing")
+                raise FLExperimentError("primary PyMTLF container changed while freezing")
             process_state = command_output(
                 ["ps", "-o", "stat=", "-p", str(target["originalPid"])], timeout=10,
             ).strip()
             if not process_state.startswith("T"):
-                raise BranchReplacementError(
+                raise FLExperimentError(
                     "primary PyMTLF container did not enter a stopped process state"
                 )
 
@@ -618,7 +618,7 @@ exit 1''',
             command_output(["docker", "kill", "--signal", "KILL", container_id], timeout=30)
             selected_id = self._container_id(contract.primary_service, running=False)
             if selected_id != container_id:
-                raise BranchReplacementError("primary PyMTLF container identity changed")
+                raise FLExperimentError("primary PyMTLF container identity changed")
             stopped = json.loads(command_output(["docker", "inspect", container_id]))[0]
             stopped_state = stopped["State"]
             if (
@@ -627,7 +627,7 @@ exit 1''',
                 or stopped_state.get("ExitCode") != 137
                 or stopped.get("RestartCount", 0) != target["restartCount"]
             ):
-                raise BranchReplacementError(
+                raise FLExperimentError(
                     "primary PyMTLF container did not remain hard-stopped"
                 )
             return {
@@ -689,7 +689,7 @@ printf 'GUEST_RESUMED|%s\n' "$current_pid"''',
             detail = str(error)
             if recovery_errors:
                 detail += "; " + "; ".join(recovery_errors)
-            raise BranchReplacementError("partial primary stop: " + detail) from error
+            raise FLExperimentError("partial primary stop: " + detail) from error
         print("MILESTONE primary-fail-stopped", flush=True)
         return {"guest": guest_result, "container": container_result}
 
@@ -723,9 +723,9 @@ printf 'GUEST_RESTART_RESTORED\n' ''',
         try:
             parsed_plan_id = uuid.UUID(plan_id)
         except (AttributeError, TypeError, ValueError) as error:
-            raise BranchReplacementError("final model planId is not a UUIDv4") from error
+            raise FLExperimentError("final model planId is not a UUIDv4") from error
         if parsed_plan_id.version != 4 or str(parsed_plan_id) != plan_id:
-            raise BranchReplacementError("final model planId is not a canonical UUIDv4")
+            raise FLExperimentError("final model planId is not a canonical UUIDv4")
 
         root_service = self.runtime["coordinatorContainer"]
         root_config = load_yaml(self.config_dir / (root_service + ".yaml"))
@@ -745,7 +745,7 @@ printf 'GUEST_RESTART_RESTORED\n' ''',
             )
         ]
         if len(volume_mounts) != 1:
-            raise BranchReplacementError(
+            raise FLExperimentError(
                 "Root experiment record directory lacks one exact volume owner"
             )
         mount = volume_mounts[0]
@@ -754,7 +754,7 @@ printf 'GUEST_RESTART_RESTORED\n' ''',
             item["name"]: item["image"] for item in self.runtime["mlVolumes"]
         }
         if logical_volume not in selected_volumes:
-            raise BranchReplacementError("Root experiment record volume is not selected")
+            raise FLExperimentError("Root experiment record volume is not selected")
         physical_volume = PROJECT + "_" + logical_volume
         return {
             "rootService": root_service,
@@ -778,20 +778,20 @@ printf 'GUEST_RESTART_RESTORED\n' ''',
             or isinstance(expected_size, bool)
             or expected_size <= 0
         ):
-            raise BranchReplacementError("final model checkpoint size is invalid")
+            raise FLExperimentError("final model checkpoint size is invalid")
         source = self.final_model_source(plan_id)
         inspected = json.loads(
             command_output(["docker", "volume", "inspect", source["physicalVolume"]])
         )
         if len(inspected) != 1:
-            raise BranchReplacementError("Root experiment record volume is ambiguous")
+            raise FLExperimentError("Root experiment record volume is ambiguous")
         labels = inspected[0].get("Labels") or {}
         if (
             inspected[0].get("Name") != source["physicalVolume"]
             or labels.get("com.docker.compose.project") != PROJECT
             or labels.get("com.docker.compose.volume") != source["logicalVolume"]
         ):
-            raise BranchReplacementError("Root experiment record volume identity differs")
+            raise FLExperimentError("Root experiment record volume identity differs")
 
         temporary = destination.with_name("." + destination.name + ".collecting")
         temporary.unlink(missing_ok=True)
@@ -810,7 +810,7 @@ printf 'GUEST_RESTART_RESTORED\n' ''',
                 timeout=30,
             )
             if not collector_id:
-                raise BranchReplacementError("artifact collector container was not created")
+                raise FLExperimentError("artifact collector container was not created")
             command_output(
                 [
                     "docker", "cp",
@@ -826,17 +826,59 @@ printf 'GUEST_RESTART_RESTORED\n' ''',
                 )
         if not temporary.is_file() or temporary.stat().st_size != expected_size:
             temporary.unlink(missing_ok=True)
-            raise BranchReplacementError("final Root artifact size differs from checkpoint")
+            raise FLExperimentError("final Root artifact size differs from checkpoint")
         temporary.chmod(0o644)
         temporary.replace(destination)
 
     def collect_protocol_evidence(
         self,
         directory: Path,
-        contract: BranchReplacementContract,
+        contract: FLExperimentContract,
         plan_id: str,
         since: str,
     ) -> dict:
+        directory.mkdir(parents=True, exist_ok=True)
+        evidence = {"planId": plan_id}
+
+        def resource_records(
+            service: str, wanted: set[str] | None = None
+        ) -> list[dict[str, str]]:
+            container_id = self._container_id(service, running=False)
+            output = command_output(
+                ["docker", "logs", "--since", since, container_id],
+                timeout=30,
+                combined=True,
+            )
+            selected_lines = [line for line in output.splitlines() if plan_id in line]
+            (directory / (service + ".log")).write_text(
+                "\n".join(selected_lines) + ("\n" if selected_lines else ""),
+                encoding="utf-8",
+            )
+            return [
+                item for item in parse_resource_log(output, plan_id)
+                if wanted is None or item["nfInstanceId"] in wanted
+            ]
+
+        if not contract.fault_enabled:
+            active_ids = set(contract.normal_nf_instance_ids)
+            evidence["rootEdges"] = resource_records(
+                self.runtime["coordinatorContainer"]
+            )
+            if len(evidence["rootEdges"]) != len(active_ids) or {
+                item["nfInstanceId"] for item in evidence["rootEdges"]
+            } != active_ids:
+                raise FLExperimentError("Root logs do not contain the exact active Branches")
+            branch_edges = {}
+            for branch_id, service, leaves in contract.active_branch_leaf_edges:
+                records = resource_records(service)
+                if len(records) != len(leaves) or {
+                    item["nfInstanceId"] for item in records
+                } != set(leaves):
+                    raise FLExperimentError("Branch logs do not contain the exact leaves")
+                branch_edges[branch_id] = records
+            evidence["branchLeafEdges"] = branch_edges
+            return evidence
+
         services = {
             "rootEdges": self.runtime["coordinatorContainer"],
             "primaryLeafEdges": contract.primary_service,
@@ -846,23 +888,7 @@ printf 'GUEST_RESTART_RESTORED\n' ''',
                 if item["nfInstanceId"] == contract.replacement_nf_instance_id
             ),
         }
-        directory.mkdir(parents=True, exist_ok=True)
-        evidence = {"planId": plan_id}
         for field, service in services.items():
-            container_id = self._container_id(service, running=False)
-            output = command_output(
-                [
-                    "docker", "logs", "--since", since, container_id,
-                ],
-                timeout=30,
-                combined=True,
-            )
-            selected_lines = [line for line in output.splitlines() if plan_id in line]
-            (directory / (service + ".log")).write_text(
-                "\n".join(selected_lines) + ("\n" if selected_lines else ""),
-                encoding="utf-8",
-            )
-            records = parse_resource_log(output, plan_id)
             if field == "rootEdges":
                 wanted = {
                     contract.primary_nf_instance_id,
@@ -870,27 +896,25 @@ printf 'GUEST_RESTART_RESTORED\n' ''',
                 }
             else:
                 wanted = set(contract.fault_group_leaf_nf_instance_ids)
-            evidence[field] = [
-                item for item in records if item["nfInstanceId"] in wanted
-            ]
+            evidence[field] = resource_records(service, wanted)
         if {item["nfInstanceId"] for item in evidence["rootEdges"]} != {
             contract.primary_nf_instance_id,
             contract.replacement_nf_instance_id,
         }:
-            raise BranchReplacementError(
+            raise FLExperimentError(
                 "Root logs do not contain exact primary and replacement resources"
             )
         expected_leaves = set(contract.fault_group_leaf_nf_instance_ids)
         for field in ("primaryLeafEdges", "replacementLeafEdges"):
             if {item["nfInstanceId"] for item in evidence[field]} != expected_leaves:
-                raise BranchReplacementError(field + " does not contain the exact Area leaves")
+                raise FLExperimentError(field + " does not contain the exact Area leaves")
         if (
             {item["notifCorreId"] for item in evidence["primaryLeafEdges"]}
             & {item["notifCorreId"] for item in evidence["replacementLeafEdges"]}
             or {item["resourceLocation"] for item in evidence["primaryLeafEdges"]}
             & {item["resourceLocation"] for item in evidence["replacementLeafEdges"]}
         ):
-            raise BranchReplacementError("replacement reused an old Branch-to-Leaf resource")
+            raise FLExperimentError("replacement reused an old Branch-to-Leaf resource")
         return evidence
 
     def stop_all(self) -> dict:
@@ -912,7 +936,7 @@ printf 'GUEST_RESTART_RESTORED\n' ''',
             self._restore_faulted_guest()
         except Exception as error:
             if stop_error is not None:
-                raise BranchReplacementError(
+                raise FLExperimentError(
                     "runtime stop failed: {}; Guest restart restoration failed: {}".format(
                         stop_error, error
                     )
@@ -958,9 +982,9 @@ printf 'GUEST_RESTART_RESTORED\n' ''',
         try:
             value = json.loads(output.splitlines()[-1])
         except (IndexError, json.JSONDecodeError) as error:
-            raise BranchReplacementError("held-out evaluator returned invalid JSON") from error
+            raise FLExperimentError("held-out evaluator returned invalid JSON") from error
         if value.get("run_id") != run_id or value.get("model_artifact_key") != artifact_key:
-            raise BranchReplacementError("held-out evaluation identity mismatch")
+            raise FLExperimentError("held-out evaluation identity mismatch")
         return value
 
     def reset(self) -> dict:
@@ -986,36 +1010,38 @@ printf 'GUEST_RESTART_RESTORED\n' ''',
         )
         return {"applied": True, "resetVerified": True, "details": verified.strip()[-1000:]}
 
-    def diagnostics(self, directory: Path, contract: BranchReplacementContract) -> None:
+    def diagnostics(self, directory: Path, contract: FLExperimentContract) -> None:
         directory.mkdir(parents=True, exist_ok=True)
         commands = {
             "root-container.log": [
                 "docker", "logs", "--tail", "120",
                 self._container_id(self.runtime["coordinatorContainer"], running=False),
             ],
-            "primary-container.log": [
+        }
+        if contract.fault_enabled:
+            commands["primary-container.log"] = [
                 "docker", "logs", "--tail", "120",
                 self._container_id(contract.primary_service, running=False),
-            ],
-        }
+            ]
         for filename, command in commands.items():
             try:
                 value = command_output(command, timeout=30, combined=True)
-            except BranchReplacementError as error:
+            except FLExperimentError as error:
                 value = str(error)
             (directory / filename).write_text(value + "\n", encoding="utf-8")
-        try:
-            journal = self._provider_shell(
-                r'''source "$1"; select_testbed_machines "$2"; vssh "$3" "sudo journalctl -u 5g-nwdaf@$4.service -n 120 --no-pager"''',
-                [
-                    str(ROOT / "scripts/host/lib.sh"), str(self.testbed_path),
-                    contract.primary_machine, contract.primary_unit,
-                ],
-                timeout=60,
-            )
-        except BranchReplacementError as error:
-            journal = str(error)
-        (directory / "primary-guest.log").write_text(journal + "\n", encoding="utf-8")
+        if contract.fault_enabled:
+            try:
+                journal = self._provider_shell(
+                    r'''source "$1"; select_testbed_machines "$2"; vssh "$3" "sudo journalctl -u 5g-nwdaf@$4.service -n 120 --no-pager"''',
+                    [
+                        str(ROOT / "scripts/host/lib.sh"), str(self.testbed_path),
+                        contract.primary_machine, contract.primary_unit,
+                    ],
+                    timeout=60,
+                )
+            except FLExperimentError as error:
+                journal = str(error)
+            (directory / "primary-guest.log").write_text(journal + "\n", encoding="utf-8")
 
 
 def initial_run_record(
@@ -1026,7 +1052,7 @@ def initial_run_record(
     testbed: dict,
     manifest: dict,
     scenario: dict,
-    contract: BranchReplacementContract,
+    contract: FLExperimentContract,
 ) -> dict:
     operations = testbed["operations"]
     root_service = manifest["runtime"]["coordinatorContainer"]
@@ -1041,7 +1067,7 @@ def initial_run_record(
     root_go = load_yaml(config_dir / ("nwdafcfg-" + root_unit[6:] + ".yaml"))[
         "configuration"
     ]
-    return {
+    record = {
         "runName": run_name,
         "requestId": request_id,
         "dataset": scenario["workload"]["dataset"],
@@ -1077,7 +1103,10 @@ def initial_run_record(
                 "maximumTotalSeconds": delay_policy.get("max_extension_seconds", 300),
             },
         },
-        "fault": {
+        "failures": [],
+    }
+    if contract.fault_enabled:
+        record["fault"] = {
             **scenario["fault"],
             "primary": {
                 "nfInstanceId": contract.primary_nf_instance_id,
@@ -1086,18 +1115,17 @@ def initial_run_record(
                 "service": contract.primary_service,
             },
             "replacementNfInstanceId": contract.replacement_nf_instance_id,
-        },
-        "failures": [],
-    }
+        }
+    return record
 
 
 def canonical_uuid4(value: object, field: str) -> str:
     try:
         parsed = uuid.UUID(value)
     except (AttributeError, TypeError, ValueError) as error:
-        raise BranchReplacementError(field + " must be a canonical UUIDv4") from error
+        raise FLExperimentError(field + " must be a canonical UUIDv4") from error
     if parsed.version != 4 or str(parsed) != value:
-        raise BranchReplacementError(field + " must be a canonical UUIDv4")
+        raise FLExperimentError(field + " must be a canonical UUIDv4")
     return value
 
 
@@ -1108,7 +1136,7 @@ def event_payload(writer: EvidenceWriter, source: str, event_type: str) -> dict 
         if record["source"] == source and record["eventType"] == event_type
     ]
     if len(matches) > 1:
-        raise BranchReplacementError(
+        raise FLExperimentError(
             "events contain duplicate {} {} records".format(source, event_type)
         )
     return matches[0]["payload"] if matches else None
@@ -1120,27 +1148,27 @@ def validate_collection_checkpoint(
     testbed_path: Path,
     config_dir: Path,
     manifest: dict,
-    contract: BranchReplacementContract,
+    contract: FLExperimentContract,
     environment: LiveEnvironment,
 ) -> tuple[str, str, dict]:
     run = writer.run
     if run.get("status") not in {"collection-pending", "collection-failed"}:
-        raise BranchReplacementError(
+        raise FLExperimentError(
             "collection-only requires a collection-pending or collection-failed checkpoint"
         )
     if run.get("runName") != run_name or writer.run_directory.name != run_name:
-        raise BranchReplacementError("collection checkpoint runName is mismatched")
+        raise FLExperimentError("collection checkpoint runName is mismatched")
     request_id = canonical_uuid4(run.get("requestId"), "checkpoint requestId")
     plan_id = canonical_uuid4(run.get("planId"), "checkpoint planId")
     if run.get("mlCorreId") != plan_id:
-        raise BranchReplacementError("checkpoint mlCorreId differs from planId")
+        raise FLExperimentError("checkpoint mlCorreId differs from planId")
     if run.get("dataset") != contract.dataset or run.get("scenario") != manifest["scenario"]:
-        raise BranchReplacementError("collection checkpoint scenario is not selected")
+        raise FLExperimentError("collection checkpoint scenario is not selected")
     selection = run.get("selection", {})
     if selection.get("testbed") != str(testbed_path.relative_to(ROOT)) or selection.get(
         "configDirectory"
     ) != str(config_dir.relative_to(ROOT)):
-        raise BranchReplacementError("collection checkpoint config selection is not active")
+        raise FLExperimentError("collection checkpoint config selection is not active")
     terminal = run.get("terminalStatus")
     final_model = run.get("finalModel")
     if (
@@ -1154,19 +1182,19 @@ def validate_collection_checkpoint(
         or isinstance(final_model.get("sizeBytes"), bool)
         or final_model["sizeBytes"] <= 0
     ):
-        raise BranchReplacementError("collection checkpoint final model is incomplete")
+        raise FLExperimentError("collection checkpoint final model is incomplete")
     selected_source = environment.final_model_source(plan_id)
     if run.get("finalModelSource") != selected_source:
-        raise BranchReplacementError("collection checkpoint Root volume source is mismatched")
+        raise FLExperimentError("collection checkpoint Root volume source is mismatched")
     if environment.selected_image_snapshot() != run.get("image"):
-        raise BranchReplacementError("collection requires the training PyMTLF image")
+        raise FLExperimentError("collection requires the training PyMTLF image")
     return request_id, plan_id, final_model
 
 
 def complete_collection(
     writer: EvidenceWriter,
     environment: LiveEnvironment,
-    contract: BranchReplacementContract,
+    contract: FLExperimentContract,
 ) -> int:
     request_id = canonical_uuid4(writer.run.get("requestId"), "checkpoint requestId")
     plan_id = canonical_uuid4(writer.run.get("planId"), "checkpoint planId")
@@ -1196,7 +1224,7 @@ def complete_collection(
         or not artifact.is_file()
         or artifact.stat().st_size != expected_size
     ):
-        raise BranchReplacementError("collected final artifact differs from checkpoint")
+        raise FLExperimentError("collected final artifact differs from checkpoint")
     artifact.chmod(0o644)
 
     protocol_resources = event_payload(
@@ -1216,7 +1244,7 @@ def complete_collection(
             nf_instance_id=contract.root_nf_instance_id,
         )
     if protocol_resources.get("planId") != plan_id:
-        raise BranchReplacementError("protocol resource evidence has the wrong planId")
+        raise FLExperimentError("protocol resource evidence has the wrong planId")
     writer.update(
         protocolResources=protocol_resources,
         finalArtifact=artifact.name,
@@ -1236,7 +1264,7 @@ def complete_collection(
         held_out = environment.evaluate(request_id, artifact_key, artifact)
         writer.append_once("held-out-evaluator", "HELD_OUT_EVALUATION", held_out)
     if held_out.get("run_id") != request_id:
-        raise BranchReplacementError("held-out evaluation request identity is mismatched")
+        raise FLExperimentError("held-out evaluation request identity is mismatched")
     writer.update(heldOutEvaluation=held_out)
 
     check_evidence(writer.run_directory, contract, require_cleanup=False)
@@ -1274,7 +1302,7 @@ def run_collection_only(
     testbed_path: Path,
     config_dir: Path,
     manifest: dict,
-    contract: BranchReplacementContract,
+    contract: FLExperimentContract,
     environment: LiveEnvironment,
 ) -> int:
     validate_collection_checkpoint(
@@ -1329,7 +1357,7 @@ def ensure_runtime_stopped_after_failure(
 
 def validate_source_image_revision(image: dict, expected_revision: str) -> None:
     if image.get("revision") != expected_revision:
-        raise BranchReplacementError(
+        raise FLExperimentError(
             "PyMTLF image revision differs from the selected source revision"
         )
 
@@ -1341,7 +1369,7 @@ def validate_runtime_image(
 ) -> None:
     validate_source_image_revision(selected_image, expected_revision)
     if runtime_image != selected_image:
-        raise BranchReplacementError(
+        raise FLExperimentError(
             "running PyMTLF containers do not use the post-build selected image"
         )
 
@@ -1354,15 +1382,17 @@ def run(args: argparse.Namespace) -> int:
     manifest = load_runtime_manifest(config_dir)
     _scenario_path, scenario = resolve_config_scenario(config_dir)
     image_scenario_contract(scenario)
+    if args.require_fault and scenario.get("fault") is None:
+        raise FLExperimentError("Branch replacement entrypoint requires a fault scenario")
     if manifest["scenario"].get("fault") != scenario.get("fault"):
-        raise BranchReplacementError("generated fault contract differs from scenario")
+        raise FLExperimentError("generated fault contract differs from scenario")
     if manifest["runtime"].get("deploymentKind") != "protocol-hierarchical":
-        raise BranchReplacementError("runner requires protocol-hierarchical deployment")
+        raise FLExperimentError("runner requires protocol-hierarchical deployment")
     if manifest["runtime"].get("mlDevicePolicy") != "gpu":
-        raise BranchReplacementError("Branch replacement acceptance requires DEVICE=gpu")
+        raise FLExperimentError("protocol experiment requires DEVICE=gpu")
     if manifest["runtime"]["capacity"].get("gpuParticipants") != 7:
-        raise BranchReplacementError("generated runtime must select seven GPU participants")
-    contract = BranchReplacementContract.build(testbed, scenario)
+        raise FLExperimentError("generated runtime must select seven GPU participants")
+    contract = FLExperimentContract.build(testbed, scenario)
     run_directory = (
         ROOT
         / "runs"
@@ -1379,14 +1409,14 @@ def run(args: argparse.Namespace) -> int:
         try:
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError as error:
-            raise BranchReplacementError("another protocol experiment runner is active") from error
+            raise FLExperimentError("another protocol experiment runner is active") from error
         if args.collect_only:
             writer = EvidenceWriter.open_existing(run_directory)
             if writer.run.get("status") not in {
                 "collection-pending",
                 "collection-failed",
             }:
-                raise BranchReplacementError(
+                raise FLExperimentError(
                     "collection-only requires a collection-pending or collection-failed checkpoint"
                 )
         else:
@@ -1420,7 +1450,7 @@ def run(args: argparse.Namespace) -> int:
             prestart_gpu = environment.gpu_snapshot()
             minimum_gpu = manifest["runtime"]["capacity"]["minimumGpuMemoryMiB"]
             if prestart_gpu["memoryFreeMiB"] < minimum_gpu:
-                raise BranchReplacementError("GPU free memory is below the pre-start floor")
+                raise FLExperimentError("GPU free memory is below the pre-start floor")
             source_image = environment.selected_image_snapshot()
             expected_image_revision = writer.run["repositories"]["ML/PyMTLF"][
                 "revision"
@@ -1487,7 +1517,7 @@ def run(args: argparse.Namespace) -> int:
                 status = controller.training_status(request_id)
                 plan_id = status.get("planId")
             if not isinstance(plan_id, str):
-                raise BranchReplacementError("training resource did not expose planId")
+                raise FLExperimentError("training resource did not expose planId")
             writer.update(planId=plan_id, mlCorreId=plan_id, trainingRequest=status)
             tracker = PhaseTracker(contract, plan_id)
             reader = environment.root_observation_reader(plan_id)
@@ -1512,12 +1542,12 @@ def run(args: argparse.Namespace) -> int:
                         print("MILESTONE " + transition, flush=True)
                 status = controller.training_status(request_id)
                 if status.get("state") == "FAILED":
-                    raise BranchReplacementError(
+                    raise FLExperimentError(
                         "training failed: {} {}".format(
                             status.get("failureCause"), status.get("failureDetail")
                         )
                     )
-                if not fault_injected and tracker.ready_for_fault(status):
+                if contract.fault_enabled and not fault_injected and tracker.ready_for_fault(status):
                     fail_stop = environment.fail_stop_primary(contract)
                     stopped_at = utc_now()
                     tracker.mark_stopped(stopped_at)
@@ -1570,7 +1600,7 @@ def run(args: argparse.Namespace) -> int:
                     last_heartbeat = time.monotonic()
                 time.sleep(contract.poll_seconds)
             if terminal is None:
-                raise BranchReplacementError("training did not complete within the configured budget")
+                raise FLExperimentError("training did not complete within the configured budget")
 
             return complete_collection(writer, environment, contract)
         except BaseException as error:
@@ -1604,16 +1634,17 @@ def main() -> int:
     parser.add_argument("--config-dir", default="")
     parser.add_argument("--run-name", required=True)
     parser.add_argument("--collect-only", action="store_true")
+    parser.add_argument("--require-fault", action="store_true")
     args = parser.parse_args()
     previous_sigterm = signal.getsignal(signal.SIGTERM)
 
     def terminate(_signum, _frame):
-        raise BranchReplacementError("runner interrupted by SIGTERM")
+        raise FLExperimentError("runner interrupted by SIGTERM")
 
     signal.signal(signal.SIGTERM, terminate)
     try:
         return run(args)
-    except (BranchReplacementError, ValueError, OSError, subprocess.SubprocessError) as error:
+    except (FLExperimentError, ValueError, OSError, subprocess.SubprocessError) as error:
         print("ERROR {}".format(error), file=sys.stderr)
         return 1
     except KeyboardInterrupt:

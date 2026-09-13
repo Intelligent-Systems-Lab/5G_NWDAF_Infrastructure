@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Behavioral checks for Branch replacement phase and evidence semantics."""
+"""Behavioral checks for protocol hierarchical FL experiment semantics."""
 
 import copy
 import importlib.util
@@ -17,9 +17,9 @@ import yaml
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts" / "host"))
 
-from branch_replacement import (  # noqa: E402
-    BranchReplacementContract,
-    BranchReplacementError,
+from fl_experiment import (  # noqa: E402
+    FLExperimentContract,
+    FLExperimentError,
     EvidenceWriter,
     IncrementalJsonlReader,
     PhaseTracker,
@@ -30,10 +30,10 @@ from branch_replacement import (  # noqa: E402
 
 
 def load_runner():
-    path = ROOT / "scripts/host/branch-replacement-run.py"
-    spec = importlib.util.spec_from_file_location("branch_replacement_runner", path)
+    path = ROOT / "scripts/host/fl-experiment-run.py"
+    spec = importlib.util.spec_from_file_location("fl_experiment_runner", path)
     if spec is None or spec.loader is None:
-        raise AssertionError("cannot load Branch replacement runner")
+        raise AssertionError("cannot load FL experiment runner")
     module = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = module
     spec.loader.exec_module(module)
@@ -50,7 +50,7 @@ def timestamp(index):
     return (BASE + timedelta(seconds=index)).isoformat().replace("+00:00", "Z")
 
 
-def selected_contract():
+def replacement_contract():
     testbed = yaml.safe_load(
         (ROOT / "testbed.protocol-hierarchical.yaml").read_text(encoding="utf-8")
     )
@@ -60,7 +60,19 @@ def selected_contract():
             / "experiments/protocol-hierarchical/branch-replacement/mnist/scenario.yaml"
         ).read_text(encoding="utf-8")
     )
-    return BranchReplacementContract.build(testbed, scenario)
+    return FLExperimentContract.build(testbed, scenario)
+
+
+def normal_contract():
+    testbed = yaml.safe_load(
+        (ROOT / "testbed.protocol-hierarchical.yaml").read_text(encoding="utf-8")
+    )
+    scenario = yaml.safe_load(
+        (ROOT / "experiments/protocol-hierarchical/mnist/scenario.yaml").read_text(
+            encoding="utf-8"
+        )
+    )
+    return FLExperimentContract.build(testbed, scenario)
 
 
 def evaluation(contract, round_indicator, at, *, initial=False):
@@ -181,12 +193,12 @@ def test_run_name_and_retry_checkpoint():
     for value in ("", ".", "..", "contains space", "../escape", "a" * 65):
         try:
             validate_run_name(value)
-        except BranchReplacementError:
+        except FLExperimentError:
             pass
         else:
             raise AssertionError("unsafe run name was accepted: {!r}".format(value))
 
-    with tempfile.TemporaryDirectory(prefix="branch-replacement-checkpoint-") as temporary:
+    with tempfile.TemporaryDirectory(prefix="fl-experiment-checkpoint-") as temporary:
         run_directory = Path(temporary) / RUN_NAME
         writer = EvidenceWriter(
             run_directory,
@@ -220,7 +232,7 @@ def test_run_name_and_retry_checkpoint():
                 {"requestId": "different"},
                 recorded_at=timestamp(1),
             )
-        except BranchReplacementError as error:
+        except FLExperimentError as error:
             assert "conflicts" in str(error)
         else:
             raise AssertionError("conflicting retry event was accepted")
@@ -233,7 +245,7 @@ def test_run_name_and_retry_checkpoint():
 
 
 def test_contract_and_fault_barrier():
-    contract = selected_contract()
+    contract = replacement_contract()
     assert contract.primary_unit == "nwdaf-branch-a-primary"
     assert contract.primary_service == "pymtlf-branch-a-primary"
     assert contract.accepted_rounds == 8
@@ -251,8 +263,36 @@ def test_contract_and_fault_barrier():
     )
 
 
+def test_normal_rounds_keep_the_selected_cohort_and_evaluations():
+    contract = normal_contract()
+    assert not contract.fault_enabled
+    assert len(contract.normal_nf_instance_ids) == 3
+    tracker = PhaseTracker(contract, PLAN_ID)
+    tracker.ingest(evaluation(contract, None, 0, initial=True))
+    for index in range(contract.accepted_rounds):
+        tracker.ingest(outcome(contract, index, 1 + index * 2, contract.normal_nf_instance_ids))
+        tracker.ingest(evaluation(contract, index, 2 + index * 2))
+    assert not tracker.ready_for_fault(
+        {"state": "ROUND_WAITING", "currentRound": 3, "completedRounds": 2}
+    )
+    tracker.ingest(final_model_saved(contract, contract.accepted_rounds - 1, 5))
+    assert tracker.finalize(terminal(contract))["phaseCounts"] == {
+        "normal": contract.accepted_rounds,
+        "degraded": 0,
+        "restored": 0,
+    }
+    invalid = PhaseTracker(contract, PLAN_ID)
+    invalid.ingest(evaluation(contract, None, 0, initial=True))
+    try:
+        invalid.ingest(failure(contract, 0, 1))
+    except FLExperimentError as error:
+        assert "normal run" in str(error)
+    else:
+        raise AssertionError("normal run accepted a Branch failure event")
+
+
 def test_variable_degraded_phase_and_ready_is_not_contribution():
-    contract = selected_contract()
+    contract = replacement_contract()
     tracker = PhaseTracker(contract, PLAN_ID)
     records = successful_records(contract)
     for record in records[:5]:
@@ -272,7 +312,7 @@ def test_variable_degraded_phase_and_ready_is_not_contribution():
 
 
 def test_rejected_attempt_and_missing_evaluation_fail_closed():
-    contract = selected_contract()
+    contract = replacement_contract()
     tracker = PhaseTracker(contract, PLAN_ID)
     records = successful_records(contract)
     for record in records[:5]:
@@ -296,14 +336,14 @@ def test_rejected_attempt_and_missing_evaluation_fail_closed():
             missing.ingest(record)
     try:
         missing.finalize(terminal(contract))
-    except BranchReplacementError as error:
+    except FLExperimentError as error:
         assert "one-to-one" in str(error)
     else:
         raise AssertionError("missing Root evaluation was accepted")
 
 
 def test_invalid_replacement_and_incomplete_recovery_fail_closed():
-    contract = selected_contract()
+    contract = replacement_contract()
     records = successful_records(contract)
 
     wrong = PhaseTracker(contract, PLAN_ID)
@@ -316,7 +356,7 @@ def test_invalid_replacement_and_incomplete_recovery_fail_closed():
     invalid_ready["replacementBranchNfInstanceId"] = contract.primary_nf_instance_id
     try:
         wrong.ingest(invalid_ready)
-    except BranchReplacementError as error:
+    except FLExperimentError as error:
         assert "wrong replacement priority" in str(error)
     else:
         raise AssertionError("wrong replacement candidate was accepted")
@@ -343,14 +383,14 @@ def test_invalid_replacement_and_incomplete_recovery_fail_closed():
         incomplete.ingest(evaluation(contract, round_indicator, 10 + round_indicator))
     try:
         incomplete.finalize(terminal(contract))
-    except BranchReplacementError as error:
+    except FLExperimentError as error:
         assert "restored" in str(error)
     else:
         raise AssertionError("run without restored contribution was accepted")
 
 
 def test_final_model_record_must_match_terminal_artifact():
-    contract = selected_contract()
+    contract = replacement_contract()
     records = successful_records(contract)
 
     for field, value, message in (
@@ -369,7 +409,7 @@ def test_final_model_record_must_match_terminal_artifact():
         try:
             tracker.ingest(invalid)
             tracker.finalize(terminal(contract))
-        except BranchReplacementError as error:
+        except FLExperimentError as error:
             assert message in str(error)
         else:
             raise AssertionError("invalid final-model record was accepted")
@@ -382,7 +422,7 @@ def test_final_model_record_must_match_terminal_artifact():
         missing.ingest(record)
     try:
         missing.finalize(terminal(contract))
-    except BranchReplacementError as error:
+    except FLExperimentError as error:
         assert "final model" in str(error)
     else:
         raise AssertionError("missing final-model record was accepted")
@@ -395,7 +435,7 @@ def test_final_model_record_must_match_terminal_artifact():
         duplicate.ingest(record)
     try:
         duplicate.ingest(records[-1])
-    except BranchReplacementError as error:
+    except FLExperimentError as error:
         assert "duplicated" in str(error)
     else:
         raise AssertionError("duplicate final-model record was accepted")
@@ -403,7 +443,7 @@ def test_final_model_record_must_match_terminal_artifact():
 
 def test_exact_pair_stop_and_partial_failure():
     runner = load_runner()
-    contract = selected_contract()
+    contract = replacement_contract()
     manifest = {
         "runtime": {
             "coordinatorContainer": "pymtlf-root",
@@ -412,7 +452,7 @@ def test_exact_pair_stop_and_partial_failure():
     }
     calls = []
 
-    with tempfile.TemporaryDirectory(prefix="branch-replacement-stop-") as temporary:
+    with tempfile.TemporaryDirectory(prefix="fl-experiment-stop-") as temporary:
         config_dir = Path(temporary)
         environment = runner.LiveEnvironment(
             ROOT / "testbed.protocol-hierarchical.yaml", config_dir, manifest
@@ -532,14 +572,14 @@ def test_exact_pair_stop_and_partial_failure():
 
         def failed_provider(*_args, **_kwargs):
             calls.append(("provider-failed",))
-            raise BranchReplacementError("guest stop failed")
+            raise FLExperimentError("guest stop failed")
 
         stopped = False
         try:
             environment._provider_shell = failed_provider
             runner.command_output = command
             environment.fail_stop_primary(contract)
-        except BranchReplacementError as error:
+        except FLExperimentError as error:
             assert "partial primary stop" in str(error)
         else:
             raise AssertionError("partial primary stop was accepted")
@@ -553,7 +593,7 @@ def test_exact_pair_stop_and_partial_failure():
 
 def test_timed_command_terminates_its_child():
     runner = load_runner()
-    with tempfile.TemporaryDirectory(prefix="branch-replacement-timeout-") as temporary:
+    with tempfile.TemporaryDirectory(prefix="fl-experiment-timeout-") as temporary:
         stopped = Path(temporary) / "stopped"
         ready = Path(temporary) / "ready"
         program = (
@@ -569,7 +609,7 @@ def test_timed_command_terminates_its_child():
                 "bounded-test-command",
                 timeout=3,
             )
-        except BranchReplacementError as error:
+        except FLExperimentError as error:
             assert "exceeded 3 seconds" in str(error)
         else:
             raise AssertionError("command exceeded its deadline without failing")
@@ -579,9 +619,9 @@ def test_timed_command_terminates_its_child():
 
 def test_final_artifact_uses_persistent_procedure_record():
     runner = load_runner()
-    contract = selected_contract()
+    contract = replacement_contract()
     digest = "b" * 64
-    with tempfile.TemporaryDirectory(prefix="branch-replacement-artifact-") as temporary:
+    with tempfile.TemporaryDirectory(prefix="fl-experiment-artifact-") as temporary:
         config_dir = Path(temporary)
         (config_dir / "pymtlf-root.yaml").write_text(
             yaml.safe_dump(
@@ -684,7 +724,7 @@ def test_final_artifact_uses_persistent_procedure_record():
 def test_held_out_evaluator_has_bounded_temporary_storage():
     runner = load_runner()
     digest = "c" * 64
-    with tempfile.TemporaryDirectory(prefix="branch-replacement-evaluator-") as temporary:
+    with tempfile.TemporaryDirectory(prefix="fl-experiment-evaluator-") as temporary:
         root = Path(temporary)
         config_dir = root / "config"
         config_dir.mkdir()
@@ -728,10 +768,16 @@ def test_held_out_evaluator_has_bounded_temporary_storage():
 
 def test_collection_retry_reuses_checkpoint_without_training_or_early_reset():
     runner = load_runner()
-    contract = selected_contract()
+    contract = normal_contract()
     testbed_path = ROOT / "testbed.protocol-hierarchical.yaml"
     config_dir = ROOT / "config/local/protocol-hierarchical"
-    manifest = runner.load_runtime_manifest(config_dir)
+    manifest = {
+        "scenario": yaml.safe_load(
+            (ROOT / "experiments/protocol-hierarchical/mnist/scenario.yaml").read_text(
+                encoding="utf-8"
+            )
+        )
+    }
     image = {"id": "sha256:current-image", "revision": "current-revision"}
     source = {
         "rootService": "pymtlf-root",
@@ -773,7 +819,7 @@ def test_collection_retry_reuses_checkpoint_without_training_or_early_reset():
             calls.append(("evaluate", request_id, artifact_key))
             assert artifact.stat().st_mode & 0o004
             if self.fail_evaluation:
-                raise BranchReplacementError("held-out evaluator failed")
+                raise FLExperimentError("held-out evaluator failed")
             return {
                 "run_id": request_id,
                 "model_artifact_key": artifact_key,
@@ -785,7 +831,7 @@ def test_collection_retry_reuses_checkpoint_without_training_or_early_reset():
             return {"applied": True, "resetVerified": True}
 
     environment = FakeEnvironment()
-    with tempfile.TemporaryDirectory(prefix="branch-replacement-collection-") as temporary:
+    with tempfile.TemporaryDirectory(prefix="fl-experiment-collection-") as temporary:
         writer = EvidenceWriter(
             Path(temporary) / RUN_NAME,
             {
@@ -804,7 +850,7 @@ def test_collection_retry_reuses_checkpoint_without_training_or_early_reset():
                 "finalized": False,
                 "terminalStatus": terminal(contract),
                 "finalModel": {
-                    "roundInd": 7,
+                    "roundInd": contract.accepted_rounds - 1,
                     "artifactFile": "final-model.tar.gz",
                     "artifactDigest": terminal(contract)["candidateDigest"],
                     "sizeBytes": len(b"artifact"),
@@ -812,7 +858,11 @@ def test_collection_retry_reuses_checkpoint_without_training_or_early_reset():
                 "finalModelSource": source,
                 "image": image,
                 "phases": {
-                    "phaseCounts": {"normal": 2, "degraded": 2, "restored": 4}
+                    "phaseCounts": {
+                        "normal": contract.accepted_rounds,
+                        "degraded": 0,
+                        "restored": 0,
+                    }
                 },
                 "failures": [],
             },
@@ -830,7 +880,7 @@ def test_collection_retry_reuses_checkpoint_without_training_or_early_reset():
                     contract,
                     environment,
                 )
-            except BranchReplacementError as error:
+            except FLExperimentError as error:
                 assert "evaluator failed" in str(error)
                 runner.record_run_failure(writer, error)
             else:
@@ -873,7 +923,7 @@ def test_failure_cleanup_does_not_stop_an_already_stopped_runtime():
             calls.append("stop")
             return {"processesStopped": True, "guestRestartPolicyRestored": True}
 
-    with tempfile.TemporaryDirectory(prefix="branch-replacement-cleanup-") as temporary:
+    with tempfile.TemporaryDirectory(prefix="fl-experiment-cleanup-") as temporary:
         writer = EvidenceWriter(
             Path(temporary) / RUN_NAME,
             {
@@ -909,7 +959,7 @@ def test_runtime_image_admission_uses_the_post_build_identity():
 
     try:
         runner.validate_runtime_image(prebuild, postbuild, expected_revision)
-    except BranchReplacementError as error:
+    except FLExperimentError as error:
         assert "running" in str(error)
     else:
         raise AssertionError("a running container on a stale image was accepted")
@@ -920,7 +970,7 @@ def test_runtime_image_admission_uses_the_post_build_identity():
             {"id": "sha256:after", "revision": "old-revision"},
             expected_revision,
         )
-    except BranchReplacementError as error:
+    except FLExperimentError as error:
         assert "source revision" in str(error)
     else:
         raise AssertionError("a rebuilt image from the wrong source was accepted")
@@ -928,7 +978,7 @@ def test_runtime_image_admission_uses_the_post_build_identity():
 
 def test_interrupted_command_terminates_its_child():
     runner = load_runner()
-    with tempfile.TemporaryDirectory(prefix="branch-replacement-interrupt-") as temporary:
+    with tempfile.TemporaryDirectory(prefix="fl-experiment-interrupt-") as temporary:
         ready = Path(temporary) / "ready"
         stopped = Path(temporary) / "stopped"
         pid_file = Path(temporary) / "pid"
@@ -976,7 +1026,7 @@ def test_interrupted_command_terminates_its_child():
 
 
 def test_component_resource_log_parsing():
-    contract = selected_contract()
+    contract = replacement_contract()
     value = (
         "prefix FL participant resource created process_id={} nf={} "
         "notif_corre_id=notification-a location=http://leaf/resources/a\n"
@@ -995,7 +1045,7 @@ def test_component_resource_log_parsing():
 
 def test_protocol_resource_collection_keeps_the_complete_run_window():
     runner = load_runner()
-    contract = selected_contract()
+    contract = replacement_contract()
     root_service = "pymtlf-root"
     replacement_service = "pymtlf-branch-a-replacement"
     manifest = {
@@ -1056,7 +1106,7 @@ def test_protocol_resource_collection_keeps_the_complete_run_window():
     original_command = runner.command_output
     try:
         runner.command_output = command
-        with tempfile.TemporaryDirectory(prefix="branch-replacement-resources-") as temporary:
+        with tempfile.TemporaryDirectory(prefix="fl-experiment-resources-") as temporary:
             evidence = environment.collect_protocol_evidence(
                 Path(temporary),
                 contract,
@@ -1072,7 +1122,7 @@ def test_protocol_resource_collection_keeps_the_complete_run_window():
 
 
 def test_incremental_reader_and_two_file_consistency():
-    contract = selected_contract()
+    contract = replacement_contract()
     payload = b'{"a":1}\n{"b":2}\n'
     chunks = [payload[:5], payload[5:13], payload[13:]]
 
@@ -1089,12 +1139,12 @@ def test_incremental_reader_and_two_file_consistency():
     partial.poll()
     try:
         partial.finish()
-    except BranchReplacementError as error:
+    except FLExperimentError as error:
         assert "partial" in str(error)
     else:
         raise AssertionError("partial JSONL record was accepted")
 
-    with tempfile.TemporaryDirectory(prefix="branch-replacement-evidence-") as temporary:
+    with tempfile.TemporaryDirectory(prefix="fl-experiment-evidence-") as temporary:
         run_directory = Path(temporary) / RUN_NAME
         writer = EvidenceWriter(
             run_directory,
@@ -1315,7 +1365,7 @@ def test_incremental_reader_and_two_file_consistency():
         writer.run_path.write_text(json.dumps(missing_workload), encoding="utf-8")
         try:
             check_evidence(run_directory, contract)
-        except BranchReplacementError as error:
+        except FLExperimentError as error:
             assert "workload" in str(error)
         else:
             raise AssertionError("evidence without the effective local epoch was accepted")
@@ -1325,7 +1375,7 @@ def test_incremental_reader_and_two_file_consistency():
         writer.run_path.write_text(json.dumps(incomplete_cleanup), encoding="utf-8")
         try:
             check_evidence(run_directory, contract)
-        except BranchReplacementError as error:
+        except FLExperimentError as error:
             assert "cleanup" in str(error)
         else:
             raise AssertionError("evidence without Guest restart restoration was accepted")
@@ -1338,7 +1388,7 @@ def test_incremental_reader_and_two_file_consistency():
         writer.events_path.write_text(without_gpu, encoding="utf-8")
         try:
             check_evidence(run_directory, contract)
-        except BranchReplacementError as error:
+        except FLExperimentError as error:
             assert "GPU_ADMISSION" in str(error)
         else:
             raise AssertionError("evidence without GPU admission was accepted")
@@ -1364,7 +1414,7 @@ def test_incremental_reader_and_two_file_consistency():
         writer.events_path.write_text(incomplete_stop, encoding="utf-8")
         try:
             check_evidence(run_directory, contract)
-        except BranchReplacementError as error:
+        except FLExperimentError as error:
             assert "stop" in str(error)
         else:
             raise AssertionError("evidence without restart suppression was accepted")
@@ -1375,15 +1425,100 @@ def test_incremental_reader_and_two_file_consistency():
         writer.run_path.write_text(json.dumps(tampered), encoding="utf-8")
         try:
             check_evidence(run_directory, contract)
-        except BranchReplacementError as error:
+        except FLExperimentError as error:
             assert "differs" in str(error)
         else:
             raise AssertionError("cross-file phase mismatch was accepted")
+
+        normal = normal_contract()
+        normal_records = [evaluation(normal, None, 0, initial=True)]
+        for index in range(normal.accepted_rounds):
+            normal_records.extend(
+                (
+                    outcome(normal, index, 1 + index * 2, normal.normal_nf_instance_ids),
+                    evaluation(normal, index, 2 + index * 2),
+                )
+            )
+        normal_records.append(final_model_saved(normal, normal.accepted_rounds - 1, 5))
+        normal_tracker = PhaseTracker(normal, PLAN_ID)
+        for record in normal_records:
+            normal_tracker.ingest(record)
+        normal_resources = {
+            "planId": PLAN_ID,
+            "rootEdges": [
+                {
+                    "planId": PLAN_ID,
+                    "nfInstanceId": branch_id,
+                    "notifCorreId": "root-{}".format(index),
+                    "resourceLocation": "http://root/{}".format(index),
+                }
+                for index, branch_id in enumerate(normal.normal_nf_instance_ids)
+            ],
+            "branchLeafEdges": {
+                branch_id: [
+                    {
+                        "planId": PLAN_ID,
+                        "nfInstanceId": leaf_id,
+                        "notifCorreId": "leaf-{}-{}".format(branch_index, leaf_index),
+                        "resourceLocation": "http://leaf/{}/{}".format(
+                            branch_index, leaf_index
+                        ),
+                    }
+                    for leaf_index, leaf_id in enumerate(leaves)
+                ]
+                for branch_index, (branch_id, _service, leaves) in enumerate(
+                    normal.active_branch_leaf_edges
+                )
+            },
+        }
+        normal_run = copy.deepcopy(writer.run)
+        normal_run.update(
+            runName="normal-run",
+            workload={
+                **normal_run["workload"],
+                "samplesPerLeaf": normal.samples_per_leaf,
+                "localEpochs": normal.local_epochs,
+                "acceptedRounds": normal.accepted_rounds,
+            },
+            phases=normal_tracker.finalize(terminal(normal)),
+            terminalStatus=terminal(normal),
+            finalModel={
+                **normal_run["finalModel"],
+                "roundInd": normal.accepted_rounds - 1,
+            },
+            protocolResources=normal_resources,
+        )
+        normal_writer = EvidenceWriter(Path(temporary) / "normal-run", normal_run)
+        (normal_writer.run_directory / "final-root-model.tar.gz").write_bytes(b"artifact")
+        previous_events = [json.loads(line) for line in original_events.splitlines()]
+        for item in previous_events[:3]:
+            normal_writer.append(
+                item["source"], item["eventType"], item["payload"],
+                recorded_at=item["recordedAt"],
+                nf_instance_id=item.get("nfInstanceId"),
+            )
+        for record in normal_records:
+            normal_writer.append_root(record)
+        for event_type in (
+            "FINAL_ARTIFACT_COLLECTED",
+            "PROTOCOL_RESOURCE_EVIDENCE",
+            "HELD_OUT_EVALUATION",
+            "CLEANUP_COMPLETE",
+        ):
+            item = next(value for value in previous_events if value["eventType"] == event_type)
+            normal_writer.append(
+                item["source"], event_type,
+                normal_resources if event_type == "PROTOCOL_RESOURCE_EVIDENCE" else item["payload"],
+                recorded_at=item["recordedAt"],
+                nf_instance_id=item.get("nfInstanceId"),
+            )
+        assert check_evidence(normal_writer.run_directory, normal)["status"] == "successful"
 
 
 def main():
     test_run_name_and_retry_checkpoint()
     test_contract_and_fault_barrier()
+    test_normal_rounds_keep_the_selected_cohort_and_evaluations()
     test_variable_degraded_phase_and_ready_is_not_contribution()
     test_rejected_attempt_and_missing_evaluation_fail_closed()
     test_invalid_replacement_and_incomplete_recovery_fail_closed()
@@ -1399,7 +1534,7 @@ def main():
     test_component_resource_log_parsing()
     test_protocol_resource_collection_keeps_the_complete_run_window()
     test_incremental_reader_and_two_file_consistency()
-    print("PASS Branch replacement phase and evidence behavior")
+    print("PASS protocol hierarchical FL experiment behavior")
 
 
 if __name__ == "__main__":

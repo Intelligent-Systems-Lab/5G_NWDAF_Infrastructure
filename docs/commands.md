@@ -68,49 +68,55 @@ or contradictory resource fails closed.
 | `make fl-training-start TESTBED=... CONFIG_DIR=... RUN_ID=... [MODEL_FAMILY_ID=...]` | Require four current retained descriptors, resolve the selected Server family, and create or idempotently recover one manual static Flat training request. |
 | `make fl-training-status TESTBED=... CONFIG_DIR=... RUN_ID=... [MODEL_FAMILY_ID=...]` | Show the exact top-level request identity, family, mode, participant source, state, rounds, candidate digest, and bounded failure detail. Read-only. |
 
-## Protocol Hierarchical Branch replacement flow
+For this static Flat flow, collection stop retains the stored descriptor and
+data for the configured retention window; it is not a data reset. If more than
+one retained collection group matches a Client's training request, dataset
+preparation rejects the ambiguity. Preserve the evidence, then wait for
+descriptor expiry or use the selected guarded reset before starting a fresh
+run. These static Flat commands do not create a Host run ledger, automatically
+generate `RUN_ID`, start traffic, stop the experiment, or reset retained state.
 
-`make fl-branch-replacement-run TESTBED=... CONFIG_DIR=... RUN_NAME=...` accepts
-only a generated protocol Hierarchical Branch-replacement scenario with seven
-GPU participants. It starts the selected Guest and Host processes, submits one
-eight-accepted-round request, sends `SIGKILL` to the exact highest-priority Area
-A Branch pair after two normal rounds have completed and the next round is in
-flight, verifies both original processes are dead, and prevents automatic
-restart. The Guest unit is frozen with `SIGSTOP` while its Host backend is still
-available, and the Host container is then frozen with `SIGSTOP`. Only after both
-application owners are unable to run cleanup does the runner install the Guest
-runtime mask and terminate both original processes with `SIGKILL`. This ordering
+## Protocol Hierarchical FL experiment flow
+
+`make fl-experiment-run TESTBED=... CONFIG_DIR=... RUN_NAME=...` uses the selected
+GPU protocol Hierarchical scenario for either a normal or a Branch-replacement
+run. It starts the selected Guest and Host processes, submits training for the
+scenario's accepted rounds, collects Root events, the final model, and held-out
+evaluation, then stops and resets the exact selected runtime. In a normal run,
+the runner injects no fault and requires the selected Branch cohort throughout.
+
+With a selected fault scenario, the same runner sends `SIGKILL` to the exact
+selected primary Branch pair after the configured normal rounds have
+completed and the next round is in flight, verifies both original processes
+are dead, and prevents automatic restart. The Guest unit is frozen with
+`SIGSTOP` while its Host backend is still available, and the Host container is
+then frozen with `SIGSTOP`. Only after both application owners are unable to run
+cleanup does the runner install the Guest runtime mask and terminate both
+original processes with `SIGKILL`. This ordering
 also prevents either owner from observing the other owner's failure and deleting
 the downstream Leaf resources. The mask prevents `Restart=on-failure` from
 undoing the injected crash; normal cleanup removes it after all selected
-processes have stopped. The runner then observes the Root's natural priority replacement. It collects the Root
-event stream, final model, and held-out result before stopping and resetting the
-exact selected runtime. The operator-facing run name identifies the local evidence
+processes have stopped. The runner then observes the Root's natural priority
+replacement. The operator-facing run name identifies the local evidence
 directory; the runner generates and checkpoints the UUIDv4 request identity before
 submitting training. It retains the selected VMs, images, datasets, and run evidence.
 
 If training reached its terminal checkpoint but final artifact collection,
 evidence finalization, or held-out evaluation failed, run
-`make fl-branch-replacement-collect TESTBED=... CONFIG_DIR=... RUN_NAME=<same-name>`.
+`make fl-experiment-collect TESTBED=... CONFIG_DIR=... RUN_NAME=<same-name>`.
 This entrypoint reuses the checkpoint and persistent Root experiment record; it
 does not submit training or create a new request identity. Successful collection
-then performs the normal exact reset.
+then performs the normal exact reset. The `fl-branch-replacement-run` and
+`fl-branch-replacement-collect` targets invoke this same runner but require a
+fault scenario, preserving the replacement-only operator interface.
 
-Normal output contains milestones and a 30-second heartbeat. Successful evidence
+Normal output contains milestones and a periodic heartbeat. Successful evidence
 is written below `runs/protocol-hierarchical/<dataset>/<run-name>/`; general
 container and Guest logs are collected into its optional `diagnostics/`
 directory only when the run fails. The runner fails closed on a selected/active
-identity mismatch, fewer than seven actual CUDA participants, a missed fault
-barrier, the wrong replacement identity, incomplete round/evaluation evidence,
-or incomplete cleanup.
-
-Collection stop retains the stored descriptor and data for the configured
-retention window; it is not a data reset. If more than one retained collection
-group matches a Client's training request, dataset preparation rejects the
-ambiguity. Preserve the evidence, then wait for descriptor expiry or use the
-selected guarded reset before starting a fresh run. The commands do not create
-a Host run ledger, automatically generate `RUN_ID`, start traffic, stop the
-experiment, or reset retained state.
+identity mismatch, fewer than seven actual CUDA participants, incomplete
+round/evaluation evidence, or incomplete cleanup. Fault runs additionally
+require the selected barrier and replacement identity.
 
 ## Subscriber and retained state
 

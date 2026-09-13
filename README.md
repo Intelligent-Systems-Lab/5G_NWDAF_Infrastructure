@@ -115,9 +115,22 @@ make dataset-generate
 ```
 
 The config identity guard prevents the new generated config from silently
-operating an old active runtime. Canonical normal-topology acceptance requires
-at least two accepted hierarchical rounds for each dataset; Branch failure and
-replacement are intentionally outside this workflow.
+operating an old active runtime. As an alternative to the manual
+`experiment-start` / `fl-training-start` sequence above, a selected normal
+scenario can use the same checkpointed experiment lifecycle as replacement.
+For a fresh environment, select the GPU config and run:
+
+```sh
+make config-create FROM=experiments/protocol-hierarchical/mnist/scenario.yaml DEVICE=gpu
+make dataset-generate
+make experiment-validate
+make vm-up
+make fl-experiment-run RUN_NAME=mnist-normal-1
+```
+
+If training completes but collection fails, retry with
+`make fl-experiment-collect RUN_NAME=mnist-normal-1`; it does not retrain.
+The short normal scenarios are flow checks, not paired formal-comparison data.
 
 For the bounded GPU Branch-replacement flow, select one of the dedicated
 scenarios and keep the canonical config directory. The foreground runner starts
@@ -135,6 +148,10 @@ make dataset-generate
 make vm-up
 make fl-branch-replacement-run RUN_NAME=123
 ```
+
+`fl-experiment-run` also accepts the selected replacement scenario. The
+`fl-branch-replacement-*` commands remain replacement-only aliases for the
+same runner and reject normal scenarios.
 
 The runner creates and checkpoints the UUIDv4 request identity before submitting
 training. If training completed but final collection or held-out evaluation
