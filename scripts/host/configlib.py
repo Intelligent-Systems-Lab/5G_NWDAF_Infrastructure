@@ -94,8 +94,45 @@ def image_scenario_contract(scenario):
         value = partition.get(field)
         if not isinstance(value, int) or isinstance(value, bool) or value <= 0:
             raise ValueError("partition.{} must be a positive integer".format(field))
-        if value % 10:
-            raise ValueError("partition.{} must be divisible by ten classes".format(field))
+    leaf_labels = partition.get("leafLabels")
+    if "leafLabels" not in partition:
+        if partition["samplesPerLeaf"] % 10:
+            raise ValueError("partition.samplesPerLeaf must be divisible by ten classes")
+    else:
+        if not isinstance(leaf_labels, dict) or not leaf_labels:
+            raise ValueError("partition.leafLabels must map Leaf names to class lists")
+        for leaf, labels in leaf_labels.items():
+            if (
+                not isinstance(leaf, str)
+                or not leaf
+                or "/" in leaf
+                or leaf in ("validation", "held-out")
+            ):
+                raise ValueError("partition.leafLabels contains an invalid artifact name")
+            if (
+                not isinstance(labels, list)
+                or not labels
+                or any(
+                    not isinstance(label, int)
+                    or isinstance(label, bool)
+                    or label not in range(10)
+                    for label in labels
+                )
+                or len(set(labels)) != len(labels)
+                or partition["samplesPerLeaf"] % len(labels)
+            ):
+                raise ValueError(
+                    "partition.leafLabels.{} must contain distinct classes with an equal quota".format(leaf)
+                )
+    validation_source = partition.get("validationSource", "official-test")
+    if validation_source not in ("official-train", "official-test"):
+        raise ValueError("partition.validationSource must be official-train or official-test")
+    if leaf_labels is not None and validation_source != "official-train":
+        raise ValueError("partition.leafLabels requires official-train validation")
+    if partition["validationSamples"] % 10:
+        raise ValueError("partition.validationSamples must be divisible by ten classes")
+    if validation_source == "official-test" and partition["heldOutSamples"] % 10:
+        raise ValueError("partition.heldOutSamples must be divisible by ten classes")
     seed = partition.get("seed")
     if not isinstance(seed, int) or isinstance(seed, bool) or seed < 0:
         raise ValueError("partition.seed must be a non-negative integer")

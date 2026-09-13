@@ -17,7 +17,8 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts" / "host"))
 
 import image_dataset as dataset_module  # noqa: E402
-from image_dataset import DatasetError, LEAF_UNITS, build_split, validate_output  # noqa: E402
+from configlib import image_scenario_contract, nwdaf_definitions  # noqa: E402
+from image_dataset import DatasetError, build_split, validate_output  # noqa: E402
 
 
 def source(shape: tuple[int, ...], per_class: int) -> tuple[np.ndarray, np.ndarray]:
@@ -29,6 +30,13 @@ def source(shape: tuple[int, ...], per_class: int) -> tuple[np.ndarray, np.ndarr
 
 
 def main() -> int:
+    testbed = yaml.safe_load(
+        (ROOT / "testbed.protocol-hierarchical.yaml").read_text(encoding="utf-8")
+    )
+    legacy_leaves = tuple(
+        definition["unit"] for definition in nwdaf_definitions(testbed)
+        if definition["role"] == "leaf"
+    )
     scenario = {
         "workload": {"dataset": "mnist"},
         "partition": {
@@ -46,18 +54,20 @@ def main() -> int:
         first.mkdir()
         second.mkdir()
         first_manifest = build_split(
-            scenario, train_images, train_labels, test_images, test_labels, first
+            scenario, train_images, train_labels, test_images, test_labels,
+            first, legacy_leaves,
         )
         second_manifest = build_split(
-            scenario, train_images, train_labels, test_images, test_labels, second
+            scenario, train_images, train_labels, test_images, test_labels,
+            second, legacy_leaves,
         )
-        validate_output(first, scenario)
-        validate_output(second, scenario)
+        validate_output(first, scenario, legacy_leaves)
+        validate_output(second, scenario, legacy_leaves)
         if first_manifest != second_manifest:
             raise AssertionError("the same source and seed did not reproduce the split")
 
         train_indices = []
-        for leaf in LEAF_UNITS:
+        for leaf in legacy_leaves:
             item = first_manifest["artifacts"][leaf]
             train_indices.extend(item["sourceIndices"])
             if item["classHistogram"] != {label: 2 for label in range(10)}:
@@ -73,7 +83,7 @@ def main() -> int:
             yaml.safe_dump(invalid, sort_keys=False), encoding="utf-8"
         )
         try:
-            validate_output(first, scenario)
+            validate_output(first, scenario, legacy_leaves)
         except DatasetError as exc:
             if "overlap" not in str(exc):
                 raise
@@ -108,7 +118,62 @@ def main() -> int:
         if any(path.exists() for path in source_paths.values()):
             raise AssertionError("semantically invalid cached sources were retained")
 
-    print("PASS deterministic image dataset partition and native validation")
+        skewed = copy.deepcopy(scenario)
+        skewed_leaves = tuple(
+            "sample-leaf-{}".format(index) for index in range(len(legacy_leaves))
+        )
+        skewed["partition"].update(
+            validationSource="official-train",
+            heldOutSamples=len(test_labels),
+            leafLabels={
+                leaf: list(range(5)) if offset < 3 else list(range(5, 10))
+                for offset, leaf in enumerate(skewed_leaves)
+            },
+        )
+        selected = yaml.safe_load(
+            (ROOT / "experiments/protocol-hierarchical/mnist/scenario.yaml").read_text(
+                encoding="utf-8"
+            )
+        )
+        selected["partition"].update(skewed["partition"])
+        image_scenario_contract(selected)
+        uneven_test_labels = test_labels.copy()
+        uneven_test_labels[0] = 1
+        skewed_first = Path(temporary) / "skewed-first"
+        skewed_second = Path(temporary) / "skewed-second"
+        skewed_first.mkdir()
+        skewed_second.mkdir()
+        skewed_manifest = build_split(
+            skewed, train_images, train_labels, test_images, uneven_test_labels,
+            skewed_first, legacy_leaves,
+        )
+        reordered = copy.deepcopy(skewed)
+        reordered["partition"]["leafLabels"] = dict(
+            reversed(list(reordered["partition"]["leafLabels"].items()))
+        )
+        repeated_manifest = build_split(
+            reordered, train_images, train_labels, test_images, uneven_test_labels,
+            skewed_second, legacy_leaves,
+        )
+        validate_output(skewed_first, skewed, legacy_leaves)
+        if skewed_manifest != repeated_manifest:
+            raise AssertionError("label-skew split changed with mapping order")
+        if skewed_manifest["artifacts"]["validation"]["sourceSplit"] != "official-train":
+            raise AssertionError("validation was not selected from official train")
+        for leaf in skewed_leaves:
+            labels = skewed["partition"]["leafLabels"][leaf]
+            expected = {label: 4 if label in labels else 0 for label in range(10)}
+            if skewed_manifest["artifacts"][leaf]["classHistogram"] != expected:
+                raise AssertionError("Leaf labels do not match the selected partition")
+        train_sources = [
+            item["sourceIndices"]
+            for name, item in skewed_manifest["artifacts"].items()
+            if name != "held-out"
+        ]
+        if len(set().union(*map(set, train_sources))) != sum(map(len, train_sources)):
+            raise AssertionError("training and validation source indices overlap")
+
+    print("PASS deterministic image partitions and native validation")
     return 0
 
 
