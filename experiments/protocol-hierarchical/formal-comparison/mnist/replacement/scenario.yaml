@@ -1,0 +1,37 @@
+schemaVersion: 2
+name: protocol-hierarchical-formal-mnist-replacement
+kind: formal-comparison
+workload:
+  profile: image-classification
+  dataset: mnist
+  event: X_IMAGE_CLASSIFICATION
+  modelInteroperability: pymtlf-image-classification-mnist
+  modelFamilyId: image-classification-mnist
+  seedModelId: 1001
+  seedArtifactKey: 5cdf82a5fa073eee543bd101f15402df1fdc082f70dfbe38942aa9cfe8e81b84
+partition:
+  seed: 42
+  samplesPerLeaf: 8000
+  validationSource: official-train
+  validationSamples: 2000
+  heldOutSamples: 10000
+  leafLabels:
+    nwdaf-leaf-a1: [0, 1, 2, 3, 4]
+    nwdaf-leaf-a2: [0, 1, 2, 3, 4]
+    nwdaf-leaf-b1: [0, 1, 2, 3, 4]
+    nwdaf-leaf-b2: [5, 6, 7, 8, 9]
+    nwdaf-leaf-c1: [5, 6, 7, 8, 9]
+    nwdaf-leaf-c2: [5, 6, 7, 8, 9]
+training:
+  acceptedRounds: 24
+  batchSize: 16
+  learningRate: 0.001
+  localEpochs: 4
+fault:
+  mode: branch-replacement
+  branchGroup: area-a
+  normalAcceptedRounds: 12
+  restoredAcceptedRounds: 1
+observation:
+  pollIntervalMilliseconds: 250
+  heartbeatSeconds: 30
