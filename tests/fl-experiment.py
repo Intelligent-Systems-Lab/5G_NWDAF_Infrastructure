@@ -57,7 +57,7 @@ def replacement_contract():
     scenario = yaml.safe_load(
         (
             ROOT
-            / "experiments/protocol-hierarchical/branch-replacement/mnist/scenario.yaml"
+            / "experiments/protocol-hierarchical/mnist/replacement-smoke.yaml"
         ).read_text(encoding="utf-8")
     )
     return FLExperimentContract.build(testbed, scenario)
@@ -68,7 +68,7 @@ def normal_contract():
         (ROOT / "testbed.protocol-hierarchical.yaml").read_text(encoding="utf-8")
     )
     scenario = yaml.safe_load(
-        (ROOT / "experiments/protocol-hierarchical/mnist/scenario.yaml").read_text(
+        (ROOT / "experiments/protocol-hierarchical/mnist/smoke.yaml").read_text(
             encoding="utf-8"
         )
     )
@@ -818,7 +818,7 @@ def test_collection_retry_reuses_checkpoint_without_training_or_early_reset():
     config_dir = ROOT / "config/local/protocol-hierarchical"
     manifest = {
         "scenario": yaml.safe_load(
-            (ROOT / "experiments/protocol-hierarchical/mnist/scenario.yaml").read_text(
+            (ROOT / "experiments/protocol-hierarchical/mnist/smoke.yaml").read_text(
                 encoding="utf-8"
             )
         )

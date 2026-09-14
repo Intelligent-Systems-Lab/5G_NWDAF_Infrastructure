@@ -37,7 +37,7 @@ help-advanced:
 	@echo "5G NWDAF Infrastructure — advanced operations"
 	@echo ""
 	@echo "Configuration and datasets"
-	@echo "  make config-create TESTBED=... NAME=... FROM=experiments/.../scenario.yaml"
+	@echo "  make config-create TESTBED=... NAME=... FROM=experiments/.../<scenario>.yaml"
 	@echo "                     [DEVICE=gpu|cpu] [WEBCONSOLE=false|true] [FORCE=false|true]"
 	@echo "  make config-validate TESTBED=... [CONFIG_DIR=...]  Diagnose cross-config inconsistencies"
 	@echo "  make dataset-generate | dataset-validate | dataset-show | dataset-load TESTBED=... [CONFIG_DIR=...]"
@@ -94,7 +94,7 @@ experiment-stop:
 config-create:
 	$(require_testbed)
 	@test -n "$(FROM)" || { echo "FROM=<repository-relative-scenario.yaml> is required" >&2; exit 2; }
-	@case "$(FROM)" in /*) echo "FROM must be relative to the repository: $(FROM)" >&2; exit 2;; *.yaml) ;; *) echo "FROM must select a scenario.yaml file: $(FROM)" >&2; exit 2;; esac
+	@case "$(FROM)" in /*) echo "FROM must be relative to the repository: $(FROM)" >&2; exit 2;; *.yaml) ;; *) echo "FROM must select a scenario YAML file: $(FROM)" >&2; exit 2;; esac
 	@case "$(DEVICE)" in gpu|cpu) ;; *) echo "DEVICE must be gpu or cpu" >&2; exit 2;; esac
 	@case "$(WEBCONSOLE)" in false|true) ;; *) echo "WEBCONSOLE must be false or true" >&2; exit 2;; esac
 	@case "$(FORCE)" in false|true) ;; *) echo "FORCE must be false or true" >&2; exit 2;; esac

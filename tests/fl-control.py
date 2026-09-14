@@ -649,7 +649,7 @@ def test_protocol_image_training_skips_collection_precondition():
             output,
             "testbed.protocol-hierarchical.yaml",
             "protocol",
-            "experiments/protocol-hierarchical/mnist/scenario.yaml",
+            "experiments/protocol-hierarchical/mnist/smoke.yaml",
         )
         selected = MODULE.load_contract(
             "testbed.protocol-hierarchical.yaml", str(output / "protocol")

@@ -71,11 +71,21 @@ Host PyMTLF containers, and only MongoDB, NRF, and ADRF as supporting Guest
 services. The Make defaults select this definition and its generated
 `config/local/protocol-hierarchical` directory.
 
+Scenario definitions live under `experiments/protocol-hierarchical/mnist/` and
+`experiments/protocol-hierarchical/cifar10/`. The filename identifies the
+condition, such as `smoke.yaml`, `formal-baseline.yaml`, or
+`all-class-skew-replacement.yaml`. Generated configs created from the old
+scenario paths must be recreated before reuse. If a runtime still uses one,
+ensure its experiment processes are stopped and check its selected state while
+the original scenario definition is available; config check and reset validation
+require that definition. Do not replace a generated config while its
+experiment processes are running. Historical run records retain their original paths.
+
 Create either dataset-specific config, acquire and partition the dataset, and
 then create the VMs:
 
 ```sh
-make config-create FROM=experiments/protocol-hierarchical/mnist/scenario.yaml
+make config-create FROM=experiments/protocol-hierarchical/mnist/smoke.yaml
 make dataset-generate
 make vm-up
 ```
@@ -110,7 +120,7 @@ replace the canonical generated config and generate the other partition:
 make experiment-stop
 make reset-show
 make reset RESET_CONFIRM=<current-scenario-name>
-make config-create FROM=experiments/protocol-hierarchical/cifar10/scenario.yaml FORCE=true
+make config-create FROM=experiments/protocol-hierarchical/cifar10/smoke.yaml FORCE=true
 make dataset-generate
 ```
 
@@ -121,7 +131,7 @@ scenario can use the same checkpointed experiment lifecycle as replacement.
 For a fresh environment, select the GPU config and run:
 
 ```sh
-make config-create FROM=experiments/protocol-hierarchical/mnist/scenario.yaml DEVICE=gpu
+make config-create FROM=experiments/protocol-hierarchical/mnist/smoke.yaml DEVICE=gpu
 make dataset-generate
 make experiment-validate
 make vm-up
@@ -142,7 +152,7 @@ stops and resets the selected experiment state:
 
 ```sh
 make config-create \
-  FROM=experiments/protocol-hierarchical/branch-replacement/mnist/scenario.yaml \
+  FROM=experiments/protocol-hierarchical/mnist/replacement-smoke.yaml \
   DEVICE=gpu FORCE=true
 make dataset-generate
 make vm-up

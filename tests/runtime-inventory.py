@@ -79,14 +79,14 @@ def main():
     for name in accelerator_services - {"pymtlf-root"}:
         assert protocol_definition["mlRuntime"]["services"][name]["memoryMiB"] == 2048
     normal_scenario = yaml.safe_load(
-        (ROOT / "experiments/protocol-hierarchical/mnist/scenario.yaml").read_text(
+        (ROOT / "experiments/protocol-hierarchical/mnist/smoke.yaml").read_text(
             encoding="utf-8"
         )
     )
     replacement_scenario = yaml.safe_load(
         (
             ROOT
-            / "experiments/protocol-hierarchical/branch-replacement/mnist/scenario.yaml"
+            / "experiments/protocol-hierarchical/mnist/replacement-smoke.yaml"
         ).read_text(encoding="utf-8")
     )
     image_scenario_contract(normal_scenario)
@@ -251,20 +251,20 @@ def main():
             ("testbed.yaml", "production", LEGACY_SCENARIO, "cpu"),
             (
                 "testbed.protocol-hierarchical.yaml", "protocol-mnist",
-                "experiments/protocol-hierarchical/mnist/scenario.yaml", "cpu",
+                "experiments/protocol-hierarchical/mnist/smoke.yaml", "cpu",
             ),
             (
                 "testbed.protocol-hierarchical.yaml", "protocol-cifar10",
-                "experiments/protocol-hierarchical/cifar10/scenario.yaml", "cpu",
+                "experiments/protocol-hierarchical/cifar10/smoke.yaml", "cpu",
             ),
             (
                 "testbed.protocol-hierarchical.yaml", "replacement-mnist",
-                "experiments/protocol-hierarchical/branch-replacement/mnist/scenario.yaml",
+                "experiments/protocol-hierarchical/mnist/replacement-smoke.yaml",
                 "gpu",
             ),
             (
                 "testbed.protocol-hierarchical.yaml", "replacement-cifar10",
-                "experiments/protocol-hierarchical/branch-replacement/cifar10/scenario.yaml",
+                "experiments/protocol-hierarchical/cifar10/replacement-smoke.yaml",
                 "gpu",
             ),
         )

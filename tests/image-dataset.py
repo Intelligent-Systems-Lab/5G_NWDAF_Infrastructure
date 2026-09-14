@@ -151,7 +151,7 @@ def main() -> int:
             },
         )
         selected = yaml.safe_load(
-            (ROOT / "experiments/protocol-hierarchical/mnist/scenario.yaml").read_text(
+            (ROOT / "experiments/protocol-hierarchical/mnist/smoke.yaml").read_text(
                 encoding="utf-8"
             )
         )
