@@ -10,6 +10,7 @@ workload:
   seedModelId: 1001
   seedArtifactKey: 5cdf82a5fa073eee543bd101f15402df1fdc082f70dfbe38942aa9cfe8e81b84
 partition:
+  datasetId: mnist-formal
   seed: 42
   samplesPerLeaf: 8000
   validationSource: official-train

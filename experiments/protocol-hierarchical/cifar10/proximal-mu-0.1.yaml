@@ -10,6 +10,7 @@ workload:
   seedModelId: 1002
   seedArtifactKey: 066e77fe72d3bef3f17a54368843616545809b587bca9f0561a3ca4d70388b51
 partition:
+  datasetId: cifar10-formal
   seed: 42
   samplesPerLeaf: 8000
   validationSource: official-train
