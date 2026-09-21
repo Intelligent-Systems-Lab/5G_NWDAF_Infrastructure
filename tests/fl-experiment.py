@@ -24,7 +24,6 @@ from fl_experiment import (  # noqa: E402
     IncrementalJsonlReader,
     PhaseTracker,
     check_evidence,
-    parse_resource_log,
     validate_run_name,
 )
 
@@ -84,8 +83,8 @@ def evaluation(contract, round_indicator, at, *, initial=False):
         "evaluationStage": "ROOT_INITIAL" if initial else "ROOT_GLOBAL",
         "dataset": "mnist",
         "sampleCount": 200,
-        "validationLoss": 1.0,
-        "validationAccuracy": 0.5,
+        "loss": 1.0,
+        "accuracy": 0.5,
     }
     if not initial:
         value["roundInd"] = round_indicator
@@ -96,7 +95,7 @@ def outcome(contract, round_indicator, at, successful, failed=(), *, accepted=Tr
     selected = list(successful) + list(failed)
     return {
         "recordedAt": timestamp(at),
-        "recordType": "ROOT_ROUND_OUTCOME",
+        "recordType": "ROUND_AGGREGATION",
         "mlCorreId": PLAN_ID,
         "nfInstanceId": contract.root_nf_instance_id,
         "roundInd": round_indicator,
@@ -129,16 +128,14 @@ def ready(contract, at):
     }
 
 
-def final_model_saved(contract, round_indicator, at, *, digest="a" * 64, size=8):
+def final_model_saved(contract, round_indicator, at):
     return {
         "recordedAt": timestamp(at),
-        "recordType": "FINAL_MODEL_SAVED",
+        "recordType": "MODEL_ARTIFACT_SAVED",
         "mlCorreId": PLAN_ID,
         "nfInstanceId": contract.root_nf_instance_id,
         "roundInd": round_indicator,
         "artifactFile": "final-model.tar.gz",
-        "artifactDigest": digest,
-        "sizeBytes": size,
     }
 
 
@@ -395,9 +392,7 @@ def test_final_model_record_must_match_terminal_artifact():
 
     for field, value, message in (
         ("roundInd", 6, "round"),
-        ("artifactDigest", "b" * 64, "identity"),
         ("artifactFile", "other.tar.gz", "filename"),
-        ("sizeBytes", 0, "size"),
     ):
         tracker = PhaseTracker(contract, PLAN_ID)
         for record in records[:5]:
@@ -614,7 +609,7 @@ def test_blocked_stop_preserves_event_order_and_rejects_an_extra_normal_round():
         }
         assert [event["eventType"] for event in writer.events()][-4:] == [
             "MODEL_EVALUATION", "BRANCH_PROCESS_STOPPED",
-            "ROOT_ROUND_OUTCOME", "BRANCH_FAILURE_DETECTED",
+            "ROUND_AGGREGATION", "BRANCH_FAILURE_DETECTED",
         ]
 
         writer = EvidenceWriter(Path(temporary) / "missed-stop", {})
@@ -837,7 +832,9 @@ def test_collection_retry_reuses_checkpoint_without_training_or_early_reset():
     calls = []
 
     class FakeEnvironment:
+        fail_observations = True
         fail_evaluation = True
+        runtime = {"coordinatorContainer": "pymtlf-root", "hostContainers": ["pymtlf-root"]}
 
         def final_model_source(self, plan_id):
             calls.append(("source", plan_id))
@@ -851,10 +848,17 @@ def test_collection_retry_reuses_checkpoint_without_training_or_early_reset():
             calls.append(("copy", plan_id, expected_size))
             destination.write_bytes(b"artifact")
             destination.chmod(0o600)
+            return len(b"artifact")
 
-        def collect_protocol_evidence(self, _directory, _contract, plan_id, _since):
-            calls.append(("protocol", plan_id))
-            return {"planId": plan_id}
+        def collect_observations(self, directory, plan_id):
+            calls.append(("observations", plan_id))
+            if self.fail_observations:
+                raise FLExperimentError("observation volume operation failed")
+            directory.mkdir(parents=True, exist_ok=True)
+            (directory / "pymtlf-root.jsonl").write_text("{}\n", encoding="utf-8")
+            return {"pymtlf-root": {
+                "state": "collected", "path": "observations/pymtlf-root.jsonl", "bytes": 3,
+            }}
 
         def stop_all(self):
             calls.append(("stop",))
@@ -926,13 +930,14 @@ def test_collection_retry_reuses_checkpoint_without_training_or_early_reset():
                     environment,
                 )
             except FLExperimentError as error:
-                assert "evaluator failed" in str(error)
+                assert "observation volume operation failed" in str(error)
                 runner.record_run_failure(writer, error)
             else:
                 raise AssertionError("collection failure was accepted")
             assert ("reset",) not in calls
             assert writer.run["status"] == "collection-failed"
             assert writer.run["finalized"] is False
+            environment.fail_observations = False
             environment.fail_evaluation = False
             assert runner.run_collection_only(
                 writer,
@@ -947,7 +952,7 @@ def test_collection_retry_reuses_checkpoint_without_training_or_early_reset():
             runner.check_evidence = original_check
         assert writer.run["status"] == "successful"
         assert calls.count(("copy", PLAN_ID, len(b"artifact"))) == 1
-        assert calls.count(("protocol", PLAN_ID)) == 1
+        assert calls.count(("observations", PLAN_ID)) == 2
         assert calls.count(("stop",)) == 1
         assert calls.count(("reset",)) == 1
         assert len(
@@ -984,13 +989,112 @@ def test_failure_cleanup_does_not_stop_an_already_stopped_runtime():
             writer, FakeEnvironment(), runtime_started=True
         )
         assert calls == []
-
         writer.update(processCleanup=None)
         runner.ensure_runtime_stopped_after_failure(
             writer, FakeEnvironment(), runtime_started=True
         )
         assert calls == ["stop"]
         assert writer.run["processCleanup"]["processesStopped"] is True
+
+
+def test_failed_run_collect_only_keeps_partial_observations():
+    runner = load_runner()
+    contract = normal_contract()
+    testbed_path = ROOT / "testbed.protocol-hierarchical.yaml"
+    config_dir = ROOT / "config/local/protocol-hierarchical"
+    scenario = yaml.safe_load(
+        (ROOT / "experiments/protocol-hierarchical/mnist/smoke.yaml").read_text(encoding="utf-8")
+    )
+    calls = []
+
+    class FakeEnvironment:
+        def stop_all(self):
+            calls.append("stop")
+            return {"processesStopped": True}
+
+        def collect_observations(self, directory, plan_id, *, strict=True):
+            calls.append("collect")
+            assert strict is False and plan_id == PLAN_ID
+            directory.mkdir(parents=True, exist_ok=True)
+            (directory / "pymtlf-root.jsonl").write_bytes(b'{"recordType":"MODEL_EVALUATION"}\n')
+            return {
+                "pymtlf-root": {
+                    "state": "collected", "path": "observations/pymtlf-root.jsonl",
+                    "bytes": (directory / "pymtlf-root.jsonl").stat().st_size,
+                },
+                "pymtlf-leaf": {"state": "absent"},
+            }
+
+    with tempfile.TemporaryDirectory(prefix="fl-experiment-partial-") as temporary:
+        writer = EvidenceWriter(Path(temporary) / RUN_NAME, {
+            "runName": RUN_NAME, "status": "failed", "dataset": contract.dataset,
+            "scenario": scenario, "planId": PLAN_ID, "mlCorreId": PLAN_ID,
+            "selection": {
+                "testbed": str(testbed_path.relative_to(ROOT)),
+                "configDirectory": str(config_dir.relative_to(ROOT)),
+            },
+        })
+        assert runner.run_collection_only(
+            writer, RUN_NAME, testbed_path, config_dir,
+            {"scenario": scenario}, contract, FakeEnvironment(),
+        ) == 0
+        assert writer.run["status"] == "failed"
+        assert writer.run["rawObservations"]["pymtlf-root"]["state"] == "collected"
+        assert calls == ["stop", "collect"]
+
+
+def test_raw_observation_collection_preserves_source_bytes():
+    runner = load_runner()
+    service = "pymtlf-root"
+    logical = "pymtlf-root-data"
+    physical = runner.PROJECT + "_" + logical
+    record_dir = "/runtime/root/experiment-records"
+    original = b'{"recordType":"MODEL_EVALUATION","loss":0.4}\n'
+    with tempfile.TemporaryDirectory(prefix="fl-experiment-observations-") as temporary:
+        config_dir = Path(temporary)
+        (config_dir / "compose.yaml").write_text(yaml.safe_dump({
+            "services": {service: {"volumes": [{
+                "type": "volume", "source": logical, "target": "/runtime/root",
+            }]}}
+        }), encoding="utf-8")
+        (config_dir / (service + ".yaml")).write_text(yaml.safe_dump({
+            "federated_learning": {"experiment_recording": {"directory": record_dir}}
+        }), encoding="utf-8")
+        environment = runner.LiveEnvironment(
+            ROOT / "testbed.protocol-hierarchical.yaml", config_dir,
+            {"runtime": {"hostContainers": [service], "mlVolumes": [{
+                "name": logical, "image": "collector-image",
+            }]}},
+        )
+        commands = []
+
+        def command(args, **_kwargs):
+            commands.append(args)
+            if args[:3] == ["docker", "volume", "inspect"]:
+                return json.dumps([{"Name": physical, "Labels": {
+                    "com.docker.compose.project": runner.PROJECT,
+                    "com.docker.compose.volume": logical,
+                }}])
+            if args[:2] == ["docker", "run"]:
+                return "present"
+            if args[:2] == ["docker", "create"]:
+                return "collector-id"
+            if args[:2] == ["docker", "cp"]:
+                Path(args[-1]).write_bytes(original)
+                return ""
+            if args[:2] == ["docker", "rm"]:
+                return ""
+            raise AssertionError(args)
+
+        previous = runner.command_output
+        try:
+            runner.command_output = command
+            result = environment.collect_observations(config_dir / "observations", PLAN_ID)
+        finally:
+            runner.command_output = previous
+        assert (config_dir / result[service]["path"]).read_bytes() == original
+        assert result[service]["bytes"] == len(original)
+        assert any(args[:2] == ["docker", "rm"] for args in commands)
 
 
 def test_runtime_image_admission_uses_the_post_build_identity():
@@ -1068,102 +1172,6 @@ def test_interrupted_command_terminates_its_child():
             except ProcessLookupError:
                 pass
         assert stopped.read_text(encoding="utf-8") == "stopped"
-
-
-def test_component_resource_log_parsing():
-    contract = replacement_contract()
-    value = (
-        "prefix FL participant resource created process_id={} nf={} "
-        "notif_corre_id=notification-a location=http://leaf/resources/a\n"
-        "FL participant resource created process_id=other nf={} "
-        "notif_corre_id=ignored location=http://leaf/resources/ignored\n"
-    ).format(PLAN_ID, contract.fault_group_leaf_nf_instance_ids[0], contract.primary_nf_instance_id)
-    assert parse_resource_log(value, PLAN_ID) == [
-        {
-            "planId": PLAN_ID,
-            "nfInstanceId": contract.fault_group_leaf_nf_instance_ids[0],
-            "notifCorreId": "notification-a",
-            "resourceLocation": "http://leaf/resources/a",
-        }
-    ]
-
-
-def test_protocol_resource_collection_keeps_the_complete_run_window():
-    runner = load_runner()
-    contract = replacement_contract()
-    root_service = "pymtlf-root"
-    replacement_service = "pymtlf-branch-a-replacement"
-    manifest = {
-        "runtime": {
-            "coordinatorContainer": root_service,
-            "nwdafs": [
-                {
-                    "nfInstanceId": contract.replacement_nf_instance_id,
-                    "backends": {"mtlf": replacement_service},
-                }
-            ],
-        }
-    }
-    environment = runner.LiveEnvironment(
-        ROOT / "testbed.protocol-hierarchical.yaml",
-        ROOT / "config/local/protocol-hierarchical",
-        manifest,
-    )
-    environment._container_id = lambda service, running=False: service + "-id"
-
-    def resource_line(nf_instance_id, notification, location):
-        return (
-            "FL participant resource created process_id={} nf={} "
-            "notif_corre_id={} location={}"
-        ).format(PLAN_ID, nf_instance_id, notification, location)
-
-    root_lines = [
-        resource_line(
-            contract.primary_nf_instance_id,
-            "root-primary",
-            "http://primary/resources/old",
-        ),
-        *["unrelated health line {}".format(index) for index in range(600)],
-        resource_line(
-            contract.replacement_nf_instance_id,
-            "root-replacement",
-            "http://replacement/resources/new",
-        ),
-    ]
-    leaf_lines = {
-        contract.primary_service: [
-            resource_line(nf_id, "primary-" + str(index), "http://leaf/old/" + str(index))
-            for index, nf_id in enumerate(contract.fault_group_leaf_nf_instance_ids)
-        ],
-        replacement_service: [
-            resource_line(nf_id, "replacement-" + str(index), "http://leaf/new/" + str(index))
-            for index, nf_id in enumerate(contract.fault_group_leaf_nf_instance_ids)
-        ],
-    }
-
-    def command(command, **_kwargs):
-        service = command[-1][:-3]
-        lines = root_lines if service == root_service else leaf_lines[service]
-        if "--tail" in command:
-            lines = lines[-int(command[command.index("--tail") + 1]):]
-        return "\n".join(lines)
-
-    original_command = runner.command_output
-    try:
-        runner.command_output = command
-        with tempfile.TemporaryDirectory(prefix="fl-experiment-resources-") as temporary:
-            evidence = environment.collect_protocol_evidence(
-                Path(temporary),
-                contract,
-                PLAN_ID,
-                timestamp(0),
-            )
-    finally:
-        runner.command_output = original_command
-    assert {item["nfInstanceId"] for item in evidence["rootEdges"]} == {
-        contract.primary_nf_instance_id,
-        contract.replacement_nf_instance_id,
-    }
 
 
 def test_incremental_reader_and_two_file_consistency():
@@ -1300,47 +1308,16 @@ def test_incremental_reader_and_two_file_consistency():
             },
             recorded_at=timestamp(20),
         )
-        protocol_resources = {
-            "planId": PLAN_ID,
-            "rootEdges": [
-                {
-                    "planId": PLAN_ID,
-                    "nfInstanceId": contract.primary_nf_instance_id,
-                    "notifCorreId": "root-primary",
-                    "resourceLocation": "http://primary/resources/old",
-                },
-                {
-                    "planId": PLAN_ID,
-                    "nfInstanceId": contract.replacement_nf_instance_id,
-                    "notifCorreId": "root-replacement",
-                    "resourceLocation": "http://replacement/resources/new",
-                },
-            ],
-            "primaryLeafEdges": [
-                {
-                    "planId": PLAN_ID,
-                    "nfInstanceId": leaf,
-                    "notifCorreId": "primary-leaf-{}".format(index),
-                    "resourceLocation": "http://leaf/resources/primary-{}".format(index),
-                }
-                for index, leaf in enumerate(contract.fault_group_leaf_nf_instance_ids)
-            ],
-            "replacementLeafEdges": [
-                {
-                    "planId": PLAN_ID,
-                    "nfInstanceId": leaf,
-                    "notifCorreId": "replacement-leaf-{}".format(index),
-                    "resourceLocation": "http://leaf/resources/replacement-{}".format(index),
-                }
-                for index, leaf in enumerate(contract.fault_group_leaf_nf_instance_ids)
-            ],
+        observation_dir = run_directory / "observations"
+        observation_dir.mkdir()
+        (observation_dir / "pymtlf-root.jsonl").write_text("{}\n", encoding="utf-8")
+        raw_observations = {
+            name: (
+                {"state": "collected", "path": "observations/pymtlf-root.jsonl", "bytes": 3}
+                if name == "pymtlf-root" else {"state": "absent"}
+            )
+            for name in devices
         }
-        writer.append(
-            "controller",
-            "PROTOCOL_RESOURCE_EVIDENCE",
-            protocol_resources,
-            recorded_at=timestamp(20),
-        )
         held_out = {"run_id": RUN_ID, "accuracy": 0.5}
         writer.append(
             "held-out-evaluator", "HELD_OUT_EVALUATION", held_out,
@@ -1393,7 +1370,15 @@ def test_incremental_reader_and_two_file_consistency():
                 "containers": snapshot["containers"],
             },
             resolvedDevices=devices,
-            protocolResources=protocol_resources,
+            runtimeInventory={
+                "guestMachines": list(snapshot["virtualMachines"]),
+                "guestServices": [
+                    {"unit": name, "kind": "nwdaf" if index < 11 else "core"}
+                    for index, name in enumerate(snapshot["guestServices"])
+                ],
+                "hostContainers": list(devices),
+            },
+            rawObservations=raw_observations,
             heldOutEvaluation=held_out,
             finalArtifact="final-root-model.tar.gz",
             finalArtifactIdentity=terminal(contract)["candidateDigest"],
@@ -1478,91 +1463,6 @@ def test_incremental_reader_and_two_file_consistency():
         else:
             raise AssertionError("cross-file phase mismatch was accepted")
 
-        normal = normal_contract()
-        normal_records = [evaluation(normal, None, 0, initial=True)]
-        for index in range(normal.accepted_rounds):
-            normal_records.extend(
-                (
-                    outcome(normal, index, 1 + index * 2, normal.normal_nf_instance_ids),
-                    evaluation(normal, index, 2 + index * 2),
-                )
-            )
-        normal_records.append(final_model_saved(normal, normal.accepted_rounds - 1, 5))
-        normal_tracker = PhaseTracker(normal, PLAN_ID)
-        for record in normal_records:
-            normal_tracker.ingest(record)
-        normal_resources = {
-            "planId": PLAN_ID,
-            "rootEdges": [
-                {
-                    "planId": PLAN_ID,
-                    "nfInstanceId": branch_id,
-                    "notifCorreId": "root-{}".format(index),
-                    "resourceLocation": "http://root/{}".format(index),
-                }
-                for index, branch_id in enumerate(normal.normal_nf_instance_ids)
-            ],
-            "branchLeafEdges": {
-                branch_id: [
-                    {
-                        "planId": PLAN_ID,
-                        "nfInstanceId": leaf_id,
-                        "notifCorreId": "leaf-{}-{}".format(branch_index, leaf_index),
-                        "resourceLocation": "http://leaf/{}/{}".format(
-                            branch_index, leaf_index
-                        ),
-                    }
-                    for leaf_index, leaf_id in enumerate(leaves)
-                ]
-                for branch_index, (branch_id, _service, leaves) in enumerate(
-                    normal.active_branch_leaf_edges
-                )
-            },
-        }
-        normal_run = copy.deepcopy(writer.run)
-        normal_run.update(
-            runName="normal-run",
-            workload={
-                **normal_run["workload"],
-                "samplesPerLeaf": normal.samples_per_leaf,
-                "localEpochs": normal.local_epochs,
-                "acceptedRounds": normal.accepted_rounds,
-            },
-            phases=normal_tracker.finalize(terminal(normal)),
-            terminalStatus=terminal(normal),
-            finalModel={
-                **normal_run["finalModel"],
-                "roundInd": normal.accepted_rounds - 1,
-            },
-            protocolResources=normal_resources,
-        )
-        normal_run.pop("primaryStoppedAt")
-        normal_run.pop("primaryHardStoppedAt")
-        normal_writer = EvidenceWriter(Path(temporary) / "normal-run", normal_run)
-        (normal_writer.run_directory / "final-root-model.tar.gz").write_bytes(b"artifact")
-        previous_events = [json.loads(line) for line in original_events.splitlines()]
-        for item in previous_events[:3]:
-            normal_writer.append(
-                item["source"], item["eventType"], item["payload"],
-                recorded_at=item["recordedAt"],
-                nf_instance_id=item.get("nfInstanceId"),
-            )
-        for record in normal_records:
-            normal_writer.append_root(record)
-        for event_type in (
-            "FINAL_ARTIFACT_COLLECTED",
-            "PROTOCOL_RESOURCE_EVIDENCE",
-            "HELD_OUT_EVALUATION",
-            "CLEANUP_COMPLETE",
-        ):
-            item = next(value for value in previous_events if value["eventType"] == event_type)
-            normal_writer.append(
-                item["source"], event_type,
-                normal_resources if event_type == "PROTOCOL_RESOURCE_EVIDENCE" else item["payload"],
-                recorded_at=item["recordedAt"],
-                nf_instance_id=item.get("nfInstanceId"),
-            )
-        assert check_evidence(normal_writer.run_directory, normal)["status"] == "successful"
 
 
 def main():
@@ -1579,11 +1479,11 @@ def main():
     test_held_out_evaluator_has_bounded_temporary_storage()
     test_collection_retry_reuses_checkpoint_without_training_or_early_reset()
     test_failure_cleanup_does_not_stop_an_already_stopped_runtime()
+    test_failed_run_collect_only_keeps_partial_observations()
+    test_raw_observation_collection_preserves_source_bytes()
     test_runtime_image_admission_uses_the_post_build_identity()
     test_timed_command_terminates_its_child()
     test_interrupted_command_terminates_its_child()
-    test_component_resource_log_parsing()
-    test_protocol_resource_collection_keeps_the_complete_run_window()
     test_incremental_reader_and_two_file_consistency()
     print("PASS protocol hierarchical FL experiment behavior")
 

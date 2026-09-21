@@ -229,7 +229,7 @@ def check_subscriber_fixtures(check, testbed, config_dir, identities):
         check.equal("UE{} fixture S-NSSAI".format(index), ue_snssai, defaults.get("snssai"))
 
 
-def check_manifest_exact(check, testbed_path, testbed, config_dir, actual_files):
+def check_manifest_exact(check, testbed_path, testbed, config_dir, actual_files, scenario=None):
     try:
         manifest = load_runtime_manifest(config_dir)
     except (KeyError, OSError, TypeError, ValueError) as exc:
@@ -251,7 +251,7 @@ def check_manifest_exact(check, testbed_path, testbed, config_dir, actual_files)
             if name.startswith("pymtlf-") and service["device"] != "cpu":
                 service["device"] = "cpu"
     try:
-        expected = expected_runtime_inventory(selected)
+        expected = expected_runtime_inventory(selected, scenario)
     except (KeyError, TypeError, ValueError) as exc:
         check.true("cannot rebuild runtime inventory: {}".format(exc), False)
         return manifest
@@ -429,7 +429,7 @@ def group_id_for_owner(testbed, owner):
     )
 
 
-def check_protocol_native(check, config_dir, runtime, scenario):
+def check_protocol_native(check, config_dir, runtime, scenario, branch_group_count):
     interpreter = ROOT / "ML" / "PyMTLF" / ".venv" / "bin" / "python"
     if not interpreter.is_file():
         check.true("PyMTLF project interpreter is unavailable", False)
@@ -446,13 +446,13 @@ from py_mtlf.config import load_settings
 from py_mtlf.core.artifacts import ArtifactRepository
 from py_mtlf.core.fl_topology import StaticTopologyPlanner
 from py_mtlf.core.seed_import import build_seed_bundle
-config_root, coordinator, root_id, dataset, *names = sys.argv[1:]
+config_root, coordinator, root_id, dataset, branch_group_count, *names = sys.argv[1:]
 settings = {name: load_settings(Path(config_root) / (name + ".yaml")) for name in names}
 root = settings[coordinator]
 assignment = StaticTopologyPlanner.load(
     root.federated_learning.topology.config_file
 ).build(root_nf_instance_id=root_id)
-assert len(assignment.branch_groups) == 3
+assert len(assignment.branch_groups) == int(branch_group_count)
 seed = root.model_provision.seed_models[0]
 with tempfile.TemporaryDirectory(prefix="protocol-seed-check-") as temporary:
     temporary = Path(temporary)
@@ -472,7 +472,7 @@ with tempfile.TemporaryDirectory(prefix="protocol-seed-check-") as temporary:
     result = subprocess.run(
         [
             str(interpreter), "-c", program, str(config_dir), coordinator,
-            root_id, scenario["workload"]["dataset"], *services,
+            root_id, scenario["workload"]["dataset"], str(branch_group_count), *services,
         ],
         cwd=ROOT / "ML" / "PyMTLF", text=True, capture_output=True, check=False,
     )
@@ -497,15 +497,6 @@ def check_protocol(testbed_path, testbed, config_dir, check):
     )
     check.true("TLS must remain disabled", not testbed.get("security", {}).get("tls"))
     check.true("OAuth must remain disabled", not testbed.get("security", {}).get("oauth"))
-    try:
-        runtime = expected_runtime_inventory(testbed)
-    except (KeyError, TypeError, ValueError) as exc:
-        check.true("invalid TESTBED runtime inventory: {}".format(exc), False)
-        return finish(check, testbed_path, config_dir)
-    check.equal("Guest machine count", len(runtime["guestMachines"]), 4)
-    check.equal("Guest NWDAF count", len(runtime["nwdafs"]), 11)
-    check.equal("Host PyMTLF count", len(runtime["hostContainers"]), 11)
-    check.equal("ML volume count", len(runtime["mlVolumes"]), 11)
     check.equal(
         "protocol GPU admission floor",
         testbed.get("hostSafety", {}).get("minimumGpuMemoryMiB"),
@@ -540,14 +531,14 @@ def check_protocol(testbed_path, testbed, config_dir, check):
         except (KeyError, TypeError, ValueError) as exc:
             check.true("invalid branch replacement target: {}".format(exc), False)
 
-    manifest = check_manifest_exact(check, testbed_path, testbed, config_dir, actual_files)
+    manifest = check_manifest_exact(check, testbed_path, testbed, config_dir, actual_files, scenario)
     if manifest is None:
         return finish(check, testbed_path, config_dir)
     check.equal("manifest scenario name", manifest.get("scenario", {}).get("name"), scenario["name"])
     check.equal("manifest scenario workload", manifest.get("scenario", {}).get("workload"), scenario["workload"])
     check.equal("manifest scenario partition", manifest.get("scenario", {}).get("partition"), scenario["partition"])
     check.equal("manifest scenario training", manifest.get("scenario", {}).get("training"), scenario["training"])
-    for section in ("fault", "observation"):
+    for section in ("topology", "fault", "observation"):
         check.equal(
             "manifest scenario {}".format(section),
             manifest.get("scenario", {}).get(section),
@@ -557,7 +548,10 @@ def check_protocol(testbed_path, testbed, config_dir, check):
     check.equal(
         "protocol GPU participant count",
         manifest["runtime"]["capacity"]["gpuParticipants"],
-        7 if device_policy == "gpu" else 0,
+        sum(
+            testbed["mlRuntime"]["services"][name]["device"] == "cuda:0"
+            for name in manifest["runtime"]["hostContainers"]
+        ) if device_policy == "gpu" else 0,
     )
     check.equal(
         "protocol effective GPU admission floor",
@@ -583,6 +577,7 @@ def check_protocol(testbed_path, testbed, config_dir, check):
             testbed,
             scenario["training"]["localEpochs"],
             scenario["training"].get("proximalMu"),
+            scenario["topology"]["onBranchFailure"],
         ),
     )
     for machine, expected in guest_network_configs(testbed, include_consumer=False).items():
@@ -683,7 +678,10 @@ def check_protocol(testbed_path, testbed, config_dir, check):
         elif definition["role"] == "branch":
             check.true(backend_name + " must not own a local shard", not client.get("training_data", {}).get("shard_path"))
 
-    check_protocol_native(check, config_dir, runtime, scenario)
+    check_protocol_native(
+        check, config_dir, manifest["runtime"], scenario,
+        len(testbed["analytics"]["protocolTopology"]["branchGroups"]),
+    )
     interpreter = ROOT / "ML" / "PyMTLF" / ".venv" / "bin" / "python"
     dataset_result = subprocess.run(
         [

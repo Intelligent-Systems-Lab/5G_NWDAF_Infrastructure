@@ -63,6 +63,23 @@ echo "PASS shell syntax"
 )
 echo "PASS provider host-context guard and mock wrapper"
 
+(
+  source "$HOST_ROOT/scripts/host/lib.sh"
+  transport_fixture=$(mktemp -d)
+  trap 'rm -rf "$transport_fixture"' EXIT
+  export XDG_RUNTIME_DIR="$transport_fixture/runtime"
+  export GUEST_TRANSPORT_DIR="$transport_fixture/transport"
+  mkdir -p "$GUEST_TRANSPORT_DIR"
+  printf '%s\n' 'Host core' >"$GUEST_TRANSPORT_DIR/core.conf"
+  require_provider_host_context() { :; }
+  provider_vagrant() { echo "unexpected provider fallback" >&2; }
+  if vssh core true >/dev/null 2>&1 || guest_upload /unused /tmp/unused core >/dev/null 2>&1; then
+    echo "Guest transport fell back after its master disappeared" >&2
+    exit 1
+  fi
+)
+echo "PASS missing Guest SSH master fails without provider fallback"
+
 if selection_error=$(require_testbed_selection "" 2>&1); then
   echo "explicit testbed selection guard accepted an empty value" >&2
   exit 1
@@ -491,7 +508,8 @@ echo "PASS reset exact-scope runtime inventory"
 (
   source "$HOST_ROOT/scripts/host/lib.sh"
   config_host_containers() { printf '%s\n' pymtlf-root; }
-  config_ml_volume_records() { printf '%s\n' 'root-state|image-a'; }
+  config_reset_host_containers() { printf '%s\n' pymtlf-root; }
+  config_reset_ml_volume_records() { printf '%s\n' 'root-state|image-a'; }
   docker() {
     if [ "$1" = ps ]; then
       printf '%s\n' 'pymtlf-root|Exited (0)'
@@ -502,10 +520,11 @@ echo "PASS reset exact-scope runtime inventory"
       return 2
     fi
   }
-  if assert_ml_runtime_identity ignored /unused start; then
+  if inventory_error=$(assert_ml_runtime_identity ignored /unused start 2>&1); then
     echo "ML startup identity guard accepted an unexpected project volume" >&2
     exit 1
   fi
+  grep -F 'VOLUME_UNEXPECTED' <<<"$inventory_error" >/dev/null
 )
 echo "PASS ML startup exact project inventory"
 
@@ -514,6 +533,7 @@ echo "PASS ML startup exact project inventory"
   activation_fixture=$(mktemp -d)
   activation_log="$activation_fixture/activation.log"
   trap 'rm -rf "$activation_fixture"' EXIT
+  export XDG_RUNTIME_DIR="$activation_fixture/runtime"
   printf '%s\n' fixture >"$activation_fixture/payload"
   provider_vagrant() { printf 'UPLOAD|%s\n' "$*" >>"$activation_log"; }
   vssh() {
@@ -549,6 +569,34 @@ echo "PASS partial Guest config activation rollback"
   MACHINES=(core path-a)
   activation_fixture=$(mktemp -d)
   trap 'rm -rf "$activation_fixture"' EXIT
+  export XDG_RUNTIME_DIR="$activation_fixture/runtime"
+  printf '%s\n' fixture >"$activation_fixture/payload"
+  provider_vagrant() {
+    [ "$4" != path-a ]
+  }
+  vssh() {
+    case "$2" in
+      printf*) printf '/old/%s|old-%s\n' "$1" "$1" ;;
+      *config-activate*) printf 'ACTIVATE|%s\n' "$1" >>"$activation_fixture/activation.log" ;;
+    esac
+  }
+  if stage_config_all "$activation_fixture" selected-hash; then
+    echo "config staging accepted a failed Guest upload" >&2
+    exit 1
+  fi
+  if [ -e "$activation_fixture/activation.log" ]; then
+    echo "config activation began before all Guest uploads succeeded" >&2
+    exit 1
+  fi
+)
+echo "PASS failed Guest config staging blocks activation"
+
+(
+  source "$HOST_ROOT/scripts/host/lib.sh"
+  MACHINES=(core path-a)
+  activation_fixture=$(mktemp -d)
+  trap 'rm -rf "$activation_fixture"' EXIT
+  export XDG_RUNTIME_DIR="$activation_fixture/runtime"
   printf '%s\n' fixture >"$activation_fixture/payload"
   provider_vagrant() { :; }
   vssh() {

@@ -74,7 +74,10 @@ def main():
     _scenario_path, scenario = resolve_config_scenario(config_dir)
     selected_names = manifest["runtime"]["hostContainers"]
     services = {name: all_services.get(name, {}) for name in selected_names}
-    expected_services = testbed["mlRuntime"]["services"]
+    expected_services = {
+        name: testbed["mlRuntime"]["services"][name]
+        for name in selected_names
+    }
     component_locks = {
         item["path"]: item["commit"] for item in load_yaml(ROOT / "components.lock.yaml")["components"]
     }

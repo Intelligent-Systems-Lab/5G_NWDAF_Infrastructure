@@ -205,6 +205,11 @@ def image_scenario_contract(scenario):
         raise ValueError(
             "image-classification scenario must not duplicate TESTBED-owned device selection"
         )
+    topology = scenario.get("topology")
+    if not isinstance(topology, dict) or set(topology) != {"onBranchFailure"}:
+        raise ValueError("scenario.topology.onBranchFailure is required")
+    if topology["onBranchFailure"] not in ("replace_branch", "reparent_leaves_to_root"):
+        raise ValueError("scenario.topology.onBranchFailure is invalid")
     fault = scenario.get("fault")
     observation = scenario.get("observation")
     if fault is None:
@@ -217,6 +222,8 @@ def image_scenario_contract(scenario):
         raise ValueError("branch replacement fault contract has invalid fields")
     if fault.get("mode") != "branch-replacement":
         raise ValueError("fault.mode must be branch-replacement")
+    if topology["onBranchFailure"] != "replace_branch":
+        raise ValueError("branch replacement fault requires replace_branch topology")
     if not isinstance(fault.get("branchGroup"), str) or not fault["branchGroup"]:
         raise ValueError("fault.branchGroup must be a non-empty group name")
     for field in ("normalAcceptedRounds", "restoredAcceptedRounds"):
@@ -248,6 +255,7 @@ def resolve_branch_replacement(testbed, scenario):
         testbed,
         scenario["training"]["localEpochs"],
         scenario["training"].get("proximalMu"),
+        scenario["topology"]["onBranchFailure"],
     )
     groups = testbed["analytics"]["protocolTopology"]["branchGroups"]
     matches = [group for group in groups if group.get("name") == fault["branchGroup"]]
@@ -268,7 +276,7 @@ def resolve_branch_replacement(testbed, scenario):
     }
 
 
-def protocol_topology(testbed, local_epochs, proximal_mu=None):
+def protocol_topology(testbed, local_epochs, proximal_mu=None, on_branch_failure="replace_branch"):
     """Resolve logical node references into the current PyMTLF topology contract."""
     if deployment_kind(testbed) != "protocol-hierarchical":
         raise ValueError("selected TESTBED is not protocol-hierarchical")
@@ -278,6 +286,8 @@ def protocol_topology(testbed, local_epochs, proximal_mu=None):
         or local_epochs <= 0
     ):
         raise ValueError("Leaf local epochs must be a positive integer")
+    if on_branch_failure not in ("replace_branch", "reparent_leaves_to_root"):
+        raise ValueError("protocol on_branch_failure is invalid")
     definitions = {item["unit"]: item for item in nwdaf_definitions(testbed)}
     source = testbed.get("analytics", {}).get("protocolTopology")
     if not isinstance(source, dict):
@@ -355,7 +365,7 @@ def protocol_topology(testbed, local_epochs, proximal_mu=None):
     if len(seen_nodes) != len(set(seen_nodes)) or set(seen_nodes) != expected_nodes:
         raise ValueError("protocol topology must cover every Branch and Leaf exactly once")
     return {
-        "admission": {"mode": "complete_required"},
+        "on_branch_failure": on_branch_failure,
         "policy": copy.deepcopy(source.get("policy")),
         "strategy": resolved_strategy(source.get("strategy")),
         "branch_groups": native_groups,
@@ -413,7 +423,7 @@ def _guest_service_start_rank(service):
     }[service["kind"]]
 
 
-def expected_runtime_inventory(testbed):
+def expected_runtime_inventory(testbed, scenario=None):
     """Build the exact generated runtime inventory from one trusted TESTBED."""
     kind = deployment_kind(testbed)
     machines = selected_machine_names(testbed)
@@ -670,6 +680,44 @@ def expected_runtime_inventory(testbed):
         ] + [testbed["coreServices"]["adrf"]["nfInstanceId"]]
     else:
         runtime["resetScope"]["nrf"]["nfType"] = "ADRF"
+    if kind == "protocol-hierarchical" and scenario is not None:
+        image_scenario_contract(scenario)
+        definitions = {item["unit"]: item for item in nwdaf_definitions(testbed)}
+        inactive_units = set()
+        for group in testbed["analytics"]["protocolTopology"]["branchGroups"]:
+            enabled = [item for item in group["branches"] if item["enabled"]]
+            primary = max(enabled, key=lambda item: item["priority"])
+            for candidate in enabled:
+                if candidate is primary:
+                    continue
+                if (
+                    (scenario.get("fault") or {}).get("branchGroup") == group["name"]
+                    and scenario["topology"]["onBranchFailure"] == "replace_branch"
+                ):
+                    continue
+                inactive_units.add(candidate["node"])
+        inactive_containers = {
+            definitions[unit]["backends"]["mtlf"] for unit in inactive_units
+        }
+        runtime["guestServices"] = [
+            item for item in guest_services if item["unit"] not in inactive_units
+        ]
+        runtime["hostContainers"] = [
+            name for name in containers if name not in inactive_containers
+        ]
+        active_volumes = {
+            services[name]["volume"]["name"] for name in runtime["hostContainers"]
+        }
+        runtime["mlVolumes"] = [
+            item for item in volumes if item["name"] in active_volumes
+        ]
+        active_services = [services[name] for name in runtime["hostContainers"]]
+        runtime["capacity"].update({
+            "hostContainerCpus": sum(float(item["cpus"]) for item in active_services),
+            "hostContainerMemoryMiB": sum(item["memoryMiB"] for item in active_services),
+            "gpuParticipants": sum(item["device"] == "cuda:0" for item in active_services),
+            "publishedPorts": sorted(item["publishedPort"] for item in active_services),
+        })
     return runtime
 
 
@@ -997,12 +1045,12 @@ def load_runtime_manifest(config_dir):
     reset_scope = runtime.get("resetScope")
     if not isinstance(reset_scope, dict):
         raise ValueError("runtime.resetScope must be an object")
-    if reset_scope.get("guestServices") != services:
-        raise ValueError("runtime.resetScope.guestServices must match Guest inventory")
-    if reset_scope.get("hostContainers") != containers:
-        raise ValueError("runtime.resetScope.hostContainers must match Host inventory")
-    if reset_scope.get("mlVolumes") != volumes:
-        raise ValueError("runtime.resetScope.mlVolumes must match ML volume inventory")
+    if not all(item in reset_scope.get("guestServices", []) for item in services):
+        raise ValueError("runtime.guestServices must be within resetScope")
+    if not all(item in reset_scope.get("hostContainers", []) for item in containers):
+        raise ValueError("runtime.hostContainers must be within resetScope")
+    if not all(item in reset_scope.get("mlVolumes", []) for item in volumes):
+        raise ValueError("runtime.mlVolumes must be within resetScope")
     return manifest
 
 

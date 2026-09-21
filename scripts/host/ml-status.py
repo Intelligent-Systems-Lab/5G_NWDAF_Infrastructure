@@ -1042,6 +1042,7 @@ def main():
     parser.add_argument("--project", default="5g-nwdaf-infrastructure")
     parser.add_argument("--cache-dir")
     parser.add_argument("--services", default=",".join(DEFAULT_SERVICES))
+    parser.add_argument("--retained-services")
     parser.add_argument("--coordinator", default="pymtlf-c")
     parser.add_argument("--deployment-kind")
     parser.add_argument("--config-set", required=True)
@@ -1065,6 +1066,11 @@ def main():
     services = tuple(item for item in args.services.split(",") if item)
     if not services or len(services) != len(set(services)):
         raise SystemExit("services must be a non-empty unique comma-separated list")
+    retained = tuple(
+        item for item in (args.retained_services or args.services).split(",") if item
+    )
+    if len(retained) != len(set(retained)) or not set(services) <= set(retained):
+        raise SystemExit("retained services must uniquely include selected services")
     if args.coordinator not in services:
         raise SystemExit("coordinator must be selected by services")
 
@@ -1092,11 +1098,19 @@ def main():
     by_service = {}
     duplicates = set()
     unexpected = []
+    retained_stopped = []
+    seen_retained = set()
     identity_mismatches = []
     for container in containers:
         labels = container.get("Config", {}).get("Labels", {})
         service = labels.get("com.docker.compose.service")
         if service not in services:
+            if service in retained and not container.get("State", {}).get("Running"):
+                if service in seen_retained:
+                    duplicates.add(service)
+                seen_retained.add(service)
+                retained_stopped.append(container)
+                continue
             unexpected.append(container)
             continue
         if service in by_service:
@@ -1213,6 +1227,17 @@ def main():
         labels = container.get("Config", {}).get("Labels", {})
         print(
             "UNEXPECTED service={} state={} config={}:{}".format(
+                labels.get("com.docker.compose.service", "unknown"),
+                container.get("State", {}).get("Status", "unknown"),
+                labels.get("io.5g-nwdaf.config-set", "unknown"),
+                labels.get("io.5g-nwdaf.config-hash", "unknown")[:12],
+            )
+        )
+
+    for container in retained_stopped:
+        labels = container.get("Config", {}).get("Labels", {})
+        print(
+            "RETAINED service={} state={} config={}:{}".format(
                 labels.get("com.docker.compose.service", "unknown"),
                 container.get("State", {}).get("Status", "unknown"),
                 labels.get("io.5g-nwdaf.config-set", "unknown"),

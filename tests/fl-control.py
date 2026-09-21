@@ -7,6 +7,7 @@ import subprocess
 import sys
 import tempfile
 from collections import defaultdict, deque
+from dataclasses import replace
 from pathlib import Path
 
 import yaml
@@ -359,12 +360,13 @@ def test_training_ambiguous_retry_and_http_failures():
 
 def test_runtime_identity_and_generated_contract_tampering_fail_closed():
     original_run = MODULE.subprocess.run
+    original_manifest = MODULE.load_runtime_manifest
     identity_commands = []
     try:
         def fake_run(command, **_kwargs):
             identity_commands.append(command)
             return subprocess.CompletedProcess(
-                command, 0 if len(identity_commands) == 1 else 1,
+                command, 0 if len(identity_commands) <= 2 else 1,
                 stdout="", stderr="selected mismatch"
             )
 
@@ -372,6 +374,15 @@ def test_runtime_identity_and_generated_contract_tampering_fail_closed():
         MODULE.verify_runtime_identity(contract())
         assert "--identity-only" in identity_commands[0]
         assert "--require-running-selected" in identity_commands[0]
+        MODULE.load_runtime_manifest = lambda _path: {"runtime": {"resetScope": {
+            "hostContainers": [*contract().services, "retained-service"],
+        }}}
+        MODULE.verify_runtime_identity(replace(contract(), deployment_kind="protocol-hierarchical"))
+        retained_command = identity_commands[-1]
+        assert retained_command[retained_command.index("--retained-services") + 1].endswith(
+            ",retained-service"
+        )
+        MODULE.load_runtime_manifest = original_manifest
         try:
             MODULE.verify_runtime_identity(contract())
         except MODULE.ControlError as error:
@@ -380,6 +391,7 @@ def test_runtime_identity_and_generated_contract_tampering_fail_closed():
             raise AssertionError("wrong active config identity was accepted")
     finally:
         MODULE.subprocess.run = original_run
+        MODULE.load_runtime_manifest = original_manifest
 
     with tempfile.TemporaryDirectory(prefix="fl-control-tamper-") as temporary:
         output = Path(temporary)

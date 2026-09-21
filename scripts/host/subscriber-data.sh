@@ -52,9 +52,9 @@ cleanup() {
   fi
 }
 trap cleanup EXIT
-(cd "$HOST_ROOT" && provider_vagrant upload "$subscriber_fixture" "$remote_subscriber" core)
+guest_upload "$subscriber_fixture" "$remote_subscriber" core
 uploaded=true
-(cd "$HOST_ROOT" && provider_vagrant upload "$group_fixture" "$remote_group" core)
+guest_upload "$group_fixture" "$remote_group" core
 vssh core "chmod 600 '$remote_subscriber' '$remote_group'"
 printf -v command 'ACTION=%q SUBSCRIBER_FIXTURE=%q GROUP_FIXTURE=%q mongosh --quiet %q --file %q' \
   "$action" \

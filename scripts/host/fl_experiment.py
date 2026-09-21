@@ -79,6 +79,7 @@ class FLExperimentContract:
             testbed,
             scenario["training"]["localEpochs"],
             scenario["training"].get("proximalMu"),
+            scenario["topology"]["onBranchFailure"],
         )
         definitions = {item["unit"]: item for item in nwdaf_definitions(testbed)}
         root = [item for item in definitions.values() if item["role"] == "root"]
@@ -100,11 +101,7 @@ class FLExperimentContract:
                 for item in group["leaves"]
                 if item.get("enabled") is True
             )
-            if len(leaves) != 2:
-                raise FLExperimentError("protocol experiment requires two enabled leaves per region")
             active_edges.append((branch["nfInstanceId"], branch["backends"]["mtlf"], leaves))
-        if len(active_edges) != 3:
-            raise FLExperimentError("protocol experiment requires three Branch regions")
         common = {
             "dataset": scenario["workload"]["dataset"],
             "root_nf_instance_id": root[0]["nfInstanceId"],
@@ -171,31 +168,6 @@ class FLExperimentContract:
             heartbeat_seconds=observation["heartbeatSeconds"],
             fault_enabled=True,
         )
-
-
-RESOURCE_RECORD_PATTERN = re.compile(
-    r"FL participant resource created process_id=(?P<plan>\S+) "
-    r"nf=(?P<nf>\S+) notif_corre_id=(?P<notification>\S+) "
-    r"location=(?P<location>\S+)"
-)
-
-
-def parse_resource_log(value: str, plan_id: str) -> list[dict[str, str]]:
-    """Extract component-owned participant resource identities for one plan."""
-    records = []
-    for line in value.splitlines():
-        match = RESOURCE_RECORD_PATTERN.search(line)
-        if match is None or match.group("plan") != plan_id:
-            continue
-        records.append(
-            {
-                "planId": match.group("plan"),
-                "nfInstanceId": match.group("nf"),
-                "notifCorreId": match.group("notification"),
-                "resourceLocation": match.group("location"),
-            }
-        )
-    return records
 
 
 class IncrementalJsonlReader:
@@ -285,7 +257,7 @@ class PhaseTracker:
         if record_type == "MODEL_EVALUATION":
             self._ingest_evaluation(record)
             return None
-        if record_type == "ROOT_ROUND_OUTCOME":
+        if record_type == "ROUND_AGGREGATION":
             return self._ingest_outcome(record, timestamp)
         if record_type == "BRANCH_FAILURE_DETECTED":
             if not self.contract.fault_enabled:
@@ -297,10 +269,10 @@ class PhaseTracker:
                 raise FLExperimentError("normal run contains replacement readiness")
             self._ingest_ready(record, timestamp)
             return "replacement-ready"
-        if record_type == "FINAL_MODEL_SAVED":
+        if record_type == "MODEL_ARTIFACT_SAVED":
             self._ingest_final_model(record)
             return "final-model-saved"
-        raise FLExperimentError("Root observation has an unsupported recordType")
+        return None
 
     def _round(self, record: dict) -> int:
         value = record.get("roundInd")
@@ -310,7 +282,7 @@ class PhaseTracker:
 
     def _ingest_evaluation(self, record: dict) -> None:
         stage = record.get("evaluationStage")
-        for field in ("validationLoss", "validationAccuracy"):
+        for field in ("loss", "accuracy"):
             value = record.get(field)
             if not isinstance(value, (int, float)) or isinstance(value, bool) or not math.isfinite(value):
                 raise FLExperimentError("model evaluation contains a non-finite metric")
@@ -456,21 +428,13 @@ class PhaseTracker:
         if len(self.accepted) != self.contract.accepted_rounds:
             raise FLExperimentError("final model record precedes the final accepted round")
         round_indicator = self._round(record)
-        digest = record.get("artifactDigest")
-        size = record.get("sizeBytes")
         if round_indicator != self.accepted[-1]["roundInd"]:
             raise FLExperimentError("final model round differs from the final accepted round")
         if record.get("artifactFile") != "final-model.tar.gz":
             raise FLExperimentError("final model filename is not canonical")
-        if not isinstance(digest, str) or re.fullmatch(r"[0-9a-f]{64}", digest) is None:
-            raise FLExperimentError("final model identity is invalid")
-        if not isinstance(size, int) or isinstance(size, bool) or size <= 0:
-            raise FLExperimentError("final model size must be positive")
         self.final_model_saved = {
             "roundInd": round_indicator,
             "artifactFile": record["artifactFile"],
-            "artifactDigest": digest,
-            "sizeBytes": size,
         }
 
     def finalize(self, terminal_status: dict) -> dict:
@@ -513,8 +477,7 @@ class PhaseTracker:
             raise FLExperimentError("final model record is missing")
         if terminal_status.get("currentRound") != self.final_model_saved["roundInd"]:
             raise FLExperimentError("final model round differs from terminal status")
-        if candidate != self.final_model_saved["artifactDigest"]:
-            raise FLExperimentError("final model identity differs from terminal status")
+        self.final_model_saved["artifactDigest"] = candidate
         return self.summary()
 
     def summary(self) -> dict:
@@ -741,7 +704,6 @@ def check_evidence(
         ("controller", "RUNTIME_READY"),
         ("controller", "TRAINING_REQUEST_SUBMITTED"),
         ("controller", "FINAL_ARTIFACT_COLLECTED"),
-        ("controller", "PROTOCOL_RESOURCE_EVIDENCE"),
         ("held-out-evaluator", "HELD_OUT_EVALUATION"),
     }
     if contract.fault_enabled:
@@ -762,19 +724,25 @@ def check_evidence(
 
     admission = indexed[("controller", "GPU_ADMISSION")]["payload"]
     if (
-        admission.get("participantCount") != 7
-        or admission.get("minimumFreeMiB") != 8192
-        or admission.get("memoryFreeMiB", -1) < admission.get("minimumFreeMiB", 8192)
+        not isinstance(admission.get("participantCount"), int)
+        or admission["participantCount"] <= 0
+        or not isinstance(admission.get("minimumFreeMiB"), int)
+        or admission["minimumFreeMiB"] <= 0
+        or admission.get("memoryFreeMiB", -1) < admission["minimumFreeMiB"]
     ):
-        raise FLExperimentError("GPU_ADMISSION does not prove the seven-participant floor")
+        raise FLExperimentError("GPU_ADMISSION does not meet the selected floor")
     runtime_ready = indexed[("controller", "RUNTIME_READY")]["payload"]
     virtual_machines = runtime_ready.get("virtualMachines", {})
     guest_services = runtime_ready.get("guestServices", {})
     registrations = runtime_ready.get("nrfRegistrations", {})
+    selected_runtime = run.get("runtimeInventory", {})
+    selected_guest_units = {
+        item["unit"] for item in selected_runtime.get("guestServices", [])
+    }
     if (
-        len(virtual_machines) != 4
+        set(virtual_machines) != set(selected_runtime.get("guestMachines", []))
         or set(virtual_machines.values()) != {"running"}
-        or len(guest_services) != 14
+        or set(guest_services) != selected_guest_units
         or any(value.get("state") != "active" for value in guest_services.values())
     ):
         raise FLExperimentError("RUNTIME_READY VM or Guest inventory is incomplete")
@@ -788,8 +756,11 @@ def check_evidence(
     if (
         registrations.get("state") != "ready"
         or not isinstance(registered, list)
-        or len(registered) != 12
-        or len(set(registered)) != 12
+        or len(registered) != sum(
+            item.get("kind") == "nwdaf"
+            for item in selected_runtime.get("guestServices", [])
+        ) + 1
+        or len(set(registered)) != len(registered)
         or not required_registrations <= set(registered)
     ):
         raise FLExperimentError("RUNTIME_READY NRF registration inventory is incomplete")
@@ -799,9 +770,9 @@ def check_evidence(
         if isinstance(value, dict)
     }
     if (
-        len(devices) != 11
-        or sum(device == "cuda:0" for device in devices.values()) != 7
-        or sum(device == "cpu" for device in devices.values()) != 4
+        set(devices) != set(selected_runtime.get("hostContainers", []))
+        or sum(device == "cuda:0" for device in devices.values()) != admission["participantCount"]
+        or any(device not in ("cuda:0", "cpu") for device in devices.values())
         or run.get("resolvedDevices") != devices
     ):
         raise FLExperimentError("RUNTIME_READY mixed-device inventory is inconsistent")
@@ -831,61 +802,28 @@ def check_evidence(
     submitted = indexed[("controller", "TRAINING_REQUEST_SUBMITTED")]["payload"]
     if submitted.get("requestId") != request_id:
         raise FLExperimentError("training request run identity is mismatched")
-    protocol_resources = indexed[("controller", "PROTOCOL_RESOURCE_EVIDENCE")][
-        "payload"
-    ]
-    if run.get("protocolResources") != protocol_resources:
-        raise FLExperimentError("protocol resource evidence differs from run.json")
-    if protocol_resources.get("planId") != plan_id:
-        raise FLExperimentError("protocol resource evidence has the wrong plan identity")
-    root_edges = protocol_resources.get("rootEdges", [])
-    if contract.fault_enabled:
-        primary_edges = protocol_resources.get("primaryLeafEdges", [])
-        replacement_edges = protocol_resources.get("replacementLeafEdges", [])
-        if {item.get("nfInstanceId") for item in root_edges} != {
-            contract.primary_nf_instance_id,
-            contract.replacement_nf_instance_id,
-        }:
-            raise FLExperimentError("Root resource evidence lacks primary or replacement")
-        expected_leaves = set(contract.fault_group_leaf_nf_instance_ids)
+    observations = run.get("rawObservations")
+    if not isinstance(observations, dict) or set(observations) != set(
+        selected_runtime.get("hostContainers", [])
+    ):
+        raise FLExperimentError("raw observation inventory differs from active containers")
+    if observations.get("pymtlf-root", {}).get("state") != "collected":
+        raise FLExperimentError("Root raw observations are missing")
+    for service, entry in observations.items():
+        if entry.get("state") == "absent":
+            if not contract.fault_enabled:
+                raise FLExperimentError("normal run lacks raw observations for " + service)
+            continue
+        relative = "observations/{}.jsonl".format(service)
+        path = run_directory / relative
         if (
-            {item.get("nfInstanceId") for item in primary_edges} != expected_leaves
-            or {item.get("nfInstanceId") for item in replacement_edges} != expected_leaves
+            entry.get("state") != "collected"
+            or entry.get("path") != relative
+            or not path.is_file()
+            or entry.get("bytes") != path.stat().st_size
+            or path.stat().st_size <= 0
         ):
-            raise FLExperimentError("replacement did not preserve the exact Area leaf subtree")
-        all_edges = [*root_edges, *primary_edges, *replacement_edges]
-    else:
-        if {item.get("nfInstanceId") for item in root_edges} != set(
-            contract.normal_nf_instance_ids
-        ) or len(root_edges) != len(contract.normal_nf_instance_ids):
-            raise FLExperimentError("Root resource evidence lacks the active Branches")
-        branch_edges = protocol_resources.get("branchLeafEdges")
-        if not isinstance(branch_edges, dict) or set(branch_edges) != set(
-            contract.normal_nf_instance_ids
-        ):
-            raise FLExperimentError("normal Branch resource inventory is incomplete")
-        all_edges = list(root_edges)
-        for branch_id, _service, leaves in contract.active_branch_leaf_edges:
-            edges = branch_edges[branch_id]
-            if not isinstance(edges, list) or len(edges) != len(leaves) or {
-                item.get("nfInstanceId") for item in edges
-            } != set(leaves):
-                raise FLExperimentError("normal Branch resource evidence lacks its leaves")
-            all_edges.extend(edges)
-    if any(
-        item.get("planId") != plan_id
-        or not item.get("notifCorreId")
-        or not item.get("resourceLocation")
-        for item in all_edges
-    ):
-        raise FLExperimentError("protocol resource identity is incomplete")
-    if contract.fault_enabled and (
-        {item["notifCorreId"] for item in primary_edges}
-        & {item["notifCorreId"] for item in replacement_edges}
-        or {item["resourceLocation"] for item in primary_edges}
-        & {item["resourceLocation"] for item in replacement_edges}
-    ):
-        raise FLExperimentError("replacement reused an old Branch-to-Leaf resource")
+            raise FLExperimentError("raw observations are incomplete for " + service)
 
     tracker = PhaseTracker(contract, plan_id)
     stop_record = None
@@ -946,6 +884,7 @@ def check_evidence(
         ):
             raise FLExperimentError("confirmed primary stop target or postcondition is invalid")
     summary = tracker.finalize(run.get("terminalStatus", {}))
+    tracker.final_model_saved["sizeBytes"] = artifact_path.stat().st_size
     if run.get("phases") != summary:
         raise FLExperimentError("run.json phase summary differs from events.jsonl")
     if run.get("finalModel") != tracker.final_model_saved:

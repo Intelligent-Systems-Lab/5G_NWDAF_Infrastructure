@@ -43,11 +43,26 @@ if [ "$#" -gt 0 ]; then
   done
 fi
 
-for machine in "${selected_machines[@]}"; do
+sync_machine() {
+  local machine=$1 command
   echo "SYNC RUNTIME TOOLS $machine"
-  (cd "$HOST_ROOT" && provider_vagrant upload "$archive" "$remote_archive" "$machine")
+  guest_upload "$archive" "$remote_archive" "$machine" || return
   printf -v command \
     'set -euo pipefail; archive=%q; stage=$(mktemp -d); trap '\''rm -rf "$stage" "$archive"'\'' EXIT; tar -C "$stage" -xzf "$archive"; sudo bash "$stage/scripts/guest/runtime-tools-install.sh" %q "$stage"' \
     "$remote_archive" "$machine"
-  vssh "$machine" "$command"
+  vssh "$machine" "$command" || return
+}
+
+pids=()
+for machine in "${selected_machines[@]}"; do
+  sync_machine "$machine" >"$temporary/$machine.log" 2>&1 &
+  pids+=("$!")
 done
+failed=false
+for index in "${!selected_machines[@]}"; do
+  if ! wait "${pids[$index]}"; then
+    failed=true
+  fi
+  sed -n '1,$p' "$temporary/${selected_machines[$index]}.log"
+done
+! $failed

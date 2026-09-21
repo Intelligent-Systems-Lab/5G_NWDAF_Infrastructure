@@ -1,6 +1,8 @@
 schemaVersion: 2
 name: protocol-hierarchical-formal-mnist-baseline
 kind: formal-comparison
+topology:
+  onBranchFailure: replace_branch
 workload:
   profile: image-classification
   dataset: mnist

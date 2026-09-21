@@ -33,9 +33,9 @@ for path_name in a b; do
   remote="/tmp/5g-nwdaf-dataset-${set_id:0:16}-${path_name}.tgz"
   remote_activate="/tmp/5g-nwdaf-dataset-activate-${set_id:0:16}.sh"
   remote_runner="/tmp/5g-nwdaf-service-run-${set_id:0:16}.sh"
-  (cd "$HOST_ROOT" && provider_vagrant upload "$archive" "$remote" "$machine")
-  (cd "$HOST_ROOT" && provider_vagrant upload "$HOST_ROOT/scripts/guest/dataset-activate.sh" "$remote_activate" "$machine")
-  (cd "$HOST_ROOT" && provider_vagrant upload "$HOST_ROOT/scripts/guest/service-run.sh" "$remote_runner" "$machine")
+  guest_upload "$archive" "$remote" "$machine"
+  guest_upload "$HOST_ROOT/scripts/guest/dataset-activate.sh" "$remote_activate" "$machine"
+  guest_upload "$HOST_ROOT/scripts/guest/service-run.sh" "$remote_runner" "$machine"
   vssh "$machine" "sudo install -m 0755 '$remote_activate' /usr/local/libexec/5g-nwdaf-infrastructure/dataset-activate && sudo install -m 0755 '$remote_runner' /usr/local/libexec/5g-nwdaf-infrastructure/service-run && rm -f '$remote_activate' '$remote_runner' && sudo /usr/local/libexec/5g-nwdaf-infrastructure/dataset-activate '$machine' '$remote' '$set_id' '$schema'"
   rm -rf "$stage_temporary"
   stage_temporary=

@@ -444,12 +444,50 @@ ue_readiness_states() {
 vssh() {
   local machine=$1 command=$2
   local lock_root=${XDG_RUNTIME_DIR:-/tmp}/5g-nwdaf-infrastructure-$UID
+  local transport_dir=${GUEST_TRANSPORT_DIR:-}
   mkdir -p "$lock_root"
   chmod 700 "$lock_root"
   (
     flock 9
     cd "$HOST_ROOT"
-    provider_vagrant ssh "$machine" -c "$command" </dev/null
+    if [ -n "$transport_dir" ]; then
+      require_provider_host_context || return
+      [ -r "$transport_dir/$machine.conf" ] && [ -S "$transport_dir/$machine.sock" ] || {
+        echo "Guest SSH master is unavailable for $machine" >&2
+        return 1
+      }
+      ssh -F "$transport_dir/$machine.conf" \
+        -o "ControlPath=$transport_dir/$machine.sock" -o ControlMaster=no \
+        -o ProxyCommand=/bin/false -o ProxyJump=none -o BatchMode=yes \
+        "$machine" "$command" </dev/null
+    else
+      provider_vagrant ssh "$machine" -c "$command" </dev/null
+    fi
+  ) 9>"$lock_root/vagrant-$machine.lock"
+}
+
+guest_upload() {
+  local source=$1 destination=$2 machine=$3
+  local lock_root=${XDG_RUNTIME_DIR:-/tmp}/5g-nwdaf-infrastructure-$UID
+  local transport_dir=${GUEST_TRANSPORT_DIR:-}
+  mkdir -p "$lock_root"
+  chmod 700 "$lock_root"
+  (
+    flock 9
+    cd "$HOST_ROOT"
+    if [ -n "$transport_dir" ]; then
+      require_provider_host_context || return
+      [ -r "$transport_dir/$machine.conf" ] && [ -S "$transport_dir/$machine.sock" ] || {
+        echo "Guest SSH master is unavailable for $machine" >&2
+        return 1
+      }
+      scp -F "$transport_dir/$machine.conf" \
+        -o "ControlPath=$transport_dir/$machine.sock" -o ControlMaster=no \
+        -o ProxyCommand=/bin/false -o ProxyJump=none -o BatchMode=yes \
+        "$source" "$machine:$destination"
+    else
+      provider_vagrant upload "$source" "$destination" "$machine"
+    fi
   ) 9>"$lock_root/vagrant-$machine.lock"
 }
 
@@ -471,24 +509,14 @@ unit_action() {
   vssh "$machine" "sudo systemctl $action 5g-nwdaf@$unit.service"
 }
 
-wait_active() {
-  local machine=$1 unit=$2 attempt
-  for attempt in $(seq 1 30); do
-    if vssh "$machine" "systemctl is-active --quiet 5g-nwdaf@$unit.service" >/dev/null 2>&1; then
-      return 0
-    fi
-    sleep 1
-  done
-  echo "$machine/$unit did not become active" >&2
-  vssh "$machine" "sudo journalctl -u 5g-nwdaf@$unit.service -n 40 --no-pager" >&2 || true
-  return 1
-}
-
 start_unit() {
-  local machine=$1 unit=$2
+  local machine=$1 unit=$2 remote
   echo "START $machine/$unit"
-  unit_action "$machine" start "$unit"
-  wait_active "$machine" "$unit"
+  printf -v remote 'unit=%q; service="5g-nwdaf@$unit.service"; sudo systemctl start "$service" || exit; for attempt in $(seq 1 30); do if systemctl is-active --quiet "$service"; then exit 0; fi; sleep 1; done; sudo journalctl -u "$service" -n 40 --no-pager >&2; exit 1' "$unit"
+  if ! vssh "$machine" "$remote"; then
+    echo "$machine/$unit did not become active" >&2
+    return 1
+  fi
 }
 
 stop_unit() {
@@ -587,6 +615,16 @@ print(*runtime_host_containers(resolve_path(sys.argv[1])), sep="\n")
 PY
 }
 
+config_reset_host_containers() {
+  local config_dir=$1
+  PYTHONPATH="$HOST_ROOT/scripts/host" python3 - "$config_dir" <<'PY'
+import sys
+from configlib import load_runtime_manifest, resolve_path
+runtime = load_runtime_manifest(resolve_path(sys.argv[1]))["runtime"]
+print(*runtime["resetScope"]["hostContainers"], sep="\n")
+PY
+}
+
 config_ml_build_services() {
   local config_dir=$1
   PYTHONPATH="$HOST_ROOT/scripts/host" python3 - "$config_dir" <<'PY'
@@ -610,6 +648,17 @@ config_ml_volume_records() {
 import sys
 from configlib import runtime_ml_volumes, resolve_path
 for item in runtime_ml_volumes(resolve_path(sys.argv[1])):
+    print("{}|{}".format(item["name"], item["image"]))
+PY
+}
+
+config_reset_ml_volume_records() {
+  local config_dir=$1
+  PYTHONPATH="$HOST_ROOT/scripts/host" python3 - "$config_dir" <<'PY'
+import sys
+from configlib import load_runtime_manifest, resolve_path
+runtime = load_runtime_manifest(resolve_path(sys.argv[1]))["runtime"]
+for item in runtime["resetScope"]["mlVolumes"]:
     print("{}|{}".format(item["name"], item["image"]))
 PY
 }
@@ -687,7 +736,7 @@ PY
 }
 
 assert_ml_runtime_identity() {
-  local testbed=$1 config_dir=$2 policy=${3:-strict} project service_lines volume_lines services coordinator config_set selected_hash
+  local testbed=$1 config_dir=$2 policy=${3:-strict} project service_lines retained_service_lines volume_lines services retained_services coordinator config_set selected_hash
   local container_inventory volume_inventory inventory_findings
   local -a policy_args=()
   case "$policy" in
@@ -697,8 +746,10 @@ assert_ml_runtime_identity() {
   esac
   project=$(ml_project_name)
   service_lines=$(config_host_containers "$config_dir")
-  volume_lines=$(config_ml_volume_records "$config_dir")
+  retained_service_lines=$(config_reset_host_containers "$config_dir")
+  volume_lines=$(config_reset_ml_volume_records "$config_dir")
   services=$(paste -sd, - <<<"$service_lines")
+  retained_services=$(paste -sd, - <<<"$retained_service_lines")
   [ -n "$services" ] || {
     echo "selected ML inventory is empty" >&2
     return 1
@@ -712,7 +763,7 @@ assert_ml_runtime_identity() {
   volume_inventory=$(docker volume ls --filter "label=com.docker.compose.project=$project" \
     --format '{{.Name}}|{{.Label "com.docker.compose.volume"}}')
   if ! inventory_findings=$(check_reset_runtime_inventory \
-      "$service_lines" "$volume_lines" "$container_inventory" "$volume_inventory" "$project"); then
+      "$retained_service_lines" "$volume_lines" "$container_inventory" "$volume_inventory" "$project"); then
     [ -z "$inventory_findings" ] || printf '%s\n' "$inventory_findings" >&2
     echo "refusing ML lifecycle while unexpected project containers or volumes exist" >&2
     return 1
@@ -722,6 +773,7 @@ assert_ml_runtime_identity() {
   selected_hash=$(config_hash "$config_dir")
   python3 "$HOST_ROOT/scripts/host/ml-status.py" \
     --project "$project" --services "$services" --coordinator "$coordinator" \
+    --retained-services "$retained_services" \
     --config-set "$config_set" --config-hash "$selected_hash" --identity-only \
     "${policy_args[@]}"
 }
@@ -939,21 +991,40 @@ ml_runtime_gate() {
 }
 
 stage_config_all() {
-  local config_dir=$1 hash=$2 name archive temporary machine destination identity rollback_machine
+  local config_dir=$1 hash=$2 name archive temporary machine destination identity rollback_machine index
   local -A old_target=() old_hash=() activated=()
-  local -a rollback_failed=()
+  local -a rollback_failed=() stage_pids=()
   name=$(basename "$config_dir")
   destination="/etc/5g-nwdaf-infrastructure/config-sets/${name}-${hash:0:16}"
   temporary=$(mktemp -d)
   archive="$temporary/config.tgz"
   trap 'rm -rf "$temporary"' RETURN
-  tar -C "$config_dir" -czf "$archive" .
-  for machine in "${MACHINES[@]}"; do
-    identity=$(vssh "$machine" "printf '%s|%s\\n' \"\$(readlink /etc/5g-nwdaf-infrastructure/active 2>/dev/null || true)\" \"\$(cat /etc/5g-nwdaf-infrastructure/active.sha256 2>/dev/null || true)\"" | tr -d '\r')
-    IFS='|' read -r old_target["$machine"] old_hash["$machine"] <<<"$identity"
+  tar -C "$config_dir" -czf "$archive" . || return
+  stage_machine() {
+    local machine=$1 identity
+    identity=$(vssh "$machine" "printf '%s|%s\\n' \"\$(readlink /etc/5g-nwdaf-infrastructure/active 2>/dev/null || true)\" \"\$(cat /etc/5g-nwdaf-infrastructure/active.sha256 2>/dev/null || true)\"" | tr -d '\r') || return
+    printf '%s\n' "$identity" >"$temporary/$machine.identity"
     echo "STAGE $machine $destination"
-    (cd "$HOST_ROOT" && provider_vagrant upload "$archive" "/tmp/5g-nwdaf-config-${hash:0:16}.tgz" "$machine")
-    vssh "$machine" "sudo rm -rf '$destination' && sudo install -d '$destination' && sudo tar -C '$destination' -xzf '/tmp/5g-nwdaf-config-${hash:0:16}.tgz' && sudo rm -f '/tmp/5g-nwdaf-config-${hash:0:16}.tgz'"
+    guest_upload "$archive" "/tmp/5g-nwdaf-config-${hash:0:16}.tgz" "$machine" || return
+    vssh "$machine" "sudo rm -rf '$destination' && sudo install -d '$destination' && sudo tar -C '$destination' -xzf '/tmp/5g-nwdaf-config-${hash:0:16}.tgz' && sudo rm -f '/tmp/5g-nwdaf-config-${hash:0:16}.tgz'" || return
+  }
+  for machine in "${MACHINES[@]}"; do
+    stage_machine "$machine" >"$temporary/$machine.stage.log" 2>&1 &
+    stage_pids+=("$!")
+  done
+  local stage_failed=false
+  for index in "${!MACHINES[@]}"; do
+    if ! wait "${stage_pids[$index]}"; then
+      stage_failed=true
+    fi
+    sed -n '1,$p' "$temporary/${MACHINES[$index]}.stage.log"
+  done
+  if $stage_failed; then
+    echo "config staging failed; active configuration was not changed" >&2
+    return 1
+  fi
+  for machine in "${MACHINES[@]}"; do
+    IFS='|' read -r old_target["$machine"] old_hash["$machine"] <"$temporary/$machine.identity"
   done
   for machine in "${MACHINES[@]}"; do
     if vssh "$machine" "sudo /usr/local/libexec/5g-nwdaf-infrastructure/config-activate '$machine' '$destination' '$hash'"; then

@@ -5,7 +5,8 @@ source "$(dirname "$0")/lib.sh"
 project=$(ml_project_name)
 testbed=${1:?usage: ml-stop.sh testbed [config-dir]}
 explicit_config=${2:-}
-"$HOST_ROOT/scripts/host/ml-status.sh" "$testbed" "$explicit_config"
+config_dir=$(effective_config_dir "$testbed" "$explicit_config")
+assert_ml_runtime_identity "$testbed" "$config_dir"
 container_lines=$(
   docker ps -q --filter "label=com.docker.compose.project=$project"
 )
@@ -20,6 +21,5 @@ else
   docker stop --time 30 "${container_ids[@]}" >/dev/null
 fi
 wait_no_running_ml_containers "$project"
-"$HOST_ROOT/scripts/host/ml-status.sh" "$testbed" "$explicit_config"
 echo "Host ML services stopped; containers, volumes, and images were retained."
 echo "ML stop did not modify VM or subscription state."

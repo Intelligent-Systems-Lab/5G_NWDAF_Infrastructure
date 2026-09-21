@@ -10,10 +10,22 @@ snapshot_dir=$(mktemp -d -t 5g-nwdaf-provisioning.XXXXXX)
 cleanup() { rm -rf -- "$snapshot_dir"; }
 trap cleanup EXIT
 
+pids=()
 for machine in "${MACHINES[@]}"; do
   vssh "$machine" "sudo cat /etc/5g-nwdaf-infrastructure/provisioning-manifest.yaml" \
-    >"$snapshot_dir/$machine.yaml"
+    >"$snapshot_dir/$machine.yaml" &
+  pids+=("$!")
 done
+failed=false
+for pid in "${pids[@]}"; do
+  if ! wait "$pid"; then
+    failed=true
+  fi
+done
+if $failed; then
+  echo "Guest provisioning manifest collection failed" >&2
+  exit 1
+fi
 
 PYTHONPATH="$HOST_ROOT/scripts/host" python3 - \
   "$testbed" "$config_dir" "$HOST_ROOT/components.lock.yaml" "$snapshot_dir" <<'PY'

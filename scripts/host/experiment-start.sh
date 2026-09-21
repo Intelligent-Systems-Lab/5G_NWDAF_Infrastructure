@@ -84,6 +84,8 @@ if [ "$subscriptions_mode" = consumer ]; then
 else
   echo "SUBSCRIPTIONS skipped (mode=$subscriptions_mode)"
 fi
+assert_guest_runtime_identity "$config_dir"
+assert_ml_runtime_identity "$testbed" "$config_dir"
 trap - EXIT
 
 echo "Experiment processes are active; VM lifecycle and retained state were not changed."

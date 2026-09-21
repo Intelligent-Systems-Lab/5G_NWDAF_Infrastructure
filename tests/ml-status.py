@@ -542,6 +542,44 @@ def main():
         MODULE.output = unexpected_output
         MODULE.sys.argv[-2] = "selected-hash"
         assert MODULE.main() == 1
+
+        def retained_output(command, timeout=30):
+            if command[1:3] == ["ps", "-aq"]:
+                return "container-client\ncontainer-retained"
+            if command[1] == "inspect":
+                return MODULE.json.dumps([
+                    {
+                        "Id": "container-client",
+                        "Config": {"Labels": {
+                            "com.docker.compose.service": "pymtlf-client-1",
+                            "io.5g-nwdaf.config-set": "static-flat",
+                            "io.5g-nwdaf.config-hash": "selected-hash",
+                        }},
+                        "State": {"Running": True, "Status": "running"},
+                    },
+                    {
+                        "Id": "container-retained",
+                        "Config": {"Labels": {
+                            "com.docker.compose.service": "pymtlf-client-2",
+                            "io.5g-nwdaf.config-set": "previous-run",
+                        }},
+                        "State": {"Running": retained_running, "Status": "running" if retained_running else "exited"},
+                    },
+                ])
+            raise AssertionError("retained-container check performed extra work")
+
+        MODULE.output = retained_output
+        MODULE.sys.argv = [
+            "ml-status.py", "--services", "pymtlf-client-1",
+            "--retained-services", "pymtlf-client-1,pymtlf-client-2",
+            "--coordinator", "pymtlf-client-1", "--config-set", "static-flat",
+            "--config-hash", "selected-hash", "--identity-only",
+            "--require-running-selected",
+        ]
+        retained_running = False
+        assert MODULE.main() == 0
+        retained_running = True
+        assert MODULE.main() == 1
     finally:
         MODULE.output = original_output
         MODULE.sys.argv = original_argv

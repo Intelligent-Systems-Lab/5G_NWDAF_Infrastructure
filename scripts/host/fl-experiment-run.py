@@ -9,6 +9,7 @@ import fcntl
 import importlib.util
 import json
 import os
+import shlex
 import signal
 import subprocess
 import sys
@@ -26,7 +27,6 @@ from fl_experiment import (
     PhaseTracker,
     check_evidence,
     parse_timestamp,
-    parse_resource_log,
     utc_now,
     validate_run_name,
 )
@@ -143,6 +143,112 @@ def quiet_command(
     return output
 
 
+class GuestTransport:
+    def __init__(self, testbed_path: Path, machines: list[str]) -> None:
+        self.testbed_path = testbed_path
+        self.machines = machines
+        self.temporary: tempfile.TemporaryDirectory | None = None
+        self.masters: dict[str, subprocess.Popen] = {}
+        self.previous_directory = os.environ.get("GUEST_TRANSPORT_DIR")
+
+    def open(self) -> None:
+        if self.temporary is not None:
+            return
+        self.temporary = tempfile.TemporaryDirectory(prefix="5g-nwdaf-ssh-")
+        directory = Path(self.temporary.name)
+        try:
+            command_output(
+                [
+                    "bash", "-c",
+                    'source "$1"; select_testbed_machines "$2"; assert_selected_provider_running',
+                    "guest-transport", str(ROOT / "scripts/host/lib.sh"),
+                    str(self.testbed_path),
+                ],
+                timeout=60,
+            )
+            for machine in self.machines:
+                config = command_output(
+                    [
+                        "bash", "-c",
+                        'source "$1"; select_testbed_machines "$2"; '
+                        'provider_vagrant ssh-config "$3" --host "$3"',
+                        "guest-transport", str(ROOT / "scripts/host/lib.sh"),
+                        str(self.testbed_path), machine,
+                    ],
+                    timeout=60,
+                )
+                config_path = directory / (machine + ".conf")
+                config_path.write_text(config + "\n", encoding="utf-8")
+                config_path.chmod(0o600)
+                socket_path = directory / (machine + ".sock")
+                master = subprocess.Popen(
+                    [
+                        "ssh", "-F", str(config_path), "-M", "-N",
+                        "-S", str(socket_path), "-o", "ControlMaster=yes", machine,
+                    ],
+                    cwd=ROOT, stdin=subprocess.DEVNULL,
+                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                )
+                self.masters[machine] = master
+                deadline = time.monotonic() + 30
+                while not socket_path.is_socket():
+                    if master.poll() is not None:
+                        raise FLExperimentError("Guest SSH master failed for " + machine)
+                    if time.monotonic() >= deadline:
+                        raise FLExperimentError("Guest SSH master timed out for " + machine)
+                    time.sleep(0.1)
+                while True:
+                    try:
+                        command_output(
+                            ["ssh", "-F", str(config_path), "-S", str(socket_path),
+                             "-o", "ProxyCommand=/bin/false", "-o", "ProxyJump=none",
+                             "-O", "check", machine],
+                            timeout=5,
+                        )
+                        break
+                    except FLExperimentError:
+                        if master.poll() is not None or time.monotonic() >= deadline:
+                            raise FLExperimentError("Guest SSH master is unavailable for " + machine)
+                        time.sleep(0.1)
+            os.environ["GUEST_TRANSPORT_DIR"] = str(directory)
+        except BaseException:
+            self.close()
+            raise
+
+    def close(self) -> None:
+        if self.temporary is None:
+            return
+        directory = Path(self.temporary.name)
+        if self.previous_directory is None:
+            os.environ.pop("GUEST_TRANSPORT_DIR", None)
+        else:
+            os.environ["GUEST_TRANSPORT_DIR"] = self.previous_directory
+        for machine, master in reversed(list(self.masters.items())):
+            if master.poll() is None and (directory / (machine + ".sock")).is_socket():
+                try:
+                    subprocess.run(
+                        ["ssh", "-F", str(directory / (machine + ".conf")),
+                         "-S", str(directory / (machine + ".sock")),
+                         "-o", "ProxyCommand=/bin/false", "-o", "ProxyJump=none",
+                         "-O", "exit", machine],
+                        cwd=ROOT, text=True, capture_output=True, timeout=5, check=False,
+                    )
+                except (OSError, subprocess.SubprocessError):
+                    pass
+            try:
+                master.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                master.terminate()
+                try:
+                    master.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    master.kill()
+                    master.wait()
+        self.masters.clear()
+        self.temporary.cleanup()
+        self.temporary = None
+
+
 def repository_metadata(testbed: dict, runtime: dict) -> dict:
     paths = ["."] + selected_component_paths(testbed, runtime)
     values = {}
@@ -172,6 +278,7 @@ class LiveEnvironment:
         self.runtime = manifest["runtime"]
         self._root_container_id: str | None = None
         self._faulted_guest: tuple[str, str] | None = None
+        self.transport: GuestTransport | None = None
 
     def validate_inputs(self) -> dict[str, str]:
         quiet_command(
@@ -213,6 +320,8 @@ class LiveEnvironment:
 
     def start(self) -> None:
         print("MILESTONE runtime-starting", flush=True)
+        if self.transport is not None:
+            self.transport.open()
         quiet_command(
             [
                 str(ROOT / "scripts/host/experiment-start.sh"),
@@ -224,68 +333,54 @@ class LiveEnvironment:
         )
         print("MILESTONE runtime-ready", flush=True)
 
-    def active_guest_identity(self) -> dict[str, dict[str, str]]:
-        output = self._provider_shell(
-            r'''source "$1"
-select_testbed_machines "$2"
-assert_selected_provider_running
-assert_guest_runtime_identity "$3"
-for machine in "${MACHINES[@]}"; do
-  identity=$(vssh "$machine" 'printf "%s|%s\n" "$(readlink /etc/5g-nwdaf-infrastructure/active 2>/dev/null || true)" "$(cat /etc/5g-nwdaf-infrastructure/active.sha256 2>/dev/null || true)"' | tr -d '\r' | tail -n 1)
-  printf 'ACTIVE|%s|%s\n' "$machine" "$identity"
-done''',
-            [
-                str(ROOT / "scripts/host/lib.sh"),
-                str(self.testbed_path),
-                str(self.config_dir),
-            ],
+    def guest_ready_snapshot(self) -> tuple[dict, dict]:
+        self._provider_shell(
+            'source "$1"; select_testbed_machines "$2"; '
+            'assert_selected_provider_running; assert_guest_runtime_identity "$3"',
+            [str(ROOT / "scripts/host/lib.sh"), str(self.testbed_path), str(self.config_dir)],
         )
-        lines = [line.split("|", 3) for line in output.splitlines() if line.startswith("ACTIVE|")]
-        if len(lines) != len(self.runtime["guestMachines"]):
-            raise FLExperimentError("active Guest config identity is incomplete")
-        values = {
-            fields[1]: {"activeTarget": fields[2], "activeIdentity": fields[3]}
-            for fields in lines if len(fields) == 4
-        }
-        if sorted(values) != sorted(self.runtime["guestMachines"]):
-            raise FLExperimentError("active Guest identity added or omitted a machine")
-        return values
+        machines = self.runtime["guestMachines"]
+        services = self.runtime["guestServices"]
 
-    def guest_runtime_snapshot(self) -> dict[str, dict[str, str]]:
-        output = self._provider_shell(
-            r'''source "$1"
-select_testbed_machines "$2"
-assert_selected_provider_running
-assert_guest_runtime_identity "$3"
-while IFS='|' read -r machine unit kind; do
-  state=$(vssh "$machine" "systemctl is-active 5g-nwdaf@$unit.service 2>/dev/null || true" | tr -d '\r' | tail -n 1)
-  printf 'GUEST|%s|%s|%s|%s\n' "$machine" "$unit" "$kind" "$state"
-done < <(config_guest_service_records "$3")''',
-            [
-                str(ROOT / "scripts/host/lib.sh"),
-                str(self.testbed_path),
-                str(self.config_dir),
-            ],
-        )
-        records = [
-            line.split("|", 4)
-            for line in output.splitlines()
-            if line.startswith("GUEST|")
-        ]
-        expected = {
-            (item["machine"], item["unit"], item["kind"])
-            for item in self.runtime["guestServices"]
-        }
-        actual = {(fields[1], fields[2], fields[3]) for fields in records if len(fields) == 5}
-        if actual != expected or len(records) != len(expected):
-            raise FLExperimentError("actual Guest service inventory is not exact")
-        values = {
-            fields[2]: {"machine": fields[1], "kind": fields[3], "state": fields[4]}
-            for fields in records
-        }
-        if any(value["state"] != "active" for value in values.values()):
+        def read_machine(machine: str) -> tuple[str, str]:
+            units = [item["unit"] for item in services if item["machine"] == machine]
+            unit_words = " ".join(shlex.quote(unit) for unit in units)
+            remote = (
+                r'''printf 'ACTIVE|%s|%s\n' "$(readlink /etc/5g-nwdaf-infrastructure/active 2>/dev/null || true)" "$(cat /etc/5g-nwdaf-infrastructure/active.sha256 2>/dev/null || true)"; '''
+                + "for unit in " + unit_words + r'''; do
+state=$(systemctl is-active "5g-nwdaf@$unit.service" 2>/dev/null || true)
+printf 'GUEST|%s|%s\n' "$unit" "$state"
+done'''
+            )
+            output = self._provider_shell(
+                'source "$1"; select_testbed_machines "$2"; vssh "$3" "$4"',
+                [str(ROOT / "scripts/host/lib.sh"), str(self.testbed_path), machine, remote],
+            )
+            return machine, output.replace("\r", "")
+
+        active_identity = {}
+        guest_services = {}
+        with ThreadPoolExecutor(max_workers=min(4, len(machines))) as executor:
+            for machine, output in executor.map(read_machine, machines):
+                active = [line.split("|", 2) for line in output.splitlines() if line.startswith("ACTIVE|")]
+                expected_units = {item["unit"]: item["kind"] for item in services if item["machine"] == machine}
+                guest = [line.split("|", 2) for line in output.splitlines() if line.startswith("GUEST|")]
+                if len(active) != 1 or len(active[0]) != 3 or not active[0][1] or not active[0][2]:
+                    raise FLExperimentError("active Guest config identity is incomplete for " + machine)
+                if len(guest) != len(expected_units) or {entry[1] for entry in guest if len(entry) == 3} != set(expected_units):
+                    raise FLExperimentError("actual Guest service inventory is not exact for " + machine)
+                active_identity[machine] = {
+                    "activeTarget": active[0][1], "activeIdentity": active[0][2],
+                }
+                for _, unit, state in guest:
+                    guest_services[unit] = {
+                        "machine": machine, "kind": expected_units[unit], "state": state,
+                    }
+        if set(active_identity) != set(machines) or any(
+            value["state"] != "active" for value in guest_services.values()
+        ):
             raise FLExperimentError("selected Guest services are not all active")
-        return values
+        return active_identity, guest_services
 
     def registration_snapshot(self) -> dict:
         output = command_output(
@@ -297,7 +392,11 @@ done < <(config_guest_service_records "$3")''',
             ],
             timeout=60,
         )
-        identities = self.runtime["resetScope"]["nrf"]["nfInstanceIds"]
+        active_units = {item["unit"] for item in self.runtime["guestServices"]}
+        identities = [
+            item["nfInstanceId"] for item in self.runtime["nwdafs"]
+            if item["unit"] in active_units
+        ] + [self.runtime["resetScope"]["adrf"]["nfInstanceId"]]
         marker = "NRF REGISTRATIONS selected={} state=ready".format(len(identities))
         if marker not in output.splitlines():
             raise FLExperimentError("exact NRF registration evidence is incomplete")
@@ -383,8 +482,9 @@ done < <(config_guest_service_records "$3")''',
                 or selected[service]["health"] != "healthy"
             ):
                 raise FLExperimentError(service + " is not running and healthy")
-        if len([value for value in selected.values() if value["device"] == "cuda:0"]) != 7:
-            raise FLExperimentError("actual runtime does not contain seven CUDA participants")
+        gpu_participants = self.runtime["capacity"]["gpuParticipants"]
+        if len([value for value in selected.values() if value["device"] == "cuda:0"]) != gpu_participants:
+            raise FLExperimentError("actual runtime GPU participants differ from selected config")
         if len(image_ids) != 1:
             raise FLExperimentError("selected PyMTLF containers do not share one image")
         image = json.loads(
@@ -399,7 +499,7 @@ done < <(config_guest_service_records "$3")''',
                     "org.opencontainers.image.revision"
                 ),
             },
-            "gpu": {**gpu, "participantCount": 7},
+            "gpu": {**gpu, "participantCount": gpu_participants},
         }
 
     def gpu_snapshot(self) -> dict:
@@ -789,10 +889,10 @@ printf 'GUEST_RESTART_RESTORED\n' ''',
     def copy_final_artifact(
         self,
         plan_id: str,
-        expected_size: int,
+        expected_size: int | None,
         destination: Path,
-    ) -> None:
-        if (
+    ) -> int:
+        if expected_size is not None and (
             not isinstance(expected_size, int)
             or isinstance(expected_size, bool)
             or expected_size <= 0
@@ -843,101 +943,113 @@ printf 'GUEST_RESTART_RESTORED\n' ''',
                 command_output(
                     ["docker", "rm", "--force", collector_id], timeout=30
                 )
-        if not temporary.is_file() or temporary.stat().st_size != expected_size:
+        actual_size = temporary.stat().st_size if temporary.is_file() else 0
+        if actual_size <= 0 or (expected_size is not None and actual_size != expected_size):
             temporary.unlink(missing_ok=True)
             raise FLExperimentError("final Root artifact size differs from checkpoint")
         temporary.chmod(0o644)
         temporary.replace(destination)
+        return actual_size
 
-    def collect_protocol_evidence(
-        self,
-        directory: Path,
-        contract: FLExperimentContract,
-        plan_id: str,
-        since: str,
+    def collect_observations(
+        self, directory: Path, plan_id: str, *, strict: bool = True
     ) -> dict:
-        directory.mkdir(parents=True, exist_ok=True)
-        evidence = {"planId": plan_id}
-
-        def resource_records(
-            service: str, wanted: set[str] | None = None
-        ) -> list[dict[str, str]]:
-            container_id = self._container_id(service, running=False)
-            output = command_output(
-                ["docker", "logs", "--since", since, container_id],
-                timeout=30,
-                combined=True,
-            )
-            selected_lines = [line for line in output.splitlines() if plan_id in line]
-            (directory / (service + ".log")).write_text(
-                "\n".join(selected_lines) + ("\n" if selected_lines else ""),
-                encoding="utf-8",
-            )
-            return [
-                item for item in parse_resource_log(output, plan_id)
-                if wanted is None or item["nfInstanceId"] in wanted
-            ]
-
-        if not contract.fault_enabled:
-            active_ids = set(contract.normal_nf_instance_ids)
-            evidence["rootEdges"] = resource_records(
-                self.runtime["coordinatorContainer"]
-            )
-            if len(evidence["rootEdges"]) != len(active_ids) or {
-                item["nfInstanceId"] for item in evidence["rootEdges"]
-            } != active_ids:
-                raise FLExperimentError("Root logs do not contain the exact active Branches")
-            branch_edges = {}
-            for branch_id, service, leaves in contract.active_branch_leaf_edges:
-                records = resource_records(service)
-                if len(records) != len(leaves) or {
-                    item["nfInstanceId"] for item in records
-                } != set(leaves):
-                    raise FLExperimentError("Branch logs do not contain the exact leaves")
-                branch_edges[branch_id] = records
-            evidence["branchLeafEdges"] = branch_edges
-            return evidence
-
-        services = {
-            "rootEdges": self.runtime["coordinatorContainer"],
-            "primaryLeafEdges": contract.primary_service,
-            "replacementLeafEdges": next(
-                item["backends"]["mtlf"]
-                for item in self.runtime["nwdafs"]
-                if item["nfInstanceId"] == contract.replacement_nf_instance_id
-            ),
+        canonical_uuid4(plan_id, "observation planId")
+        compose = load_yaml(self.config_dir / "compose.yaml")
+        volumes = {
+            item["name"]: item["image"] for item in self.runtime["mlVolumes"]
         }
-        for field, service in services.items():
-            if field == "rootEdges":
-                wanted = {
-                    contract.primary_nf_instance_id,
-                    contract.replacement_nf_instance_id,
+        directory.mkdir(parents=True, exist_ok=True)
+        services = self.runtime["hostContainers"]
+
+        def collect_one(service: str) -> dict:
+            try:
+                native = load_yaml(self.config_dir / (service + ".yaml"))
+                record_dir = native["federated_learning"]["experiment_recording"]["directory"]
+                mounts = [
+                    item for item in compose["services"][service].get("volumes", [])
+                    if isinstance(item, dict)
+                    and item.get("type") == "volume"
+                    and isinstance(item.get("target"), str)
+                    and (
+                        record_dir == item["target"]
+                        or record_dir.startswith(item["target"].rstrip("/") + "/")
+                    )
+                ]
+                if len(mounts) != 1 or mounts[0].get("source") not in volumes:
+                    raise FLExperimentError(service + " observation directory lacks one selected volume owner")
+                mount = mounts[0]
+                logical = mount["source"]
+                physical = PROJECT + "_" + logical
+                inspected = json.loads(command_output(["docker", "volume", "inspect", physical]))
+                labels = (inspected[0].get("Labels") or {}) if len(inspected) == 1 else {}
+                if (
+                    len(inspected) != 1
+                    or inspected[0].get("Name") != physical
+                    or labels.get("com.docker.compose.project") != PROJECT
+                    or labels.get("com.docker.compose.volume") != logical
+                ):
+                    raise FLExperimentError(service + " observation volume identity differs")
+                source_path = "{}/{}/observations.jsonl".format(record_dir.rstrip("/"), plan_id)
+                mount_arg = "type=volume,source={},target={},readonly".format(
+                    physical, mount["target"]
+                )
+                destination = directory / (service + ".jsonl")
+                temporary = destination.with_name("." + service + ".collecting")
+                temporary.unlink(missing_ok=True)
+                collector_id = None
+                try:
+                    collector_id = command_output(
+                        [
+                            "docker", "create", "--network", "none", "--read-only",
+                            "--mount", mount_arg, volumes[logical],
+                        ],
+                        timeout=30,
+                    )
+                    try:
+                        command_output(
+                            ["docker", "cp", collector_id + ":" + source_path, str(temporary)],
+                            timeout=60,
+                        )
+                    except FLExperimentError:
+                        temporary.unlink(missing_ok=True)
+                        exists = command_output(
+                            [
+                                "docker", "run", "--rm", "--network", "none", "--read-only",
+                                "--user", "0", "--mount", mount_arg,
+                                "--entrypoint", "/bin/sh", volumes[logical], "-c",
+                                'if [ -f "$1" ]; then echo present; else echo absent; fi',
+                                "sh", source_path,
+                            ],
+                            timeout=30,
+                        )
+                        if exists == "absent":
+                            return {"state": "absent"}
+                        raise
+                finally:
+                    if collector_id:
+                        command_output(["docker", "rm", "--force", collector_id], timeout=30)
+                if not temporary.is_file() or temporary.stat().st_size <= 0:
+                    temporary.unlink(missing_ok=True)
+                    raise FLExperimentError(service + " observation file is empty")
+                temporary.chmod(0o644)
+                temporary.replace(destination)
+                return {
+                    "state": "collected", "path": "observations/" + destination.name,
+                    "bytes": destination.stat().st_size,
                 }
-            else:
-                wanted = set(contract.fault_group_leaf_nf_instance_ids)
-            evidence[field] = resource_records(service, wanted)
-        if {item["nfInstanceId"] for item in evidence["rootEdges"]} != {
-            contract.primary_nf_instance_id,
-            contract.replacement_nf_instance_id,
-        }:
-            raise FLExperimentError(
-                "Root logs do not contain exact primary and replacement resources"
-            )
-        expected_leaves = set(contract.fault_group_leaf_nf_instance_ids)
-        for field in ("primaryLeafEdges", "replacementLeafEdges"):
-            if {item["nfInstanceId"] for item in evidence[field]} != expected_leaves:
-                raise FLExperimentError(field + " does not contain the exact Area leaves")
-        if (
-            {item["notifCorreId"] for item in evidence["primaryLeafEdges"]}
-            & {item["notifCorreId"] for item in evidence["replacementLeafEdges"]}
-            or {item["resourceLocation"] for item in evidence["primaryLeafEdges"]}
-            & {item["resourceLocation"] for item in evidence["replacementLeafEdges"]}
-        ):
-            raise FLExperimentError("replacement reused an old Branch-to-Leaf resource")
-        return evidence
+            except Exception as error:
+                if strict:
+                    raise
+                return {"state": "error", "detail": str(error)}
+
+        with ThreadPoolExecutor(max_workers=min(4, len(services))) as executor:
+            return dict(zip(services, executor.map(collect_one, services)))
 
     def stop_all(self) -> dict:
         print("MILESTONE runtime-stopping", flush=True)
+        if self.transport is not None:
+            self.transport.open()
         stop_error = None
         try:
             quiet_command(
@@ -1007,6 +1119,8 @@ printf 'GUEST_RESTART_RESTORED\n' ''',
         return value
 
     def reset(self) -> dict:
+        if self.transport is not None:
+            self.transport.open()
         scenario = self.manifest["scenario"]["name"]
         environment = dict(os.environ)
         environment["RESET_CONFIRM"] = scenario
@@ -1246,9 +1360,6 @@ def validate_collection_checkpoint(
         or final_model.get("artifactFile") != "final-model.tar.gz"
         or final_model.get("artifactDigest") != terminal.get("candidateDigest")
         or final_model.get("roundInd") != terminal.get("currentRound")
-        or not isinstance(final_model.get("sizeBytes"), int)
-        or isinstance(final_model.get("sizeBytes"), bool)
-        or final_model["sizeBytes"] <= 0
     ):
         raise FLExperimentError("collection checkpoint final model is incomplete")
     selected_source = environment.final_model_source(plan_id)
@@ -1268,12 +1379,14 @@ def complete_collection(
     plan_id = canonical_uuid4(writer.run.get("planId"), "checkpoint planId")
     final_model = writer.run["finalModel"]
     artifact_key = final_model["artifactDigest"]
-    expected_size = final_model["sizeBytes"]
+    expected_size = final_model.get("sizeBytes")
     artifact = writer.run_directory / "final-root-model.tar.gz"
 
     collected = event_payload(writer, "controller", "FINAL_ARTIFACT_COLLECTED")
     if collected is None:
-        environment.copy_final_artifact(plan_id, expected_size, artifact)
+        expected_size = environment.copy_final_artifact(plan_id, expected_size, artifact)
+        final_model = {**final_model, "sizeBytes": expected_size}
+        writer.update(finalModel=final_model)
         collected = {
             "artifactKey": artifact_key,
             "path": artifact.name,
@@ -1285,6 +1398,7 @@ def complete_collection(
             collected,
             nf_instance_id=contract.root_nf_instance_id,
         )
+    expected_size = final_model.get("sizeBytes")
     if (
         collected.get("artifactKey") != artifact_key
         or collected.get("path") != artifact.name
@@ -1295,26 +1409,7 @@ def complete_collection(
         raise FLExperimentError("collected final artifact differs from checkpoint")
     artifact.chmod(0o644)
 
-    protocol_resources = event_payload(
-        writer, "controller", "PROTOCOL_RESOURCE_EVIDENCE"
-    )
-    if protocol_resources is None:
-        protocol_resources = environment.collect_protocol_evidence(
-            writer.run_directory / "diagnostics" / "protocol-resources",
-            contract,
-            plan_id,
-            writer.run["startedAt"],
-        )
-        writer.append_once(
-            "controller",
-            "PROTOCOL_RESOURCE_EVIDENCE",
-            protocol_resources,
-            nf_instance_id=contract.root_nf_instance_id,
-        )
-    if protocol_resources.get("planId") != plan_id:
-        raise FLExperimentError("protocol resource evidence has the wrong planId")
     writer.update(
-        protocolResources=protocol_resources,
         finalArtifact=artifact.name,
         finalArtifactIdentity=artifact_key,
         finalArtifactSizeBytes=expected_size,
@@ -1327,13 +1422,56 @@ def complete_collection(
         process_cleanup = environment.stop_all()
         writer.update(processCleanup=process_cleanup)
 
+    observations = writer.run.get("rawObservations")
+    needs_observations = not isinstance(observations, dict) or set(observations) != set(environment.runtime["hostContainers"]) or any(
+        entry.get("state") == "error"
+        or (not contract.fault_enabled and entry.get("state") == "absent")
+        or (
+            entry.get("state") == "collected"
+            and (
+                not (writer.run_directory / entry.get("path", "")).is_file()
+                or (writer.run_directory / entry["path"]).stat().st_size != entry.get("bytes")
+            )
+        )
+        for entry in (observations or {}).values()
+    )
     held_out = event_payload(writer, "held-out-evaluator", "HELD_OUT_EVALUATION")
-    if held_out is None:
-        held_out = environment.evaluate(request_id, artifact_key, artifact)
-        writer.append_once("held-out-evaluator", "HELD_OUT_EVALUATION", held_out)
-    if held_out.get("run_id") != request_id:
-        raise FLExperimentError("held-out evaluation request identity is mismatched")
-    writer.update(heldOutEvaluation=held_out)
+    observation_error = None
+    evaluation_error = None
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        observation_future = executor.submit(
+            environment.collect_observations,
+            writer.run_directory / "observations", plan_id,
+        ) if needs_observations else None
+        evaluation_future = executor.submit(
+            environment.evaluate, request_id, artifact_key, artifact,
+        ) if held_out is None else None
+        if observation_future is not None:
+            try:
+                observations = observation_future.result()
+            except Exception as error:
+                observation_error = error
+        if evaluation_future is not None:
+            try:
+                held_out = evaluation_future.result()
+            except Exception as error:
+                evaluation_error = error
+    if observation_error is None:
+        if observations[environment.runtime["coordinatorContainer"]]["state"] != "collected":
+            observation_error = FLExperimentError("Root raw observations are unavailable")
+        else:
+            writer.update(rawObservations=observations)
+    if evaluation_error is None:
+        if held_out.get("run_id") != request_id:
+            evaluation_error = FLExperimentError("held-out evaluation request identity is mismatched")
+        else:
+            if evaluation_future is not None:
+                writer.append_once("held-out-evaluator", "HELD_OUT_EVALUATION", held_out)
+            writer.update(heldOutEvaluation=held_out)
+    if observation_error is not None:
+        raise observation_error
+    if evaluation_error is not None:
+        raise evaluation_error
 
     check_evidence(writer.run_directory, contract, require_cleanup=False)
 
@@ -1373,6 +1511,31 @@ def run_collection_only(
     contract: FLExperimentContract,
     environment: LiveEnvironment,
 ) -> int:
+    if writer.run.get("status") == "failed":
+        run = writer.run
+        if run.get("runName") != run_name or writer.run_directory.name != run_name:
+            raise FLExperimentError("failed runName is mismatched")
+        if run.get("scenario") != manifest["scenario"] or run.get("dataset") != contract.dataset:
+            raise FLExperimentError("failed run scenario is not selected")
+        selection = run.get("selection", {})
+        if selection.get("testbed") != str(testbed_path.relative_to(ROOT)) or selection.get(
+            "configDirectory"
+        ) != str(config_dir.relative_to(ROOT)):
+            raise FLExperimentError("failed run config selection is not active")
+        plan_id = run.get("planId")
+        if plan_id is None:
+            writer.update(rawObservations={}, collectionNote="mlCorreId unavailable")
+            return 0
+        canonical_uuid4(plan_id, "failed planId")
+        if run.get("mlCorreId") != plan_id:
+            raise FLExperimentError("failed run mlCorreId differs from planId")
+        process_cleanup = run.get("processCleanup")
+        if not isinstance(process_cleanup, dict) or process_cleanup.get("processesStopped") is not True:
+            writer.update(processCleanup=environment.stop_all())
+        writer.update(rawObservations=environment.collect_observations(
+            writer.run_directory / "observations", plan_id, strict=False
+        ))
+        return 0
     validate_collection_checkpoint(
         writer,
         run_name,
@@ -1458,8 +1621,9 @@ def run(args: argparse.Namespace) -> int:
         raise FLExperimentError("runner requires protocol-hierarchical deployment")
     if manifest["runtime"].get("mlDevicePolicy") != "gpu":
         raise FLExperimentError("protocol experiment requires DEVICE=gpu")
-    if manifest["runtime"]["capacity"].get("gpuParticipants") != 7:
-        raise FLExperimentError("generated runtime must select seven GPU participants")
+    gpu_participants = manifest["runtime"]["capacity"].get("gpuParticipants")
+    if not isinstance(gpu_participants, int) or gpu_participants <= 0:
+        raise FLExperimentError("generated runtime must select GPU participants")
     contract = FLExperimentContract.build(testbed, scenario)
     run_directory = (
         ROOT
@@ -1471,6 +1635,7 @@ def run(args: argparse.Namespace) -> int:
     lock_path = ROOT / ".generated" / "run-locks" / "protocol-hierarchical.lock"
     lock_path.parent.mkdir(parents=True, exist_ok=True)
     environment = LiveEnvironment(testbed_path, config_dir, manifest)
+    environment.transport = GuestTransport(testbed_path, manifest["runtime"]["guestMachines"])
     writer = None
     runtime_started = False
     with lock_path.open("w", encoding="utf-8") as lock:
@@ -1481,11 +1646,10 @@ def run(args: argparse.Namespace) -> int:
         if args.collect_only:
             writer = EvidenceWriter.open_existing(run_directory)
             if writer.run.get("status") not in {
-                "collection-pending",
-                "collection-failed",
+                "collection-pending", "collection-failed", "failed",
             }:
                 raise FLExperimentError(
-                    "collection-only requires a collection-pending or collection-failed checkpoint"
+                    "collection-only requires a pending, failed, or incomplete collection checkpoint"
                 )
         else:
             request_id = str(uuid.uuid4())
@@ -1519,21 +1683,18 @@ def run(args: argparse.Namespace) -> int:
             minimum_gpu = manifest["runtime"]["capacity"]["minimumGpuMemoryMiB"]
             if prestart_gpu["memoryFreeMiB"] < minimum_gpu:
                 raise FLExperimentError("GPU free memory is below the pre-start floor")
-            source_image = environment.selected_image_snapshot()
             expected_image_revision = writer.run["repositories"]["ML/PyMTLF"][
                 "revision"
             ]
-            validate_source_image_revision(source_image, expected_image_revision)
             writer.append(
                 "controller", "GPU_ADMISSION",
-                {**prestart_gpu, "minimumFreeMiB": minimum_gpu, "participantCount": 7},
+                {**prestart_gpu, "minimumFreeMiB": minimum_gpu, "participantCount": gpu_participants},
             )
             writer.update(gpuAdmission={**prestart_gpu, "minimumFreeMiB": minimum_gpu})
             writer.update(status="starting")
             environment.start()
             runtime_started = True
-            active_identity = environment.active_guest_identity()
-            guest_services = environment.guest_runtime_snapshot()
+            active_identity, guest_services = environment.guest_ready_snapshot()
             registrations = environment.registration_snapshot()
             snapshot = environment.runtime_snapshot()
             selected_image = environment.selected_image_snapshot()
@@ -1563,7 +1724,6 @@ def run(args: argparse.Namespace) -> int:
             )
 
             fl_contract = FL_CONTROL.load_contract(str(testbed_path), str(config_dir))
-            FL_CONTROL.verify_runtime_identity(fl_contract)
             controller = FL_CONTROL.Controller(
                 fl_contract,
                 FL_CONTROL.HttpClient(timeout=30),
@@ -1660,15 +1820,6 @@ def run(args: argparse.Namespace) -> int:
         except BaseException as error:
             if writer is not None:
                 record_run_failure(writer, error)
-                failures = list(writer.run.get("failures", []))
-                try:
-                    environment.diagnostics(run_directory / "diagnostics", contract)
-                except Exception as diagnostic_error:
-                    failures.append(
-                        {"recordedAt": utc_now(), "detail": "diagnostics: " + str(diagnostic_error)}
-                    )
-                    writer.update(failures=failures)
-            if writer is not None:
                 try:
                     ensure_runtime_stopped_after_failure(
                         writer, environment, runtime_started
@@ -1679,7 +1830,31 @@ def run(args: argparse.Namespace) -> int:
                         {"recordedAt": utc_now(), "detail": "cleanup: " + str(cleanup_error)}
                     )
                     writer.update(failures=failures)
+                try:
+                    environment.diagnostics(run_directory / "diagnostics", contract)
+                except Exception as diagnostic_error:
+                    failures = list(writer.run.get("failures", []))
+                    failures.append(
+                        {"recordedAt": utc_now(), "detail": "diagnostics: " + str(diagnostic_error)}
+                    )
+                    writer.update(failures=failures)
+                plan_id = writer.run.get("planId")
+                process_cleanup = writer.run.get("processCleanup")
+                if isinstance(plan_id, str) and isinstance(process_cleanup, dict) and process_cleanup.get("processesStopped") is True:
+                    try:
+                        writer.update(rawObservations=environment.collect_observations(
+                            run_directory / "observations", plan_id, strict=False
+                        ))
+                    except Exception as collection_error:
+                        failures = list(writer.run.get("failures", []))
+                        failures.append({
+                            "recordedAt": utc_now(),
+                            "detail": "raw observations: " + str(collection_error),
+                        })
+                        writer.update(failures=failures)
             raise
+        finally:
+            environment.transport.close()
 
 
 def main() -> int:

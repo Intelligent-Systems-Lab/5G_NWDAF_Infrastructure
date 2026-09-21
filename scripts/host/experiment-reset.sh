@@ -39,8 +39,8 @@ PY
 )
 read -r scenario mongo_uri nrf_database nrf_collections nrf_nf_type nrf_instance_ids adrf_database adrf_collections storage_dir adrf_instance_id seed_coordinator seed_artifact_key <<<"$reset_identity"
 project=$(ml_project_name)
-service_lines=$(config_host_containers "$config_dir")
-volume_lines=$(config_ml_volume_records "$config_dir")
+service_lines=$(config_reset_host_containers "$config_dir")
+volume_lines=$(config_reset_ml_volume_records "$config_dir")
 [ -n "$service_lines" ] && [ -n "$volume_lines" ] || {
   echo "selected reset inventory is empty" >&2
   exit 1
@@ -94,12 +94,33 @@ clear_volume() {
     echo "VOLUME logical=$logical physical=$physical state=absent retained=yes"
     return 0
   fi
-  assert_volume_identity "$logical" "$physical"
-  docker image inspect "$image" >/dev/null
+  assert_volume_identity "$logical" "$physical" || return
+  docker image inspect "$image" >/dev/null || return
   docker run --rm --user 0 --network none --read-only \
     --mount "type=volume,source=$physical,target=/state" \
-    --entrypoint /bin/sh "$image" -c 'find /state -mindepth 1 -delete'
+    --entrypoint /bin/sh "$image" -c 'find /state -mindepth 1 -delete' || return
   echo "VOLUME logical=$logical physical=$physical cleared=yes retained=yes"
+}
+
+verify_volume() {
+  local logical=$1 image=$2 physical="${project}_${logical}" remaining
+  if docker volume inspect "$physical" >/dev/null 2>&1; then
+    assert_volume_identity "$logical" "$physical" || return
+    remaining=$(docker run --rm --user 0 --network none --read-only \
+      --mount "type=volume,source=$physical,target=/state,readonly" \
+      --entrypoint /bin/sh "$image" -c 'find /state -mindepth 1 -print -quit') || return
+    [ -z "$remaining" ] || { echo "volume is not empty: $physical" >&2; return 1; }
+  fi
+}
+
+wait_volume_batch() {
+  local pid failed=false
+  for pid in "$@"; do
+    if ! wait "$pid"; then
+      failed=true
+    fi
+  done
+  ! $failed
 }
 
 assert_runtime_stopped() {
@@ -127,8 +148,8 @@ assert_runtime_stopped() {
 
 guest_reset() {
   local guest_action=$1 remote_shell=/tmp/5g-nwdaf-experiment-reset.sh remote_js=/tmp/5g-nwdaf-experiment-reset.js
-  (cd "$HOST_ROOT" && provider_vagrant upload "$HOST_ROOT/scripts/guest/experiment-reset.sh" "$remote_shell" "$database_machine")
-  (cd "$HOST_ROOT" && provider_vagrant upload "$HOST_ROOT/scripts/guest/experiment-reset.js" "$remote_js" "$database_machine")
+  guest_upload "$HOST_ROOT/scripts/guest/experiment-reset.sh" "$remote_shell" "$database_machine"
+  guest_upload "$HOST_ROOT/scripts/guest/experiment-reset.js" "$remote_js" "$database_machine"
   vssh "$database_machine" "sudo bash '$remote_shell' '$guest_action' '$mongo_uri' '$nrf_database' '$nrf_collections' '$nrf_nf_type' '$nrf_instance_ids' '$adrf_database' '$adrf_collections' '$storage_dir' '$adrf_instance_id' '$remote_js'; status=\$?; rm -f '$remote_shell' '$remote_js'; exit \$status"
 }
 
@@ -141,10 +162,12 @@ for service in "${services[@]}"; do
 done
 container_inventory=$(docker ps -a --filter "label=com.docker.compose.project=$project" \
   --format '{{.Label "com.docker.compose.service"}}|{{.Status}}')
-for spec in "${volume_specs[@]}"; do
-  IFS='|' read -r logical image <<<"$spec"
-  volume_state "$logical" "$image"
-done
+if [ "$action" = plan ]; then
+  for spec in "${volume_specs[@]}"; do
+    IFS='|' read -r logical image <<<"$spec"
+    volume_state "$logical" "$image"
+  done
+fi
 volume_inventory=$(docker volume ls --filter "label=com.docker.compose.project=$project" \
   --format '{{.Name}}|{{.Label "com.docker.compose.volume"}}')
 unexpected_runtime=false
@@ -188,23 +211,34 @@ if [ "$action" = apply ]; then
     exit 1
   fi
   guest_reset apply
+  volume_pids=()
   for spec in "${volume_specs[@]}"; do
     IFS='|' read -r logical image <<<"$spec"
-    clear_volume "$logical" "$image"
+    clear_volume "$logical" "$image" &
+    volume_pids+=("$!")
+    if [ "${#volume_pids[@]}" -ge 4 ]; then
+      wait_volume_batch "${volume_pids[@]}"
+      volume_pids=()
+    fi
   done
+  if [ "${#volume_pids[@]}" -gt 0 ]; then
+    wait_volume_batch "${volume_pids[@]}"
+  fi
   echo "RESET_APPLIED scenario=$scenario; run experiment-reset-verify before startup"
 else
   guest_reset verify
+  volume_pids=()
   for spec in "${volume_specs[@]}"; do
     IFS='|' read -r logical image <<<"$spec"
-    physical="${project}_${logical}"
-    if docker volume inspect "$physical" >/dev/null 2>&1; then
-      assert_volume_identity "$logical" "$physical"
-      remaining=$(docker run --rm --user 0 --network none --read-only \
-        --mount "type=volume,source=$physical,target=/state,readonly" \
-        --entrypoint /bin/sh "$image" -c 'find /state -mindepth 1 -print -quit')
-      [ -z "$remaining" ] || { echo "volume is not empty: $physical" >&2; exit 1; }
+    verify_volume "$logical" "$image" &
+    volume_pids+=("$!")
+    if [ "${#volume_pids[@]}" -ge 4 ]; then
+      wait_volume_batch "${volume_pids[@]}"
+      volume_pids=()
     fi
   done
+  if [ "${#volume_pids[@]}" -gt 0 ]; then
+    wait_volume_batch "${volume_pids[@]}"
+  fi
   echo "RESET_VERIFIED scenario=$scenario state=empty containers=retained volumes=retained"
 fi

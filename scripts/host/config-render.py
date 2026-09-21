@@ -291,7 +291,7 @@ def render_static_analytics(testbed, output, scenario):
     write(output, "topology/{}.yaml".format(kind), static_topology(testbed, nwdafs))
 
 
-def protocol_origins(testbed):
+def protocol_origins(testbed, scenario):
     """Derive each PyMTLF artifact allowlist from the recursive topology."""
     definitions = {item["unit"]: item for item in nwdaf_definitions(testbed)}
     services = testbed["mlRuntime"]["services"]
@@ -308,6 +308,12 @@ def protocol_origins(testbed):
         for candidate in group["branches"]
     ]
     allowed = {root: [origins[unit] for unit in branch_units]}
+    if scenario["topology"]["onBranchFailure"] == "reparent_leaves_to_root":
+        allowed[root].extend(
+            origins[item["node"]]
+            for group in topology["branchGroups"]
+            for item in group["leaves"]
+        )
     for group in topology["branchGroups"]:
         branches = [item["node"] for item in group["branches"]]
         leaves = [item["node"] for item in group["leaves"]]
@@ -324,7 +330,7 @@ def protocol_origins(testbed):
 
 def render_protocol_nwdaf(testbed, output, item, scenario):
     template = "nwdafcfg-c.yaml" if item["role"] == "root" else "nwdafcfg-a.yaml"
-    config = load_yaml(ROOT / "NFs" / "nwdaf" / "config" / template)
+    config = load_yaml(ROOT / "config" / "default" / template)
     native = config["configuration"]
     address = item["sbi"]["address"]
     native["nwdafName"] = item["unit"].upper()
@@ -518,11 +524,12 @@ def render_protocol(testbed, output, scenario):
             testbed,
             scenario["training"]["localEpochs"],
             scenario["training"].get("proximalMu"),
+            scenario["topology"]["onBranchFailure"],
         ),
     )
     for machine, network in guest_network_configs(testbed, include_consumer=False).items():
         write(output, "network/{}.yaml".format(machine), network)
-    origins = protocol_origins(testbed)
+    origins = protocol_origins(testbed, scenario)
     for item in nwdaf_definitions(testbed):
         render_protocol_nwdaf(testbed, output, item, scenario)
         render_protocol_pymtlf(testbed, output, item, scenario, origins[item["unit"]])
@@ -1071,6 +1078,7 @@ def main():
         manifest["scenario"]["workload"] = copy.deepcopy(scenario["workload"])
         manifest["scenario"]["partition"] = copy.deepcopy(scenario["partition"])
         manifest["scenario"]["training"] = copy.deepcopy(scenario["training"])
+        manifest["scenario"]["topology"] = copy.deepcopy(scenario["topology"])
         for section in ("fault", "observation"):
             if section in scenario:
                 manifest["scenario"][section] = copy.deepcopy(scenario[section])
@@ -1089,7 +1097,7 @@ def main():
             for service in testbed["mlRuntime"]["services"].values()
         ) else "cpu",
     }
-    manifest["runtime"] = expected_runtime_inventory(testbed)
+    manifest["runtime"] = expected_runtime_inventory(testbed, scenario if kind == "protocol-hierarchical" else None)
     coordinator_config = load_yaml(
         output / (manifest["runtime"]["coordinatorContainer"] + ".yaml")
     )

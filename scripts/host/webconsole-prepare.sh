@@ -53,7 +53,7 @@ tar -C "$HOST_ROOT/webconsole" \
   --exclude=frontend/node_modules --exclude=frontend/build --exclude=frontend/.yarn/cache \
   -czf "$archive" .
 remote_archive="/tmp/5g-nwdaf-webconsole-${UID}-$$-${RANDOM}.tgz"
-(cd "$HOST_ROOT" && provider_vagrant upload "$archive" "$remote_archive" core)
+guest_upload "$archive" "$remote_archive" core
 printf -v command \
   'sudo /usr/local/libexec/5g-nwdaf-infrastructure/webconsole-build %q %q %q' \
   "$identity" "$remote_archive" "$actual_revision"

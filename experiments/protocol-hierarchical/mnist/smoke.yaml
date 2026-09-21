@@ -1,6 +1,8 @@
 schemaVersion: 2
 name: protocol-hierarchical-mnist
 kind: bounded-smoke
+topology:
+  onBranchFailure: replace_branch
 workload:
   profile: image-classification
   dataset: mnist

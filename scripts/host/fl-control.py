@@ -139,7 +139,10 @@ def load_contract(testbed_name: str, explicit_config: str = "") -> Contract:
     config_dir = resolve_config_dir(testbed, explicit_config or None).resolve()
     manifest = load_runtime_manifest(config_dir)
     runtime = manifest["runtime"]
-    expected_runtime = expected_runtime_inventory(testbed)
+    _scenario_path, selected_scenario = resolve_config_scenario(config_dir)
+    expected_runtime = expected_runtime_inventory(
+        testbed, selected_scenario if runtime.get("deploymentKind") == "protocol-hierarchical" else None
+    )
     for key in (
         "deploymentKind",
         "nwdafs",
@@ -432,6 +435,9 @@ def _validate_hierarchical_topology(
 
 
 def verify_runtime_identity(contract: Contract) -> None:
+    retained_services = contract.services
+    if contract.deployment_kind == "protocol-hierarchical":
+        retained_services = load_runtime_manifest(contract.config_dir)["runtime"]["resetScope"]["hostContainers"]
     command = [
         sys.executable,
         str(ROOT / "scripts/host/ml-status.py"),
@@ -439,6 +445,8 @@ def verify_runtime_identity(contract: Contract) -> None:
         "5g-nwdaf-infrastructure",
         "--services",
         ",".join(contract.services),
+        "--retained-services",
+        ",".join(retained_services),
         "--coordinator",
         contract.coordinator_service,
         "--config-set",

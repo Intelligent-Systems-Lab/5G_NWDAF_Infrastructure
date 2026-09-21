@@ -29,13 +29,29 @@ fi
 
 # Persistent Netplan aliases should already match the active config.  Reconcile
 # only migration or runtime drift before any NF binds its topology address.
-for machine in "${MACHINES[@]}"; do
+verify_network() {
+  local machine=$1
   echo "NETWORK VERIFY $machine"
   if ! vssh "$machine" "sudo /usr/local/libexec/5g-nwdaf-infrastructure/network-setup --verify"; then
     echo "NETWORK RECONCILE $machine"
     vssh "$machine" "sudo systemctl restart 5g-nwdaf-network.service"
   fi
+}
+network_pids=()
+for machine in "${MACHINES[@]}"; do
+  verify_network "$machine" &
+  network_pids+=("$!")
 done
+network_failed=false
+for pid in "${network_pids[@]}"; do
+  if ! wait "$pid"; then
+    network_failed=true
+  fi
+done
+if $network_failed; then
+  echo "Guest network verification failed" >&2
+  exit 1
+fi
 
 if [ "$deployment_kind" = protocol-hierarchical ]; then
   "$HOST_ROOT/scripts/host/clock-check.sh" "$testbed"
@@ -46,15 +62,43 @@ fi
 subscriber_data_applied=false
 service_records=$(config_guest_service_records "$config_dir")
 [ -n "$service_records" ] || { echo "selected Guest service inventory is empty" >&2; exit 1; }
-while IFS='|' read -r machine unit kind; do
-  if [ "$deployment_kind" != protocol-hierarchical ] && ! $subscriber_data_applied && { [ "$kind" = upf ] || [ "$unit" = smf ]; }; then
-    "$HOST_ROOT/scripts/host/subscriber-data.sh" apply "$testbed" "$config_dir"
-    subscriber_data_applied=true
+if [ "$deployment_kind" = protocol-hierarchical ]; then
+  core_machine=$(config_guest_service_machine "$config_dir" mongodb)
+  start_machine_units() {
+    local selected_machine=$1 machine unit kind
+    while IFS='|' read -r machine unit kind; do
+      [ "$machine" = "$selected_machine" ] || continue
+      start_unit "$machine" "$unit" || return
+    done <<<"$service_records"
+  }
+  start_machine_units "$core_machine"
+  start_pids=()
+  for machine in "${MACHINES[@]}"; do
+    [ "$machine" = "$core_machine" ] && continue
+    start_machine_units "$machine" &
+    start_pids+=("$!")
+  done
+  start_failed=false
+  for pid in "${start_pids[@]}"; do
+    if ! wait "$pid"; then
+      start_failed=true
+    fi
+  done
+  if $start_failed; then
+    echo "Guest path startup failed" >&2
+    exit 1
   fi
-  start_unit "$machine" "$unit"
-done <<<"$service_records"
-if [ "$deployment_kind" != protocol-hierarchical ] && ! $subscriber_data_applied; then
-  "$HOST_ROOT/scripts/host/subscriber-data.sh" apply "$testbed" "$config_dir"
+else
+  while IFS='|' read -r machine unit kind; do
+    if ! $subscriber_data_applied && { [ "$kind" = upf ] || [ "$unit" = smf ]; }; then
+      "$HOST_ROOT/scripts/host/subscriber-data.sh" apply "$testbed" "$config_dir"
+      subscriber_data_applied=true
+    fi
+    start_unit "$machine" "$unit"
+  done <<<"$service_records"
+  if ! $subscriber_data_applied; then
+    "$HOST_ROOT/scripts/host/subscriber-data.sh" apply "$testbed" "$config_dir"
+  fi
 fi
 if [ "$deployment_kind" = protocol-hierarchical ]; then
   "$HOST_ROOT/scripts/host/registration-check.sh" "$testbed" "$config_dir"

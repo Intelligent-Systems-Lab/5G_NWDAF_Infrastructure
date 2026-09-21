@@ -11,10 +11,22 @@ print(load_yaml(resolve_path(sys.argv[1]))["operations"]["clockSkewToleranceMs"]
 PY
 )
 
+sync_pids=()
 for machine in "${MACHINES[@]}"; do
   echo "CLOCK SYNC $machine"
-  vssh "$machine" "chronyc waitsync 10 0.5 0.0 1 >/dev/null; chronyc tracking | grep -Eq '^Leap status[[:space:]]*:[[:space:]]*Normal$'"
+  vssh "$machine" "chronyc waitsync 10 0.5 0.0 1 >/dev/null; chronyc tracking | grep -Eq '^Leap status[[:space:]]*:[[:space:]]*Normal$'" &
+  sync_pids+=("$!")
 done
+sync_failed=false
+for pid in "${sync_pids[@]}"; do
+  if ! wait "$pid"; then
+    sync_failed=true
+  fi
+done
+if $sync_failed; then
+  echo "Guest clock synchronization failed" >&2
+  exit 1
+fi
 
 temporary=$(mktemp -d -t 5g-nwdaf-clock.XXXXXX)
 trap 'rm -rf "$temporary"' EXIT
