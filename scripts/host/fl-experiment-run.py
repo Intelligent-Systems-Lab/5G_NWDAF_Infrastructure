@@ -277,7 +277,7 @@ class LiveEnvironment:
         self.manifest = manifest
         self.runtime = manifest["runtime"]
         self._root_container_id: str | None = None
-        self._faulted_guest: tuple[str, str] | None = None
+        self._faulted_guests: dict[str, tuple[str, int]] = {}
         self.transport: GuestTransport | None = None
 
     def validate_inputs(self) -> dict[str, str]:
@@ -573,8 +573,14 @@ print(json.dumps({"offset":offset+len(data),"data":base64.b64encode(data).decode
             raise FLExperimentError("missing or duplicate {} evidence".format(prefix[:-1]))
         return records[0]
 
-    def fail_stop_primary(self, contract: FLExperimentContract) -> dict:
-        print("MILESTONE primary-fail-stop-starting", flush=True)
+    def fail_stop_target(self, target: dict) -> dict:
+        if (
+            target["service"] not in self.runtime["hostContainers"]
+            or {"machine": target["machine"], "unit": target["unit"], "kind": "nwdaf"}
+            not in self.runtime["guestServices"]
+        ):
+            raise FLExperimentError("fault target is not in the selected active runtime")
+        print("MILESTONE node-fail-stop-starting unit={}".format(target["unit"]), flush=True)
 
         def freeze_guest() -> dict:
             frozen = self._provider_shell(
@@ -611,14 +617,14 @@ printf "GUEST_FROZEN|%s\n" "$pid"'
 vssh "$4" "$remote"''',
                 [
                     str(ROOT / "scripts/host/lib.sh"), str(self.testbed_path),
-                    str(self.config_dir), contract.primary_machine, contract.primary_unit,
+                    str(self.config_dir), target["machine"], target["unit"],
                 ],
                 timeout=180,
             )
             frozen_record = self._single_record(frozen, "GUEST_FROZEN|")
             return {
-                "machine": contract.primary_machine,
-                "unit": contract.primary_unit,
+                "machine": target["machine"],
+                "unit": target["unit"],
                 "originalPid": int(frozen_record[1]),
             }
 
@@ -627,7 +633,6 @@ vssh "$4" "$remote"''',
             # The preflight established that this exact target had no prior runtime
             # mask, so cleanup owns removing a mask even if the remote call returns
             # an ambiguous failure after applying it.
-            self._faulted_guest = (contract.primary_machine, contract.primary_unit)
             killed = self._provider_shell(
                 r'''source "$1"
 select_testbed_machines "$2"
@@ -661,7 +666,7 @@ echo "Guest Branch did not converge to a stopped state" >&2
 exit 1''',
                 [
                     str(ROOT / "scripts/host/lib.sh"), str(self.testbed_path),
-                    str(self.config_dir), contract.primary_machine, contract.primary_unit,
+                    str(self.config_dir), target["machine"], target["unit"],
                     str(original_pid),
                 ],
                 timeout=180,
@@ -679,12 +684,12 @@ exit 1''',
             }
 
         def inspect_container() -> dict:
-            container_id = self._container_id(contract.primary_service)
+            container_id = self._container_id(target["service"])
             inspected = json.loads(command_output(["docker", "inspect", container_id]))[0]
             labels = inspected["Config"].get("Labels", {})
             if (
                 labels.get("com.docker.compose.project") != PROJECT
-                or labels.get("com.docker.compose.service") != contract.primary_service
+                or labels.get("com.docker.compose.service") != target["service"]
             ):
                 raise FLExperimentError("primary PyMTLF container identity mismatch")
             state = inspected["State"]
@@ -699,7 +704,7 @@ exit 1''',
                     "primary PyMTLF container has an automatic restart policy"
                 )
             return {
-                "service": contract.primary_service,
+                "service": target["service"],
                 "containerId": container_id,
                 "originalPid": original_pid,
                 "restartPolicy": restart_policy or "no",
@@ -709,7 +714,7 @@ exit 1''',
         def freeze_container(target: dict) -> None:
             container_id = target["containerId"]
             command_output(["docker", "kill", "--signal", "STOP", container_id], timeout=30)
-            selected_id = self._container_id(contract.primary_service)
+            selected_id = self._container_id(target["service"])
             inspected = json.loads(command_output(["docker", "inspect", container_id]))[0]
             if (
                 selected_id != container_id
@@ -728,7 +733,7 @@ exit 1''',
         def kill_frozen_container(target: dict) -> dict:
             container_id = target["containerId"]
             command_output(["docker", "kill", "--signal", "KILL", container_id], timeout=30)
-            selected_id = self._container_id(contract.primary_service, running=False)
+            selected_id = self._container_id(target["service"], running=False)
             if selected_id != container_id:
                 raise FLExperimentError("primary PyMTLF container identity changed")
             stopped = json.loads(command_output(["docker", "inspect", container_id]))[0]
@@ -752,14 +757,19 @@ exit 1''',
         container_target = None
         guest_target = None
         container_frozen = False
+        mask_attempted = False
         try:
             # Both application owners must be unable to perform protocol cleanup
             # before either dependency is killed.
             guest_target = freeze_guest()
+            self._faulted_guests[target["unit"]] = (
+                target["machine"], guest_target["originalPid"]
+            )
             effective_at = utc_now()
             container_target = inspect_container()
             container_frozen = True
             freeze_container(container_target)
+            mask_attempted = True
             guest_result = kill_frozen_guest(guest_target)
             container_result = kill_frozen_container(container_target)
             container_frozen = False
@@ -773,7 +783,7 @@ exit 1''',
                     )
                 except Exception as recovery_error:
                     recovery_errors.append("container resume failed: {}".format(recovery_error))
-            if guest_target is not None and self._faulted_guest is None:
+            if guest_target is not None:
                 try:
                     self._provider_shell(
                         r'''source "$1"
@@ -793,18 +803,20 @@ fi
 printf 'GUEST_RESUMED|%s\n' "$current_pid"''',
                         [
                             str(ROOT / "scripts/host/lib.sh"), str(self.testbed_path),
-                            str(self.config_dir), contract.primary_machine,
-                            contract.primary_unit, str(guest_target["originalPid"]),
+                            str(self.config_dir), target["machine"],
+                            target["unit"], str(guest_target["originalPid"]),
                         ],
                         timeout=180,
                     )
+                    if not mask_attempted:
+                        self._faulted_guests.pop(target["unit"], None)
                 except Exception as recovery_error:
                     recovery_errors.append("Guest resume failed: {}".format(recovery_error))
             detail = str(error)
             if recovery_errors:
                 detail += "; " + "; ".join(recovery_errors)
-            raise FLExperimentError("partial primary stop: " + detail) from error
-        print("MILESTONE primary-fail-stopped", flush=True)
+            raise FLExperimentError("partial node stop: " + detail) from error
+        print("MILESTONE node-fail-stopped unit={}".format(target["unit"]), flush=True)
         return {
             "guest": guest_result,
             "container": container_result,
@@ -812,11 +824,11 @@ printf 'GUEST_RESUMED|%s\n' "$current_pid"''',
             "hardStoppedAt": utc_now(),
         }
 
-    def _restore_faulted_guest(self) -> None:
-        if self._faulted_guest is None:
-            return
-        machine, unit = self._faulted_guest
-        self._provider_shell(
+    def _restore_faulted_guests(self) -> None:
+        failures = []
+        for unit, (machine, original_pid) in list(self._faulted_guests.items()):
+            try:
+                self._provider_shell(
             r'''source "$1"
 select_testbed_machines "$2"
 assert_selected_provider_running
@@ -828,15 +840,27 @@ vssh "$4" "sudo systemctl unmask --runtime '$service' >/dev/null && sudo systemc
 link=$(vssh "$4" "readlink '/run/systemd/system/$service' 2>/dev/null || true" | tr -d '\r' | tail -n 1)
 [ "$link" != /dev/null ] || { echo "Guest Branch runtime mask remains installed" >&2; exit 1; }
 state=$(vssh "$4" "systemctl is-active '$service' 2>/dev/null || true" | tr -d '\r' | tail -n 1)
-[ "$state" = inactive ] || [ "$state" = failed ] || { echo "Guest Branch restarted during cleanup: $state" >&2; exit 1; }
+if [ "$state" = active ]; then
+  current_pid=$(vssh "$4" "systemctl show '$service' --property=MainPID --value" | tr -d '\r' | tail -n 1)
+  if [ "$current_pid" = "$6" ]; then
+    vssh "$4" "sudo systemctl kill --kill-who=all --signal=SIGCONT '$service'"
+  fi
+  echo "Guest target remains active during cleanup: $state/$current_pid" >&2
+  exit 1
+fi
+[ "$state" = inactive ] || [ "$state" = failed ] || { echo "Guest target has unexpected cleanup state: $state" >&2; exit 1; }
 printf 'GUEST_RESTART_RESTORED\n' ''',
-            [
-                str(ROOT / "scripts/host/lib.sh"), str(self.testbed_path),
-                str(self.config_dir), machine, unit,
-            ],
-            timeout=180,
-        )
-        self._faulted_guest = None
+                    [
+                        str(ROOT / "scripts/host/lib.sh"), str(self.testbed_path),
+                        str(self.config_dir), machine, unit, str(original_pid),
+                    ],
+                    timeout=180,
+                )
+                del self._faulted_guests[unit]
+            except Exception as error:
+                failures.append("{}: {}".format(unit, error))
+        if failures:
+            raise FLExperimentError("Guest restart restoration failed: " + "; ".join(failures))
 
     def final_model_source(self, plan_id: str) -> dict:
         try:
@@ -1064,7 +1088,7 @@ printf 'GUEST_RESTART_RESTORED\n' ''',
         except Exception as error:
             stop_error = error
         try:
-            self._restore_faulted_guest()
+            self._restore_faulted_guests()
         except Exception as error:
             if stop_error is not None:
                 raise FLExperimentError(
@@ -1078,7 +1102,7 @@ printf 'GUEST_RESTART_RESTORED\n' ''',
         print("MILESTONE runtime-stopped", flush=True)
         return {
             "processesStopped": True,
-            "guestRestartPolicyRestored": self._faulted_guest is None,
+            "guestRestartPolicyRestored": not self._faulted_guests,
         }
 
     def evaluate(self, run_id: str, artifact_key: str, artifact: Path) -> dict:
@@ -1151,10 +1175,10 @@ printf 'GUEST_RESTART_RESTORED\n' ''',
                 self._container_id(self.runtime["coordinatorContainer"], running=False),
             ],
         }
-        if contract.fault_enabled:
-            commands["primary-container.log"] = [
+        for target in contract.fault_targets:
+            commands[target["unit"] + "-container.log"] = [
                 "docker", "logs", "--tail", "120",
-                self._container_id(contract.primary_service, running=False),
+                self._container_id(target["service"], running=False),
             ]
         for filename, command in commands.items():
             try:
@@ -1162,19 +1186,21 @@ printf 'GUEST_RESTART_RESTORED\n' ''',
             except FLExperimentError as error:
                 value = str(error)
             (directory / filename).write_text(value + "\n", encoding="utf-8")
-        if contract.fault_enabled:
+        for target in contract.fault_targets:
             try:
                 journal = self._provider_shell(
                     r'''source "$1"; select_testbed_machines "$2"; vssh "$3" "sudo journalctl -u 5g-nwdaf@$4.service -n 120 --no-pager"''',
                     [
                         str(ROOT / "scripts/host/lib.sh"), str(self.testbed_path),
-                        contract.primary_machine, contract.primary_unit,
+                        target["machine"], target["unit"],
                     ],
                     timeout=60,
                 )
             except FLExperimentError as error:
                 journal = str(error)
-            (directory / "primary-guest.log").write_text(journal + "\n", encoding="utf-8")
+            (directory / (target["unit"] + "-guest.log")).write_text(
+                journal + "\n", encoding="utf-8"
+            )
 
 
 def initial_run_record(
@@ -1241,14 +1267,9 @@ def initial_run_record(
     if contract.fault_enabled:
         record["fault"] = {
             **scenario["fault"],
-            "primary": {
-                "nfInstanceId": contract.primary_nf_instance_id,
-                "unit": contract.primary_unit,
-                "machine": contract.primary_machine,
-                "service": contract.primary_service,
-            },
-            "replacementNfInstanceId": contract.replacement_nf_instance_id,
+            "targets": list(contract.fault_targets),
         }
+        record["faultStops"] = []
     return record
 
 
@@ -1280,19 +1301,19 @@ def record_observations(
     tracker: PhaseTracker,
     root_records: list[dict],
     *,
-    stop_payload: dict | None = None,
-    stop_at: str | None = None,
+    stop_events: list[dict] | None = None,
 ) -> None:
     entries = [
         (parse_timestamp(record["recordedAt"]), 1, "root", record)
         for record in root_records
     ]
-    if stop_payload is not None:
-        if stop_at is None:
-            raise FLExperimentError("confirmed stop has no effective time")
+    if stop_events:
         if any(entries[index][0] < entries[index - 1][0] for index in range(1, len(entries))):
             raise FLExperimentError("Root observation timestamps are out of order")
-        entries.append((parse_timestamp(stop_at), 0, "stop", stop_payload))
+        entries.extend(
+            (parse_timestamp(payload["effectiveAt"]), 0, "stop", payload)
+            for payload in stop_events
+        )
         entries.sort(key=lambda item: (item[0], item[1]))
 
     # The provider call blocks observation. Persist its pending Root records in
@@ -1300,22 +1321,23 @@ def record_observations(
     for _timestamp, _priority, kind, record in entries:
         if kind == "stop":
             writer.append(
-                "controller", "BRANCH_PROCESS_STOPPED", record,
-                recorded_at=stop_at, nf_instance_id=tracker.contract.primary_nf_instance_id,
+                "controller", "NODE_PROCESS_STOPPED", record,
+                recorded_at=record["effectiveAt"], nf_instance_id=record["nfInstanceId"],
             )
         else:
             writer.append_root(record)
     for _timestamp, _priority, kind, record in entries:
         if kind == "stop":
-            tracker.mark_stopped(stop_at)
+            if tracker.stop_at is None:
+                tracker.mark_stopped(record["effectiveAt"])
             continue
         transition = tracker.ingest(record)
         if transition == "round-accepted":
             latest = tracker.accepted[-1]
             print(
-                "MILESTONE accepted={} attempt={} phase={} degraded={}".format(
+                "MILESTONE accepted={} attempt={} phase={} after_fault={}".format(
                     len(tracker.accepted), latest["roundInd"], latest["phase"],
-                    tracker.summary()["phaseCounts"]["degraded"],
+                    tracker.summary()["phaseCounts"]["afterFault"],
                 ),
                 flush=True,
             )
@@ -1425,7 +1447,7 @@ def complete_collection(
     observations = writer.run.get("rawObservations")
     needs_observations = not isinstance(observations, dict) or set(observations) != set(environment.runtime["hostContainers"]) or any(
         entry.get("state") == "error"
-        or (not contract.fault_enabled and entry.get("state") == "absent")
+        or entry.get("state") == "absent"
         or (
             entry.get("state") == "collected"
             and (
@@ -1491,11 +1513,10 @@ def complete_collection(
         writer.update(status="collection-failed", finalized=False, finishedAt=None)
         raise
     print(
-        "MILESTONE run-complete dataset={} accepted={} degraded={} restored={}".format(
+        "MILESTONE run-complete dataset={} accepted={} after_fault={}".format(
             contract.dataset,
             contract.accepted_rounds,
-            writer.run["phases"]["phaseCounts"]["degraded"],
-            writer.run["phases"]["phaseCounts"]["restored"],
+            writer.run["phases"]["phaseCounts"]["afterFault"],
         ),
         flush=True,
     )
@@ -1613,8 +1634,11 @@ def run(args: argparse.Namespace) -> int:
     manifest = load_runtime_manifest(config_dir)
     _scenario_path, scenario = resolve_config_scenario(config_dir)
     image_scenario_contract(scenario)
-    if args.require_fault and scenario.get("fault") is None:
-        raise FLExperimentError("Branch replacement entrypoint requires a fault scenario")
+    if args.require_fault and (
+        scenario.get("fault") is None
+        or scenario["topology"]["onBranchFailure"] != "replace_branch"
+    ):
+        raise FLExperimentError("Branch replacement entrypoint requires a replacement fault scenario")
     if manifest["scenario"].get("fault") != scenario.get("fault"):
         raise FLExperimentError("generated fault contract differs from scenario")
     if manifest["runtime"].get("deploymentKind") != "protocol-hierarchical":
@@ -1762,22 +1786,20 @@ def run(args: argparse.Namespace) -> int:
                         )
                     )
                 if contract.fault_enabled and not fault_injected and tracker.ready_for_fault(status):
-                    fail_stop = environment.fail_stop_primary(contract)
-                    stopped_at = fail_stop["effectiveAt"]
-                    stop_payload = {
-                        "nfInstanceId": contract.primary_nf_instance_id,
-                        "guestStopped": True,
-                        "containerStopped": True,
-                        **fail_stop,
-                    }
-                    writer.update(
-                        primaryStoppedAt=stopped_at,
-                        primaryHardStoppedAt=fail_stop["hardStoppedAt"],
-                    )
-                    record_observations(
-                        writer, tracker, reader.poll(),
-                        stop_payload=stop_payload, stop_at=stopped_at,
-                    )
+                    for target in contract.fault_targets:
+                        fail_stop = environment.fail_stop_target(target)
+                        stop_payload = {
+                            "nfInstanceId": target["nfInstanceId"],
+                            "guestStopped": True,
+                            "containerStopped": True,
+                            **fail_stop,
+                        }
+                        writer.update(
+                            faultStops=[*writer.run["faultStops"], stop_payload],
+                        )
+                        record_observations(
+                            writer, tracker, reader.poll(), stop_events=[stop_payload],
+                        )
                     fault_injected = True
                 if status.get("state") == "COMPLETE":
                     evidence_deadline = min(deadline, time.monotonic() + 30)
@@ -1804,9 +1826,9 @@ def run(args: argparse.Namespace) -> int:
                 if time.monotonic() - last_heartbeat >= contract.heartbeat_seconds:
                     phase_counts = tracker.summary()["phaseCounts"]
                     print(
-                        "HEARTBEAT accepted={} state={} current_round={} degraded={} elapsed={}s".format(
+                        "HEARTBEAT accepted={} state={} current_round={} after_fault={} elapsed={}s".format(
                             len(tracker.accepted), status.get("state"),
-                            status.get("currentRound"), phase_counts["degraded"],
+                            status.get("currentRound"), phase_counts["afterFault"],
                             int(fl_contract.closure_budget_seconds - (deadline - time.monotonic())),
                         ),
                         flush=True,

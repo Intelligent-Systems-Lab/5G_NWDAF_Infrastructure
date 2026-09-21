@@ -14,7 +14,7 @@ from configlib import (
     ROOT, SCENARIO_SCHEMA, get_path, deployment_kind,
     expected_runtime_inventory, guest_network_configs,
     image_dataset_name, image_scenario_contract, load_runtime_manifest, load_yaml, nwdaf_definitions,
-    protocol_topology, resolve_branch_replacement, resolve_config_dir,
+    protocol_topology, resolve_fault_targets, resolve_config_dir,
     repository_relative_paths, resolve_config_scenario, resolve_ml_bind_address,
     resolve_mobile_identities, resolve_path, resolve_scenario_profile_paths,
     sha256_tree,
@@ -527,9 +527,9 @@ def check_protocol(testbed_path, testbed, config_dir, check):
     check.equal("scenario schema", scenario.get("schemaVersion"), SCENARIO_SCHEMA)
     if scenario.get("fault") is not None:
         try:
-            resolve_branch_replacement(testbed, scenario)
+            resolve_fault_targets(testbed, scenario)
         except (KeyError, TypeError, ValueError) as exc:
-            check.true("invalid branch replacement target: {}".format(exc), False)
+            check.true("invalid fault target: {}".format(exc), False)
 
     manifest = check_manifest_exact(check, testbed_path, testbed, config_dir, actual_files, scenario)
     if manifest is None:

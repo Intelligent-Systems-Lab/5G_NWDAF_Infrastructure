@@ -1,5 +1,5 @@
 schemaVersion: 2
-name: protocol-hierarchical-branch-replacement-mnist
+name: protocol-hierarchical-healthy-comparison-mnist
 kind: bounded-smoke
 topology:
   onBranchFailure: replace_branch
@@ -22,9 +22,3 @@ training:
   batchSize: 16
   learningRate: 0.001
   localEpochs: 4
-fault:
-  normalAcceptedRounds: 2
-  stopNodes: [nwdaf-branch-a-primary]
-observation:
-  pollIntervalMilliseconds: 250
-  heartbeatSeconds: 30

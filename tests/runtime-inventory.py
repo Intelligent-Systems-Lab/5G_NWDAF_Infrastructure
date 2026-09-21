@@ -18,7 +18,7 @@ from configlib import (  # noqa: E402
     expected_runtime_inventory,
     image_scenario_contract,
     protocol_topology,
-    resolve_branch_replacement,
+    resolve_fault_targets,
     selected_component_paths,
 )
 
@@ -143,9 +143,19 @@ def main():
                 }
                 for candidate in group["leaves"]
             )
-    resolved_fault = resolve_branch_replacement(protocol_definition, replacement_scenario)
-    assert resolved_fault["primary"]["unit"] == "nwdaf-branch-a-primary"
+    resolved_fault = resolve_fault_targets(protocol_definition, replacement_scenario)
+    assert [item["unit"] for item in resolved_fault["targets"]] == replacement_scenario[
+        "fault"
+    ]["stopNodes"]
     assert resolved_fault["replacement"]["unit"] == "nwdaf-branch-a-replacement"
+    partial_scenario = yaml.safe_load(
+        (ROOT / "experiments/protocol-hierarchical/mnist/partial-reparent-smoke.yaml")
+        .read_text(encoding="utf-8")
+    )
+    partial_targets = resolve_fault_targets(protocol_definition, partial_scenario)
+    assert [item["unit"] for item in partial_targets["targets"]] == partial_scenario[
+        "fault"
+    ]["stopNodes"]
     invalid_scenario = copy.deepcopy(replacement_scenario)
     invalid_scenario["training"]["device"] = "cuda:0"
     try:
@@ -176,7 +186,7 @@ def main():
     alternate_replacement = copy.deepcopy(replacement_scenario)
     alternate_replacement["partition"]["samplesPerLeaf"] = 100
     alternate_replacement["training"].update(acceptedRounds=6, localEpochs=1)
-    alternate_replacement["fault"].update(normalAcceptedRounds=3, restoredAcceptedRounds=1)
+    alternate_replacement["fault"]["normalAcceptedRounds"] = 3
     alternate_replacement["observation"].update(
         pollIntervalMilliseconds=500, heartbeatSeconds=10
     )
@@ -211,13 +221,13 @@ def main():
         else:
             raise AssertionError("replacement scenario accepted invalid training input")
     invalid_scenario = copy.deepcopy(replacement_scenario)
-    invalid_scenario["training"]["acceptedRounds"] = 3
+    invalid_scenario["training"]["acceptedRounds"] = 2
     try:
         image_scenario_contract(invalid_scenario)
     except ValueError:
         pass
     else:
-        raise AssertionError("replacement scenario cannot fit its required phases")
+        raise AssertionError("fault barrier did not precede the final round")
     protocol_components = selected_component_paths(
         protocol_definition, expected_runtime_inventory(protocol_definition)
     )
@@ -284,13 +294,7 @@ def main():
                     original["runtime"]["capacity"]["gpuParticipants"]
                     == expected_gpu_participants
                 )
-                assert original["scenario"]["training"]["acceptedRounds"] == (
-                    8 if original["scenario"].get("fault") else 2
-                )
-                expected_local_epochs = 32 if original["scenario"].get("fault") else 1
-                assert original["scenario"]["training"]["localEpochs"] == (
-                    expected_local_epochs
-                )
+                expected_local_epochs = original["scenario"]["training"]["localEpochs"]
                 coordinator = original["runtime"]["coordinatorContainer"]
                 root_config = yaml.safe_load(
                     (config_dir / (coordinator + ".yaml")).read_text(encoding="utf-8")

@@ -14,7 +14,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable
 
-from configlib import nwdaf_definitions, protocol_topology, resolve_branch_replacement
+from configlib import (
+    expected_runtime_inventory, nwdaf_definitions, protocol_topology, resolve_fault_targets,
+)
 
 
 class FLExperimentError(RuntimeError):
@@ -55,23 +57,15 @@ def validate_run_name(value: object) -> str:
 class FLExperimentContract:
     dataset: str
     root_nf_instance_id: str
-    primary_nf_instance_id: str | None
-    replacement_nf_instance_id: str | None
-    primary_unit: str | None
-    primary_machine: str | None
-    primary_service: str | None
-    fault_group_leaf_nf_instance_ids: tuple[str, ...]
-    surviving_nf_instance_ids: tuple[str, ...]
+    selected_registration_ids: tuple[str, ...]
+    fault_targets: tuple[dict, ...]
     samples_per_leaf: int
     local_epochs: int
     accepted_rounds: int
     normal_accepted_rounds: int
-    restored_accepted_rounds: int
     poll_seconds: float
     heartbeat_seconds: int
     fault_enabled: bool
-    normal_nf_instance_ids: tuple[str, ...]
-    active_branch_leaf_edges: tuple[tuple[str, str, tuple[str, ...]], ...]
 
     @classmethod
     def build(cls, testbed: dict, scenario: dict) -> "FLExperimentContract":
@@ -85,85 +79,35 @@ class FLExperimentContract:
         root = [item for item in definitions.values() if item["role"] == "root"]
         if len(root) != 1:
             raise FLExperimentError("protocol topology must have exactly one Root")
-        groups = testbed["analytics"]["protocolTopology"]["branchGroups"]
-        active_edges = []
-        for group in groups:
-            enabled = [item for item in group["branches"] if item.get("enabled") is True]
-            if not enabled:
-                raise FLExperimentError("Branch group has no enabled candidate")
-            priorities = [item["priority"] for item in enabled]
-            if len(priorities) != len(set(priorities)):
-                raise FLExperimentError("Branch priorities are ambiguous")
-            selected = max(enabled, key=lambda item: item["priority"])
-            branch = definitions[selected["node"]]
-            leaves = tuple(
-                definitions[item["node"]]["nfInstanceId"]
-                for item in group["leaves"]
-                if item.get("enabled") is True
-            )
-            active_edges.append((branch["nfInstanceId"], branch["backends"]["mtlf"], leaves))
+        runtime = expected_runtime_inventory(testbed, scenario)
+        active_units = {item["unit"] for item in runtime["guestServices"]}
         common = {
             "dataset": scenario["workload"]["dataset"],
             "root_nf_instance_id": root[0]["nfInstanceId"],
+            "selected_registration_ids": tuple(
+                item["nfInstanceId"] for item in runtime["nwdafs"]
+                if item["unit"] in active_units
+            ) + (runtime["resetScope"]["adrf"]["nfInstanceId"],),
             "samples_per_leaf": scenario["partition"]["samplesPerLeaf"],
             "local_epochs": scenario["training"]["localEpochs"],
             "accepted_rounds": scenario["training"]["acceptedRounds"],
-            "normal_nf_instance_ids": tuple(item[0] for item in active_edges),
-            "active_branch_leaf_edges": tuple(active_edges),
         }
         if scenario.get("fault") is None:
             return cls(
                 **common,
-                primary_nf_instance_id=None,
-                replacement_nf_instance_id=None,
-                primary_unit=None,
-                primary_machine=None,
-                primary_service=None,
-                fault_group_leaf_nf_instance_ids=(),
-                surviving_nf_instance_ids=(),
+                fault_targets=(),
                 normal_accepted_rounds=scenario["training"]["acceptedRounds"],
-                restored_accepted_rounds=0,
                 poll_seconds=0.25,
                 heartbeat_seconds=30,
                 fault_enabled=False,
             )
-        target = resolve_branch_replacement(testbed, scenario)
-        fault_group = next(group for group in groups if group["name"] == target["group"])
-        fault_leaves = tuple(
-            definitions[item["node"]]["nfInstanceId"]
-            for item in fault_group["leaves"]
-            if item.get("enabled") is True
-        )
-        if len(fault_leaves) != 2:
-            raise FLExperimentError("replacement acceptance requires two Area leaves")
-        survivors = []
-        for group in groups:
-            if group["name"] == target["group"]:
-                continue
-            enabled = [item for item in group["branches"] if item.get("enabled") is True]
-            if not enabled:
-                raise FLExperimentError("surviving Branch group has no enabled candidate")
-            priorities = [item["priority"] for item in enabled]
-            if len(priorities) != len(set(priorities)):
-                raise FLExperimentError("surviving Branch priorities are ambiguous")
-            selected = max(enabled, key=lambda item: item["priority"])
-            survivors.append(definitions[selected["node"]]["nfInstanceId"])
-        if len(survivors) != 2:
-            raise FLExperimentError("replacement acceptance requires two surviving regions")
+        resolved = resolve_fault_targets(testbed, scenario)
         fault = scenario["fault"]
         observation = scenario["observation"]
-        primary = target["primary"]
         return cls(
             **common,
-            primary_nf_instance_id=primary["nfInstanceId"],
-            replacement_nf_instance_id=target["replacement"]["nfInstanceId"],
-            primary_unit=primary["unit"],
-            primary_machine=primary["machine"],
-            primary_service=primary["backends"]["mtlf"],
-            fault_group_leaf_nf_instance_ids=fault_leaves,
-            surviving_nf_instance_ids=tuple(survivors),
+            fault_targets=tuple(resolved["targets"]),
             normal_accepted_rounds=fault["normalAcceptedRounds"],
-            restored_accepted_rounds=fault["restoredAcceptedRounds"],
             poll_seconds=observation["pollIntervalMilliseconds"] / 1000,
             heartbeat_seconds=observation["heartbeatSeconds"],
             fault_enabled=True,
@@ -205,15 +149,12 @@ class IncrementalJsonlReader:
 
 
 class PhaseTracker:
-    """Validate Root observations and derive natural replacement phases."""
+    """Track the fault barrier and completed Root rounds without judging repair."""
 
     def __init__(self, contract: FLExperimentContract, plan_id: str) -> None:
         self.contract = contract
         self.plan_id = plan_id
         self.stop_at: datetime | None = None
-        self.failure_detected_at: datetime | None = None
-        self.replacement_ready_at: datetime | None = None
-        self.first_contribution_at: datetime | None = None
         self.initial_evaluation: dict | None = None
         self.global_evaluations: dict[int, dict] = {}
         self.outcomes: dict[int, dict] = {}
@@ -223,11 +164,11 @@ class PhaseTracker:
 
     def mark_stopped(self, recorded_at: str) -> None:
         if not self.contract.fault_enabled:
-            raise FLExperimentError("normal run must not stop a Branch")
+            raise FLExperimentError("normal run must not stop a node")
         if self.stop_at is not None:
-            raise FLExperimentError("primary stop was recorded more than once")
-        if len(self.accepted) != self.contract.normal_accepted_rounds:
-            raise FLExperimentError("primary stop did not follow the selected normal rounds")
+            raise FLExperimentError("first fault stop was recorded more than once")
+        if len(self.accepted) < self.contract.normal_accepted_rounds:
+            raise FLExperimentError("fault stop preceded the selected accepted-round barrier")
         self.stop_at = parse_timestamp(recorded_at)
 
     def ready_for_fault(self, status: dict) -> bool:
@@ -258,17 +199,7 @@ class PhaseTracker:
             self._ingest_evaluation(record)
             return None
         if record_type == "ROUND_AGGREGATION":
-            return self._ingest_outcome(record, timestamp)
-        if record_type == "BRANCH_FAILURE_DETECTED":
-            if not self.contract.fault_enabled:
-                raise FLExperimentError("normal run contains Branch failure detection")
-            self._ingest_failure(record, timestamp)
-            return "failure-detected"
-        if record_type == "BRANCH_REPLACEMENT_READY":
-            if not self.contract.fault_enabled:
-                raise FLExperimentError("normal run contains replacement readiness")
-            self._ingest_ready(record, timestamp)
-            return "replacement-ready"
+            return self._ingest_outcome(record)
         if record_type == "MODEL_ARTIFACT_SAVED":
             self._ingest_final_model(record)
             return "final-model-saved"
@@ -306,7 +237,7 @@ class PhaseTracker:
             raise FLExperimentError("{} contains duplicate identities".format(field))
         return tuple(values)
 
-    def _ingest_outcome(self, record: dict, timestamp: datetime) -> str | None:
+    def _ingest_outcome(self, record: dict) -> str | None:
         round_indicator = self._round(record)
         if round_indicator in self.outcomes:
             raise FLExperimentError("Root round outcome is duplicated")
@@ -315,11 +246,6 @@ class PhaseTracker:
         failed = self._identities(record, "failedNfInstanceIds")
         if set(successful) & set(failed) or not (set(successful) | set(failed)) <= set(selected):
             raise FLExperimentError("Root outcome participant sets are inconsistent")
-        allowed = set(self.contract.normal_nf_instance_ids)
-        if self.contract.fault_enabled:
-            allowed.add(self.contract.replacement_nf_instance_id)
-        if not set(selected) <= allowed:
-            raise FLExperimentError("Root outcome contains an unknown Branch identity")
         accepted = record.get("accepted")
         if not isinstance(accepted, bool):
             raise FLExperimentError("Root outcome accepted must be boolean")
@@ -328,63 +254,9 @@ class PhaseTracker:
             return "round-rejected"
         if len(self.accepted) >= self.contract.accepted_rounds:
             raise FLExperimentError("Root produced more accepted rounds than configured")
-        phase = "normal"
-        if self.stop_at is None:
-            if len(self.accepted) >= self.contract.normal_accepted_rounds:
-                raise FLExperimentError("controller missed the post-normal in-flight barrier")
-            if self.contract.replacement_nf_instance_id in selected:
-                raise FLExperimentError("replacement appeared before primary stop")
-            expected = set(self.contract.normal_nf_instance_ids)
-            if set(selected) != expected or set(successful) != expected or failed:
-                raise FLExperimentError("normal round did not contain the exact three regions")
-        else:
-            if timestamp < self.stop_at:
-                raise FLExperimentError("post-stop outcome predates the confirmed stop")
-            if self.contract.primary_nf_instance_id in successful:
-                raise FLExperimentError("stopped primary contributed after fault injection")
-            missing_survivors = set(self.contract.surviving_nf_instance_ids) - set(successful)
-            if missing_survivors:
-                raise FLExperimentError("accepted post-stop round omitted a surviving region")
-            if self.contract.replacement_nf_instance_id in successful:
-                if self.replacement_ready_at is None:
-                    raise FLExperimentError("replacement contributed before its ready event")
-                if self.contract.primary_nf_instance_id in selected:
-                    raise FLExperimentError("restored cohort retained the failed primary")
-                expected_successful = set(self.contract.surviving_nf_instance_ids) | {
-                    self.contract.replacement_nf_instance_id
-                }
-                if set(successful) != expected_successful:
-                    raise FLExperimentError(
-                        "restored round successful set differs from the three regions"
-                    )
-                phase = "restored"
-                if set(selected) != expected_successful or failed:
-                    raise FLExperimentError("restored round cohort is not exact")
-                if self.first_contribution_at is None:
-                    self.first_contribution_at = timestamp
-            else:
-                phase = "degraded"
-                if self.contract.replacement_nf_instance_id in selected:
-                    raise FLExperimentError("ready replacement failed its selected cohort")
-                if set(successful) != set(self.contract.surviving_nf_instance_ids):
-                    raise FLExperimentError(
-                        "degraded round successful set differs from the surviving regions"
-                    )
-                if self.failure_detected_at is None:
-                    expected_selected = set(self.contract.surviving_nf_instance_ids) | {
-                        self.contract.primary_nf_instance_id
-                    }
-                    if set(selected) != expected_selected or set(failed) != {
-                        self.contract.primary_nf_instance_id
-                    }:
-                        raise FLExperimentError(
-                            "first degraded outcome did not detect the stopped primary"
-                        )
-                elif set(selected) != set(self.contract.surviving_nf_instance_ids) or failed:
-                    raise FLExperimentError("later degraded round cohort is not exact")
         interpreted = {
             "roundInd": round_indicator,
-            "phase": phase,
+            "phase": "afterFault" if self.stop_at is not None else "beforeFault",
             "recordedAt": record["recordedAt"],
             "selectedNfInstanceIds": list(selected),
             "successfulNfInstanceIds": list(successful),
@@ -392,35 +264,6 @@ class PhaseTracker:
         }
         self.accepted.append(interpreted)
         return "round-accepted"
-
-    def _ingest_failure(self, record: dict, timestamp: datetime) -> None:
-        if self.stop_at is None or timestamp < self.stop_at:
-            raise FLExperimentError("failure detection does not follow confirmed stop")
-        if self.failure_detected_at is not None:
-            raise FLExperimentError("Branch failure detection is duplicated")
-        if record.get("failedBranchNfInstanceId") != self.contract.primary_nf_instance_id:
-            raise FLExperimentError("failure detection identifies the wrong Branch")
-        round_indicator = self._round(record)
-        outcome = self.outcomes.get(round_indicator)
-        if (
-            outcome is None
-            or outcome.get("accepted") is not True
-            or self.contract.primary_nf_instance_id
-            not in outcome.get("failedNfInstanceIds", [])
-        ):
-            raise FLExperimentError("failure detection lacks its accepted degraded outcome")
-        self.failure_detected_at = timestamp
-
-    def _ingest_ready(self, record: dict, timestamp: datetime) -> None:
-        if self.failure_detected_at is None or timestamp < self.failure_detected_at:
-            raise FLExperimentError("replacement ready does not follow failure detection")
-        if self.replacement_ready_at is not None:
-            raise FLExperimentError("replacement ready is duplicated")
-        if record.get("failedBranchNfInstanceId") != self.contract.primary_nf_instance_id:
-            raise FLExperimentError("replacement ready identifies the wrong failed Branch")
-        if record.get("replacementBranchNfInstanceId") != self.contract.replacement_nf_instance_id:
-            raise FLExperimentError("Root selected the wrong replacement priority candidate")
-        self.replacement_ready_at = timestamp
 
     def _ingest_final_model(self, record: dict) -> None:
         if self.final_model_saved is not None:
@@ -444,20 +287,10 @@ class PhaseTracker:
             raise FLExperimentError("training status completedRounds differs from scenario")
         if len(self.accepted) != self.contract.accepted_rounds:
             raise FLExperimentError("Root evidence lacks the selected accepted rounds")
-        phases = [item["phase"] for item in self.accepted]
-        if phases.count("normal") != self.contract.normal_accepted_rounds:
-            raise FLExperimentError("Root evidence lacks the selected normal rounds")
-        if self.contract.fault_enabled:
-            if phases.count("degraded") < 1:
-                raise FLExperimentError("Root evidence has no natural degraded round")
-            if phases.count("restored") < self.contract.restored_accepted_rounds:
-                raise FLExperimentError("Root evidence has no restored accepted round")
-            if self.failure_detected_at is None or self.replacement_ready_at is None:
-                raise FLExperimentError("Root replacement lifecycle evidence is incomplete")
-            if self.first_contribution_at is None:
-                raise FLExperimentError("replacement never contributed to an accepted round")
-        elif self.stop_at is not None or any(phase != "normal" for phase in phases):
-            raise FLExperimentError("normal run contains a fault phase")
+        if self.contract.fault_enabled and self.stop_at is None:
+            raise FLExperimentError("selected fault was not injected")
+        if not self.contract.fault_enabled and self.stop_at is not None:
+            raise FLExperimentError("normal run contains a fault stop")
         accepted_indices = {item["roundInd"] for item in self.accepted}
         rejected_indices = {
             index for index, record in self.outcomes.items() if record.get("accepted") is False
@@ -483,22 +316,12 @@ class PhaseTracker:
     def summary(self) -> dict:
         phase_counts = {
             phase: sum(item["phase"] == phase for item in self.accepted)
-            for phase in ("normal", "degraded", "restored")
+            for phase in ("beforeFault", "afterFault")
         }
-        latencies = {}
-        if self.stop_at is not None:
-            for name, value in (
-                ("failureDetectedSeconds", self.failure_detected_at),
-                ("replacementReadySeconds", self.replacement_ready_at),
-                ("firstContributionSeconds", self.first_contribution_at),
-            ):
-                if value is not None:
-                    latencies[name] = (value - self.stop_at).total_seconds()
         return {
             "acceptedRoundCount": len(self.accepted),
             "phaseCounts": phase_counts,
             "rounds": list(self.accepted),
-            "latencies": latencies,
         }
 
 
@@ -693,8 +516,15 @@ def check_evidence(
         or workload.get("acceptedRounds") != contract.accepted_rounds
     ):
         raise FLExperimentError("run.json workload differs from the selected contract")
-    if not contract.fault_enabled and ("fault" in run or "primaryStoppedAt" in run):
+    if not contract.fault_enabled and ("fault" in run or "faultStops" in run):
         raise FLExperimentError("normal run contains a fault checkpoint")
+    if contract.fault_enabled and (
+        run.get("fault") != {
+            **run.get("scenario", {}).get("fault", {}),
+            "targets": list(contract.fault_targets),
+        }
+    ):
+        raise FLExperimentError("run.json fault targets differ from the selected scenario")
     plan_id = run.get("planId")
     if not isinstance(plan_id, str) or run.get("mlCorreId") != plan_id:
         raise FLExperimentError("run.json planId is missing")
@@ -706,8 +536,6 @@ def check_evidence(
         ("controller", "FINAL_ARTIFACT_COLLECTED"),
         ("held-out-evaluator", "HELD_OUT_EVALUATION"),
     }
-    if contract.fault_enabled:
-        required_events.add(("controller", "BRANCH_PROCESS_STOPPED"))
     if require_cleanup:
         required_events.add(("controller", "CLEANUP_COMPLETE"))
     indexed = {}
@@ -746,22 +574,12 @@ def check_evidence(
         or any(value.get("state") != "active" for value in guest_services.values())
     ):
         raise FLExperimentError("RUNTIME_READY VM or Guest inventory is incomplete")
-    required_registrations = {
-        contract.root_nf_instance_id,
-        *contract.normal_nf_instance_ids,
-    }
-    if contract.fault_enabled:
-        required_registrations.add(contract.replacement_nf_instance_id)
     registered = registrations.get("nfInstanceIds", [])
     if (
         registrations.get("state") != "ready"
         or not isinstance(registered, list)
-        or len(registered) != sum(
-            item.get("kind") == "nwdaf"
-            for item in selected_runtime.get("guestServices", [])
-        ) + 1
         or len(set(registered)) != len(registered)
-        or not required_registrations <= set(registered)
+        or set(registered) != set(contract.selected_registration_ids)
     ):
         raise FLExperimentError("RUNTIME_READY NRF registration inventory is incomplete")
     containers = runtime_ready.get("containers", {})
@@ -810,10 +628,6 @@ def check_evidence(
     if observations.get("pymtlf-root", {}).get("state") != "collected":
         raise FLExperimentError("Root raw observations are missing")
     for service, entry in observations.items():
-        if entry.get("state") == "absent":
-            if not contract.fault_enabled:
-                raise FLExperimentError("normal run lacks raw observations for " + service)
-            continue
         relative = "observations/{}.jsonl".format(service)
         path = run_directory / relative
         if (
@@ -826,38 +640,39 @@ def check_evidence(
             raise FLExperimentError("raw observations are incomplete for " + service)
 
     tracker = PhaseTracker(contract, plan_id)
-    stop_record = None
+    stop_records = []
     for record in events:
-        if record["source"] == "controller" and record["eventType"] == "BRANCH_PROCESS_STOPPED":
-            if stop_record is not None:
-                raise FLExperimentError("events contain duplicate confirmed stop records")
-            stop_record = record
-            tracker.mark_stopped(record["recordedAt"])
+        if record["source"] == "controller" and record["eventType"] == "NODE_PROCESS_STOPPED":
+            if not stop_records:
+                tracker.mark_stopped(record["recordedAt"])
+            stop_records.append(record)
         elif record["source"] == "pymtlf-root":
             tracker.ingest(record["payload"])
-    if contract.fault_enabled and stop_record is None:
-        raise FLExperimentError("events are missing the confirmed primary stop")
-    if not contract.fault_enabled and stop_record is not None:
-        raise FLExperimentError("normal run contains a confirmed primary stop")
-    if contract.fault_enabled:
+    if len(stop_records) != len(contract.fault_targets):
+        raise FLExperimentError("confirmed stop events differ from selected fault targets")
+    if contract.fault_enabled and run.get("faultStops") != [
+        record["payload"] for record in stop_records
+    ]:
+        raise FLExperimentError("run.json fault stops differ from controller events")
+    for stop_record, target in zip(stop_records, contract.fault_targets):
         stop_payload = stop_record["payload"]
         guest_stop = stop_payload.get("guest", {})
         container_stop = stop_payload.get("container", {})
         hard_stopped_at = stop_payload.get("hardStoppedAt")
-        if hard_stopped_at is not None and (
-            run.get("primaryStoppedAt") != stop_record["recordedAt"]
-            or run.get("primaryHardStoppedAt") != hard_stopped_at
+        if (
+            stop_payload.get("effectiveAt") != stop_record["recordedAt"]
+            or not isinstance(hard_stopped_at, str)
             or parse_timestamp(hard_stopped_at) < parse_timestamp(stop_record["recordedAt"])
         ):
-            raise FLExperimentError("confirmed primary stop timing is inconsistent")
+            raise FLExperimentError("confirmed stop timing is inconsistent")
         if (
-            stop_record.get("nfInstanceId") != contract.primary_nf_instance_id
-            or stop_payload.get("nfInstanceId") != contract.primary_nf_instance_id
+            stop_record.get("nfInstanceId") != target["nfInstanceId"]
+            or stop_payload.get("nfInstanceId") != target["nfInstanceId"]
             or stop_payload.get("guestStopped") is not True
             or stop_payload.get("containerStopped") is not True
             or not isinstance(guest_stop, dict)
-            or guest_stop.get("machine") != contract.primary_machine
-            or guest_stop.get("unit") != contract.primary_unit
+            or guest_stop.get("machine") != target["machine"]
+            or guest_stop.get("unit") != target["unit"]
             or not isinstance(guest_stop.get("originalPid"), int)
             or isinstance(guest_stop.get("originalPid"), bool)
             or guest_stop["originalPid"] <= 0
@@ -868,7 +683,7 @@ def check_evidence(
             or not guest_stop["subState"]
             or guest_stop.get("restartSuppressed") is not True
             or not isinstance(container_stop, dict)
-            or container_stop.get("service") != contract.primary_service
+            or container_stop.get("service") != target["service"]
             or not isinstance(container_stop.get("containerId"), str)
             or not container_stop["containerId"]
             or not isinstance(container_stop.get("originalPid"), int)
@@ -882,7 +697,7 @@ def check_evidence(
             or isinstance(container_stop.get("restartCount"), bool)
             or container_stop["restartCount"] < 0
         ):
-            raise FLExperimentError("confirmed primary stop target or postcondition is invalid")
+            raise FLExperimentError("confirmed stop target or postcondition is invalid")
     summary = tracker.finalize(run.get("terminalStatus", {}))
     tracker.final_model_saved["sizeBytes"] = artifact_path.stat().st_size
     if run.get("phases") != summary:

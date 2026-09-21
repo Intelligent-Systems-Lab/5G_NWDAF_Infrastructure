@@ -62,6 +62,17 @@ def replacement_contract():
     return FLExperimentContract.build(testbed, scenario)
 
 
+def partial_reparent_contract():
+    testbed = yaml.safe_load(
+        (ROOT / "testbed.protocol-hierarchical.yaml").read_text(encoding="utf-8")
+    )
+    scenario = yaml.safe_load(
+        (ROOT / "experiments/protocol-hierarchical/mnist/partial-reparent-smoke.yaml")
+        .read_text(encoding="utf-8")
+    )
+    return FLExperimentContract.build(testbed, scenario)
+
+
 def normal_contract():
     testbed = yaml.safe_load(
         (ROOT / "testbed.protocol-hierarchical.yaml").read_text(encoding="utf-8")
@@ -106,28 +117,6 @@ def outcome(contract, round_indicator, at, successful, failed=(), *, accepted=Tr
     }
 
 
-def failure(contract, round_indicator, at):
-    return {
-        "recordedAt": timestamp(at),
-        "recordType": "BRANCH_FAILURE_DETECTED",
-        "mlCorreId": PLAN_ID,
-        "nfInstanceId": contract.root_nf_instance_id,
-        "roundInd": round_indicator,
-        "failedBranchNfInstanceId": contract.primary_nf_instance_id,
-    }
-
-
-def ready(contract, at):
-    return {
-        "recordedAt": timestamp(at),
-        "recordType": "BRANCH_REPLACEMENT_READY",
-        "mlCorreId": PLAN_ID,
-        "nfInstanceId": contract.root_nf_instance_id,
-        "failedBranchNfInstanceId": contract.primary_nf_instance_id,
-        "replacementBranchNfInstanceId": contract.replacement_nf_instance_id,
-    }
-
-
 def final_model_saved(contract, round_indicator, at):
     return {
         "recordedAt": timestamp(at),
@@ -140,9 +129,20 @@ def final_model_saved(contract, round_indicator, at):
 
 
 def successful_records(contract):
-    primary_set = (contract.primary_nf_instance_id, *contract.surviving_nf_instance_ids)
-    survivor_set = contract.surviving_nf_instance_ids
-    restored_set = (contract.replacement_nf_instance_id, *survivor_set)
+    testbed = yaml.safe_load(
+        (ROOT / "testbed.protocol-hierarchical.yaml").read_text(encoding="utf-8")
+    )
+    definitions = testbed["analytics"]
+    primary_set = tuple(
+        definitions[max(group["branches"], key=lambda item: item["priority"])["node"]][
+            "nfInstanceId"
+        ]
+        for group in testbed["analytics"]["protocolTopology"]["branchGroups"]
+    )
+    survivor_set = tuple(
+        item for item in primary_set
+        if item != contract.fault_targets[0]["nfInstanceId"]
+    )
     records = [evaluation(contract, None, 0, initial=True)]
     for round_indicator in (0, 1):
         records.extend(
@@ -155,20 +155,16 @@ def successful_records(contract):
         (
             outcome(
                 contract, 2, 6, survivor_set,
-                failed=(contract.primary_nf_instance_id,),
+                failed=(contract.fault_targets[0]["nfInstanceId"],),
             ),
-            failure(contract, 2, 6),
             evaluation(contract, 2, 7),
-            ready(contract, 8),
-            outcome(contract, 3, 9, survivor_set),
-            evaluation(contract, 3, 10),
         )
     )
-    for round_indicator in range(4, 8):
+    for round_indicator in range(3, 8):
         records.extend(
             (
-                outcome(contract, round_indicator, 11 + (round_indicator - 4) * 2, restored_set),
-                evaluation(contract, round_indicator, 12 + (round_indicator - 4) * 2),
+                outcome(contract, round_indicator, 8 + (round_indicator - 3) * 2, survivor_set),
+                evaluation(contract, round_indicator, 9 + (round_indicator - 3) * 2),
             )
         )
     records.append(final_model_saved(contract, 7, 19))
@@ -243,14 +239,16 @@ def test_run_name_and_retry_checkpoint():
 
 def test_contract_and_fault_barrier():
     contract = replacement_contract()
-    assert contract.primary_unit == "nwdaf-branch-a-primary"
-    assert contract.primary_service == "pymtlf-branch-a-primary"
+    assert len(contract.fault_targets) == 1
+    target = contract.fault_targets[0]
+    assert target["unit"] == "nwdaf-branch-a-primary"
+    assert target["service"] == "pymtlf-branch-a-primary"
     assert contract.accepted_rounds == 8
     tracker = PhaseTracker(contract, PLAN_ID)
     tracker.ingest(evaluation(contract, None, 0, initial=True))
-    primary_set = (contract.primary_nf_instance_id, *contract.surviving_nf_instance_ids)
+    participants = ("branch-a", "branch-b", "branch-c")
     for round_indicator in (0, 1):
-        tracker.ingest(outcome(contract, round_indicator, round_indicator + 1, primary_set))
+        tracker.ingest(outcome(contract, round_indicator, round_indicator + 1, participants))
         tracker.ingest(evaluation(contract, round_indicator, round_indicator + 1))
     assert not tracker.ready_for_fault(
         {"state": "AGGREGATING", "currentRound": 1, "completedRounds": 2}
@@ -260,35 +258,26 @@ def test_contract_and_fault_barrier():
     )
 
 
-def test_normal_rounds_keep_the_selected_cohort_and_evaluations():
+def test_normal_rounds_and_evaluations():
     contract = normal_contract()
     assert not contract.fault_enabled
-    assert len(contract.normal_nf_instance_ids) == 3
+    assert contract.fault_targets == ()
     tracker = PhaseTracker(contract, PLAN_ID)
     tracker.ingest(evaluation(contract, None, 0, initial=True))
     for index in range(contract.accepted_rounds):
-        tracker.ingest(outcome(contract, index, 1 + index * 2, contract.normal_nf_instance_ids))
+        tracker.ingest(outcome(contract, index, 1 + index * 2, ("branch-a", "branch-b")))
         tracker.ingest(evaluation(contract, index, 2 + index * 2))
     assert not tracker.ready_for_fault(
         {"state": "ROUND_WAITING", "currentRound": 3, "completedRounds": 2}
     )
     tracker.ingest(final_model_saved(contract, contract.accepted_rounds - 1, 5))
     assert tracker.finalize(terminal(contract))["phaseCounts"] == {
-        "normal": contract.accepted_rounds,
-        "degraded": 0,
-        "restored": 0,
+        "beforeFault": contract.accepted_rounds,
+        "afterFault": 0,
     }
-    invalid = PhaseTracker(contract, PLAN_ID)
-    invalid.ingest(evaluation(contract, None, 0, initial=True))
-    try:
-        invalid.ingest(failure(contract, 0, 1))
-    except FLExperimentError as error:
-        assert "normal run" in str(error)
-    else:
-        raise AssertionError("normal run accepted a Branch failure event")
 
 
-def test_variable_degraded_phase_and_ready_is_not_contribution():
+def test_completed_faulted_run_does_not_require_repair():
     contract = replacement_contract()
     tracker = PhaseTracker(contract, PLAN_ID)
     records = successful_records(contract)
@@ -298,14 +287,11 @@ def test_variable_degraded_phase_and_ready_is_not_contribution():
     for record in records[5:]:
         tracker.ingest(record)
     summary = tracker.finalize(terminal(contract))
-    assert summary["phaseCounts"] == {"normal": 2, "degraded": 2, "restored": 4}
-    assert summary["rounds"][3]["phase"] == "degraded"
-    assert summary["rounds"][4]["phase"] == "restored"
-    assert summary["latencies"] == {
-        "failureDetectedSeconds": 1.0,
-        "replacementReadySeconds": 3.0,
-        "firstContributionSeconds": 6.0,
-    }
+    assert summary["phaseCounts"] == {"beforeFault": 2, "afterFault": 6}
+    assert summary["rounds"][2]["successfulNfInstanceIds"] == [
+        item for item in summary["rounds"][1]["successfulNfInstanceIds"]
+        if item != contract.fault_targets[0]["nfInstanceId"]
+    ]
 
 
 def test_rejected_attempt_and_missing_evaluation_fail_closed():
@@ -316,8 +302,8 @@ def test_rejected_attempt_and_missing_evaluation_fail_closed():
         tracker.ingest(record)
     tracker.mark_stopped(timestamp(5))
     rejected = outcome(
-        contract, 20, 5, contract.surviving_nf_instance_ids,
-        failed=(contract.primary_nf_instance_id,), accepted=False,
+        contract, 20, 5, ("branch-b", "branch-c"),
+        failed=(contract.fault_targets[0]["nfInstanceId"],), accepted=False,
     )
     assert tracker.ingest(rejected) == "round-rejected"
     for record in records[5:]:
@@ -339,51 +325,18 @@ def test_rejected_attempt_and_missing_evaluation_fail_closed():
         raise AssertionError("missing Root evaluation was accepted")
 
 
-def test_invalid_replacement_and_incomplete_recovery_fail_closed():
+def test_selected_fault_requires_a_confirmed_stop():
     contract = replacement_contract()
     records = successful_records(contract)
-
-    wrong = PhaseTracker(contract, PLAN_ID)
-    for record in records[:5]:
-        wrong.ingest(record)
-    wrong.mark_stopped(timestamp(5))
-    for record in records[5:8]:
-        wrong.ingest(record)
-    invalid_ready = ready(contract, 8)
-    invalid_ready["replacementBranchNfInstanceId"] = contract.primary_nf_instance_id
-    try:
-        wrong.ingest(invalid_ready)
-    except FLExperimentError as error:
-        assert "wrong replacement priority" in str(error)
-    else:
-        raise AssertionError("wrong replacement candidate was accepted")
-
     incomplete = PhaseTracker(contract, PLAN_ID)
-    for record in records[:5]:
+    for record in records:
         incomplete.ingest(record)
-    incomplete.mark_stopped(timestamp(5))
-    survivor_set = contract.surviving_nf_instance_ids
-    incomplete.ingest(
-        outcome(
-            contract,
-            2,
-            6,
-            survivor_set,
-            failed=(contract.primary_nf_instance_id,),
-        )
-    )
-    incomplete.ingest(failure(contract, 2, 6))
-    incomplete.ingest(evaluation(contract, 2, 7))
-    incomplete.ingest(ready(contract, 8))
-    for round_indicator in range(3, 8):
-        incomplete.ingest(outcome(contract, round_indicator, 9 + round_indicator, survivor_set))
-        incomplete.ingest(evaluation(contract, round_indicator, 10 + round_indicator))
     try:
         incomplete.finalize(terminal(contract))
     except FLExperimentError as error:
-        assert "restored" in str(error)
+        assert "fault was not injected" in str(error)
     else:
-        raise AssertionError("run without restored contribution was accepted")
+        raise AssertionError("run without its selected stop was accepted")
 
 
 def test_final_model_record_must_match_terminal_artifact():
@@ -439,10 +392,14 @@ def test_final_model_record_must_match_terminal_artifact():
 def test_exact_pair_stop_and_partial_failure():
     runner = load_runner()
     contract = replacement_contract()
+    target = contract.fault_targets[0]
     manifest = {
         "runtime": {
             "coordinatorContainer": "pymtlf-root",
-            "hostContainers": [contract.primary_service],
+            "hostContainers": [target["service"]],
+            "guestServices": [{
+                "machine": target["machine"], "unit": target["unit"], "kind": "nwdaf",
+            }],
         }
     }
     calls = []
@@ -467,7 +424,7 @@ def test_exact_pair_stop_and_partial_failure():
             "Config": {
                 "Labels": {
                     "com.docker.compose.project": runner.PROJECT,
-                    "com.docker.compose.service": contract.primary_service,
+                    "com.docker.compose.service": target["service"],
                 }
             },
             "HostConfig": {"RestartPolicy": {"Name": "no"}},
@@ -505,7 +462,7 @@ def test_exact_pair_stop_and_partial_failure():
         try:
             environment._provider_shell = provider
             runner.command_output = command
-            result = environment.fail_stop_primary(contract)
+            result = environment.fail_stop_target(target)
             assert result["guest"]["originalPid"] == 1234
             assert result["guest"]["freezeSignal"] == "SIGSTOP"
             assert result["guest"]["signal"] == "SIGKILL"
@@ -521,7 +478,7 @@ def test_exact_pair_stop_and_partial_failure():
 
         provider_calls = [item for item in calls if item[0] == "provider"]
         assert all(
-            item[1][3:5] == [contract.primary_machine, contract.primary_unit]
+            item[1][3:5] == [target["machine"], target["unit"]]
             for item in provider_calls
         )
         guest_freeze_call = next(
@@ -556,7 +513,7 @@ def test_exact_pair_stop_and_partial_failure():
         assert "--signal=SIGKILL" in fail_stop_body
         assert "--signal=SIGSTOP" not in fail_stop_body
         assert "unmask --runtime" in provider_calls[-1][2]
-        assert environment._faulted_guest is None
+        assert not environment._faulted_guests
         kill_call = next(
             item for item in calls
             if item[0] == "command"
@@ -578,11 +535,11 @@ def test_exact_pair_stop_and_partial_failure():
         try:
             environment._provider_shell = failed_provider
             runner.command_output = command
-            environment.fail_stop_primary(contract)
+            environment.fail_stop_target(target)
         except FLExperimentError as error:
-            assert "partial primary stop" in str(error)
+            assert "partial node stop" in str(error)
         else:
-            raise AssertionError("partial primary stop was accepted")
+            raise AssertionError("partial node stop was accepted")
         finally:
             runner.command_output = original_command
         assert not any(
@@ -590,45 +547,121 @@ def test_exact_pair_stop_and_partial_failure():
             for item in calls
         ), "container was mutated after the Guest freeze failed"
 
+        calls.clear()
 
-def test_blocked_stop_preserves_event_order_and_rejects_an_extra_normal_round():
+        def failed_guest_kill(body, arguments, timeout=180):
+            calls.append(("provider", arguments, body))
+            if "GUEST_FROZEN|" in body:
+                return "GUEST_FROZEN|1234"
+            if "GUEST_KILLED|" in body:
+                raise FLExperimentError("Guest kill confirmation failed")
+            if "GUEST_RESUMED|" in body:
+                return "GUEST_RESUMED|1234"
+            if "GUEST_RESTART_RESTORED" in body:
+                return "GUEST_RESTART_RESTORED"
+            raise AssertionError("unexpected provider command")
+
+        original_command = runner.command_output
+        original_quiet = runner.quiet_command
+        try:
+            environment._provider_shell = failed_guest_kill
+            runner.command_output = command
+            runner.quiet_command = lambda *_args, **_kwargs: ""
+            try:
+                environment.fail_stop_target(target)
+            except FLExperimentError as error:
+                assert "partial node stop" in str(error)
+            else:
+                raise AssertionError("failed Guest kill was accepted")
+            assert target["unit"] in environment._faulted_guests
+            assert any(
+                item[0] == "provider" and "GUEST_RESUMED|" in item[2]
+                for item in calls
+            )
+            environment.stop_all()
+            assert not environment._faulted_guests
+        finally:
+            runner.command_output = original_command
+            runner.quiet_command = original_quiet
+
+
+def test_blocked_stop_preserves_source_time_order():
     runner = load_runner()
     contract = replacement_contract()
     records = successful_records(contract)
-    stop_payload = {"nfInstanceId": contract.primary_nf_instance_id}
+    stop_payload = {
+        "nfInstanceId": contract.fault_targets[0]["nfInstanceId"],
+        "effectiveAt": timestamp(5),
+    }
     with tempfile.TemporaryDirectory(prefix="fl-experiment-observation-") as temporary:
         writer = EvidenceWriter(Path(temporary) / "successful-stop", {})
         tracker = PhaseTracker(contract, PLAN_ID)
         runner.record_observations(writer, tracker, records[:4])
         runner.record_observations(
             writer, tracker, records[4:7],
-            stop_payload=stop_payload, stop_at=timestamp(5),
+            stop_events=[stop_payload],
         )
         assert tracker.summary()["phaseCounts"] == {
-            "normal": 2, "degraded": 1, "restored": 0,
+            "beforeFault": 2, "afterFault": 1,
         }
         assert [event["eventType"] for event in writer.events()][-4:] == [
-            "MODEL_EVALUATION", "BRANCH_PROCESS_STOPPED",
-            "ROUND_AGGREGATION", "BRANCH_FAILURE_DETECTED",
+            "MODEL_EVALUATION", "NODE_PROCESS_STOPPED",
+            "ROUND_AGGREGATION", "MODEL_EVALUATION",
         ]
 
         writer = EvidenceWriter(Path(temporary) / "missed-stop", {})
         tracker = PhaseTracker(contract, PLAN_ID)
         runner.record_observations(writer, tracker, records[:4])
-        primary_set = (
-            contract.primary_nf_instance_id, *contract.surviving_nf_instance_ids
+        delayed_stop = {**stop_payload, "effectiveAt": timestamp(6)}
+        runner.record_observations(
+            writer, tracker,
+            [records[4], outcome(contract, 2, 5, ("branch-a", "branch-b"))],
+            stop_events=[delayed_stop],
         )
-        try:
-            runner.record_observations(
-                writer, tracker,
-                [records[4], outcome(contract, 2, 5, primary_set)],
-                stop_payload=stop_payload, stop_at=timestamp(6),
-            )
-        except FLExperimentError as error:
-            assert "missed the post-normal" in str(error)
-        else:
-            raise AssertionError("extra normal round was accepted before the fault")
-        assert writer.events()[-1]["eventType"] == "BRANCH_PROCESS_STOPPED"
+        assert tracker.summary()["phaseCounts"] == {"beforeFault": 3, "afterFault": 0}
+        assert writer.events()[-1]["eventType"] == "NODE_PROCESS_STOPPED"
+
+
+def test_ordered_stops_and_cleanup_for_multiple_targets():
+    runner = load_runner()
+    contract = partial_reparent_contract()
+    first, second = contract.fault_targets
+    assert first["unit"] != second["unit"]
+    with tempfile.TemporaryDirectory(prefix="fl-experiment-multiple-stops-") as temporary:
+        writer = EvidenceWriter(Path(temporary) / RUN_NAME, {})
+        tracker = PhaseTracker(contract, PLAN_ID)
+        records = successful_records(contract)
+        runner.record_observations(writer, tracker, records[:5])
+        runner.record_observations(
+            writer, tracker, records[5:7],
+            stop_events=[
+                {"nfInstanceId": first["nfInstanceId"], "effectiveAt": timestamp(5)},
+                {"nfInstanceId": second["nfInstanceId"], "effectiveAt": timestamp(6)},
+            ],
+        )
+        stops = [event for event in writer.events() if event["eventType"] == "NODE_PROCESS_STOPPED"]
+        assert [event["nfInstanceId"] for event in stops] == [
+            first["nfInstanceId"], second["nfInstanceId"]
+        ]
+        assert tracker.summary()["phaseCounts"] == {"beforeFault": 2, "afterFault": 1}
+
+        environment = runner.LiveEnvironment(
+            ROOT / "testbed.protocol-hierarchical.yaml", Path(temporary), {"runtime": {}}
+        )
+        environment._faulted_guests = {
+            first["unit"]: (first["machine"], 1234),
+            second["unit"]: (second["machine"], 5678),
+        }
+        restored = []
+        environment._provider_shell = lambda _body, arguments, **_kwargs: (
+            restored.append(tuple(arguments[-3:])) or "GUEST_RESTART_RESTORED"
+        )
+        environment._restore_faulted_guests()
+        assert restored == [
+            (first["machine"], first["unit"], "1234"),
+            (second["machine"], second["unit"], "5678"),
+        ]
+        assert not environment._faulted_guests
 
 
 def test_timed_command_terminates_its_child():
@@ -908,9 +941,8 @@ def test_collection_retry_reuses_checkpoint_without_training_or_early_reset():
                 "image": image,
                 "phases": {
                     "phaseCounts": {
-                        "normal": contract.accepted_rounds,
-                        "degraded": 0,
-                        "restored": 0,
+                        "beforeFault": contract.accepted_rounds,
+                        "afterFault": 0,
                     }
                 },
                 "failures": [],
@@ -1224,13 +1256,7 @@ def test_incremental_reader_and_two_file_consistency():
                 for machine in ("core", "path-a", "path-b", "path-c")
             },
             "nrfRegistrations": {
-                "nfInstanceIds": [
-                    contract.root_nf_instance_id,
-                    contract.primary_nf_instance_id,
-                    contract.replacement_nf_instance_id,
-                    *contract.surviving_nf_instance_ids,
-                    *["registered-{}".format(index) for index in range(7)],
-                ],
+                "nfInstanceIds": list(contract.selected_registration_ids),
                 "state": "ready",
             },
             "containers": {
@@ -1261,39 +1287,42 @@ def test_incremental_reader_and_two_file_consistency():
             recorded_at=timestamp(-1),
         )
         records = successful_records(contract)
+        target = contract.fault_targets[0]
+        stop_payload = {
+            "nfInstanceId": target["nfInstanceId"],
+            "guestStopped": True,
+            "containerStopped": True,
+            "effectiveAt": timestamp(5),
+            "hardStoppedAt": timestamp(6),
+            "guest": {
+                "machine": target["machine"],
+                "unit": target["unit"],
+                "originalPid": 1234,
+                "freezeSignal": "SIGSTOP",
+                "signal": "SIGKILL",
+                "activeState": "failed",
+                "subState": "failed",
+                "restartSuppressed": True,
+            },
+            "container": {
+                "service": target["service"],
+                "containerId": "container-id",
+                "originalPid": 4321,
+                "freezeSignal": "SIGSTOP",
+                "signal": "SIGKILL",
+                "exitCode": 137,
+                "restartPolicy": "no",
+                "restartCount": 0,
+            },
+        }
         for record in records[:5]:
             writer.append_root(record)
         writer.append(
             "controller",
-            "BRANCH_PROCESS_STOPPED",
-            {
-                "nfInstanceId": contract.primary_nf_instance_id,
-                "guestStopped": True,
-                "containerStopped": True,
-                "hardStoppedAt": timestamp(6),
-                "guest": {
-                    "machine": contract.primary_machine,
-                    "unit": contract.primary_unit,
-                    "originalPid": 1234,
-                    "freezeSignal": "SIGSTOP",
-                    "signal": "SIGKILL",
-                    "activeState": "failed",
-                    "subState": "failed",
-                    "restartSuppressed": True,
-                },
-                "container": {
-                    "service": contract.primary_service,
-                    "containerId": "container-id",
-                    "originalPid": 4321,
-                    "freezeSignal": "SIGSTOP",
-                    "signal": "SIGKILL",
-                    "exitCode": 137,
-                    "restartPolicy": "no",
-                    "restartCount": 0,
-                },
-            },
+            "NODE_PROCESS_STOPPED",
+            stop_payload,
             recorded_at=timestamp(5),
-            nf_instance_id=contract.primary_nf_instance_id,
+            nf_instance_id=target["nfInstanceId"],
         )
         for record in records[5:]:
             writer.append_root(record)
@@ -1310,12 +1339,10 @@ def test_incremental_reader_and_two_file_consistency():
         )
         observation_dir = run_directory / "observations"
         observation_dir.mkdir()
-        (observation_dir / "pymtlf-root.jsonl").write_text("{}\n", encoding="utf-8")
+        for name in devices:
+            (observation_dir / (name + ".jsonl")).write_text("{}\n", encoding="utf-8")
         raw_observations = {
-            name: (
-                {"state": "collected", "path": "observations/pymtlf-root.jsonl", "bytes": 3}
-                if name == "pymtlf-root" else {"state": "absent"}
-            )
+            name: {"state": "collected", "path": "observations/{}.jsonl".format(name), "bytes": 3}
             for name in devices
         }
         held_out = {"run_id": RUN_ID, "accuracy": 0.5}
@@ -1345,6 +1372,9 @@ def test_incremental_reader_and_two_file_consistency():
             runName=RUN_NAME,
             requestId=RUN_ID,
             dataset="mnist",
+            scenario=yaml.safe_load((ROOT / "experiments/protocol-hierarchical/mnist/replacement-smoke.yaml").read_text(encoding="utf-8")),
+            fault={**yaml.safe_load((ROOT / "experiments/protocol-hierarchical/mnist/replacement-smoke.yaml").read_text(encoding="utf-8"))["fault"], "targets": list(contract.fault_targets)},
+            faultStops=[stop_payload],
             workload={
                 "seed": 42,
                 "samplesPerLeaf": 8000,
@@ -1353,12 +1383,10 @@ def test_incremental_reader_and_two_file_consistency():
                 "acceptedRounds": 8,
                 "batchSize": 16,
                 "learningRate": 0.001,
-                "localEpochs": 32,
+                "localEpochs": contract.local_epochs,
             },
             planId=PLAN_ID,
             mlCorreId=PLAN_ID,
-            primaryStoppedAt=timestamp(5),
-            primaryHardStoppedAt=timestamp(6),
             phases=phases,
             terminalStatus=terminal(contract),
             gpuAdmission={"minimumFreeMiB": 8192, "memoryFreeMiB": 9000},
@@ -1440,7 +1468,7 @@ def test_incremental_reader_and_two_file_consistency():
                 },
                 separators=(",", ":"),
             )
-            if json.loads(line)["eventType"] == "BRANCH_PROCESS_STOPPED"
+            if json.loads(line)["eventType"] == "NODE_PROCESS_STOPPED"
             else line
             for line in original_events.splitlines()
         ) + "\n"
@@ -1454,7 +1482,7 @@ def test_incremental_reader_and_two_file_consistency():
         writer.events_path.write_text(original_events, encoding="utf-8")
         tampered = json.loads(writer.run_path.read_text(encoding="utf-8"))
         tampered["phases"] = copy.deepcopy(phases)
-        tampered["phases"]["phaseCounts"]["degraded"] = 99
+        tampered["phases"]["phaseCounts"]["afterFault"] = 99
         writer.run_path.write_text(json.dumps(tampered), encoding="utf-8")
         try:
             check_evidence(run_directory, contract)
@@ -1468,13 +1496,14 @@ def test_incremental_reader_and_two_file_consistency():
 def main():
     test_run_name_and_retry_checkpoint()
     test_contract_and_fault_barrier()
-    test_normal_rounds_keep_the_selected_cohort_and_evaluations()
-    test_variable_degraded_phase_and_ready_is_not_contribution()
+    test_normal_rounds_and_evaluations()
+    test_completed_faulted_run_does_not_require_repair()
     test_rejected_attempt_and_missing_evaluation_fail_closed()
-    test_invalid_replacement_and_incomplete_recovery_fail_closed()
+    test_selected_fault_requires_a_confirmed_stop()
     test_final_model_record_must_match_terminal_artifact()
     test_exact_pair_stop_and_partial_failure()
-    test_blocked_stop_preserves_event_order_and_rejects_an_extra_normal_round()
+    test_blocked_stop_preserves_source_time_order()
+    test_ordered_stops_and_cleanup_for_multiple_targets()
     test_final_artifact_uses_persistent_procedure_record()
     test_held_out_evaluator_has_bounded_temporary_storage()
     test_collection_retry_reuses_checkpoint_without_training_or_early_reset()

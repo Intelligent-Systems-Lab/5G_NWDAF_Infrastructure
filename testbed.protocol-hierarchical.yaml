@@ -327,4 +327,4 @@ operations:
   serviceReadyTimeoutSeconds: 120
   preparationTimeoutSeconds: 300
   preparationDataWindowSeconds: 600
-  roundTimeoutSeconds: 300
+  roundTimeoutSeconds: 60

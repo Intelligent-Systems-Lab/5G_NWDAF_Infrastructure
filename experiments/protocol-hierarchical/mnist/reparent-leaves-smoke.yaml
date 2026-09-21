@@ -1,8 +1,8 @@
 schemaVersion: 2
-name: protocol-hierarchical-branch-replacement-mnist
+name: protocol-hierarchical-reparent-leaves-mnist
 kind: bounded-smoke
 topology:
-  onBranchFailure: replace_branch
+  onBranchFailure: reparent_leaves_to_root
 workload:
   profile: image-classification
   dataset: mnist

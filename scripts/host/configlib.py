@@ -214,30 +214,31 @@ def image_scenario_contract(scenario):
     observation = scenario.get("observation")
     if fault is None:
         if observation is not None:
-            raise ValueError("normal image scenario must not define replacement observation")
+            raise ValueError("normal image scenario must not define fault observation")
         return scenario
     if not isinstance(fault, dict) or set(fault) != {
-        "mode", "branchGroup", "normalAcceptedRounds", "restoredAcceptedRounds",
+        "normalAcceptedRounds", "stopNodes",
     }:
-        raise ValueError("branch replacement fault contract has invalid fields")
-    if fault.get("mode") != "branch-replacement":
-        raise ValueError("fault.mode must be branch-replacement")
-    if topology["onBranchFailure"] != "replace_branch":
-        raise ValueError("branch replacement fault requires replace_branch topology")
-    if not isinstance(fault.get("branchGroup"), str) or not fault["branchGroup"]:
-        raise ValueError("fault.branchGroup must be a non-empty group name")
-    for field in ("normalAcceptedRounds", "restoredAcceptedRounds"):
-        value = fault[field]
-        if not isinstance(value, int) or isinstance(value, bool) or value <= 0:
-            raise ValueError("fault.{} must be a positive integer".format(field))
-    if training["acceptedRounds"] < (
-        fault["normalAcceptedRounds"] + fault["restoredAcceptedRounds"] + 1
+        raise ValueError("fault contract has invalid fields")
+    normal_rounds = fault["normalAcceptedRounds"]
+    if (
+        not isinstance(normal_rounds, int)
+        or isinstance(normal_rounds, bool)
+        or not 0 < normal_rounds < training["acceptedRounds"]
     ):
-        raise ValueError("accepted rounds must allow normal, degraded, and restored phases")
+        raise ValueError("fault.normalAcceptedRounds must precede the final accepted round")
+    stop_nodes = fault["stopNodes"]
+    if (
+        not isinstance(stop_nodes, list)
+        or not stop_nodes
+        or any(not isinstance(node, str) or not node for node in stop_nodes)
+        or len(stop_nodes) != len(set(stop_nodes))
+    ):
+        raise ValueError("fault.stopNodes must contain distinct node names")
     if not isinstance(observation, dict) or set(observation) != {
         "pollIntervalMilliseconds", "heartbeatSeconds",
     }:
-        raise ValueError("branch replacement observation contract has invalid fields")
+        raise ValueError("fault observation contract has invalid fields")
     for field in ("pollIntervalMilliseconds", "heartbeatSeconds"):
         value = observation[field]
         if not isinstance(value, int) or isinstance(value, bool) or value <= 0:
@@ -245,12 +246,12 @@ def image_scenario_contract(scenario):
     return scenario
 
 
-def resolve_branch_replacement(testbed, scenario):
-    """Resolve the faulted Branch group without selecting on behalf of the Root."""
+def resolve_fault_targets(testbed, scenario):
+    """Resolve ordered active stop targets from the selected topology."""
     image_scenario_contract(scenario)
     fault = scenario.get("fault")
     if fault is None:
-        raise ValueError("scenario does not define a branch replacement fault")
+        raise ValueError("scenario does not define a fault")
     protocol_topology(
         testbed,
         scenario["training"]["localEpochs"],
@@ -258,21 +259,38 @@ def resolve_branch_replacement(testbed, scenario):
         scenario["topology"]["onBranchFailure"],
     )
     groups = testbed["analytics"]["protocolTopology"]["branchGroups"]
-    matches = [group for group in groups if group.get("name") == fault["branchGroup"]]
-    if len(matches) != 1:
-        raise ValueError("fault.branchGroup must resolve exactly one protocol group")
-    enabled = [item for item in matches[0]["branches"] if item.get("enabled") is True]
-    if len(enabled) < 2:
-        raise ValueError("fault Branch group requires a primary and replacement candidate")
-    priorities = [item["priority"] for item in enabled]
-    if len(priorities) != len(set(priorities)):
-        raise ValueError("fault Branch candidates require unique priorities")
-    ordered = sorted(enabled, key=lambda item: item["priority"], reverse=True)
     definitions = {item["unit"]: item for item in nwdaf_definitions(testbed)}
+    matches = []
+    for group in groups:
+        enabled = [item for item in group["branches"] if item["enabled"]]
+        primary = max(enabled, key=lambda item: item["priority"])
+        if primary["node"] == fault["stopNodes"][0]:
+            matches.append((group, enabled))
+    if len(matches) != 1:
+        raise ValueError("first fault.stopNodes entry must be an active highest-priority Branch")
+    group, enabled = matches[0]
+    enabled_leaves = {item["node"] for item in group["leaves"] if item["enabled"]}
+    if any(node not in enabled_leaves for node in fault["stopNodes"][1:]):
+        raise ValueError("remaining fault.stopNodes entries must be active Leaves in the same group")
+    replacements = sorted(enabled, key=lambda item: item["priority"], reverse=True)[1:]
+    if scenario["topology"]["onBranchFailure"] == "replace_branch" and not replacements:
+        raise ValueError("replace_branch fault requires a replacement candidate")
+    targets = []
+    for node in fault["stopNodes"]:
+        definition = definitions[node]
+        targets.append({
+            "nfInstanceId": definition["nfInstanceId"],
+            "unit": node,
+            "machine": definition["machine"],
+            "service": definition["backends"]["mtlf"],
+        })
     return {
-        "group": fault["branchGroup"],
-        "primary": copy.deepcopy(definitions[ordered[0]["node"]]),
-        "replacement": copy.deepcopy(definitions[ordered[1]["node"]]),
+        "group": group["name"],
+        "targets": targets,
+        "replacement": (
+            copy.deepcopy(definitions[replacements[0]["node"]])
+            if replacements else None
+        ),
     }
 
 
@@ -683,6 +701,10 @@ def expected_runtime_inventory(testbed, scenario=None):
     if kind == "protocol-hierarchical" and scenario is not None:
         image_scenario_contract(scenario)
         definitions = {item["unit"]: item for item in nwdaf_definitions(testbed)}
+        fault_group = (
+            resolve_fault_targets(testbed, scenario)["group"]
+            if scenario.get("fault") is not None else None
+        )
         inactive_units = set()
         for group in testbed["analytics"]["protocolTopology"]["branchGroups"]:
             enabled = [item for item in group["branches"] if item["enabled"]]
@@ -691,7 +713,7 @@ def expected_runtime_inventory(testbed, scenario=None):
                 if candidate is primary:
                     continue
                 if (
-                    (scenario.get("fault") or {}).get("branchGroup") == group["name"]
+                    fault_group == group["name"]
                     and scenario["topology"]["onBranchFailure"] == "replace_branch"
                 ):
                     continue

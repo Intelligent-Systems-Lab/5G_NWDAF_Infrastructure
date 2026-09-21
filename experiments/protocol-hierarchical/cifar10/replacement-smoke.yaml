@@ -22,10 +22,8 @@ training:
   learningRate: 0.001
   localEpochs: 32
 fault:
-  mode: branch-replacement
-  branchGroup: area-a
   normalAcceptedRounds: 2
-  restoredAcceptedRounds: 1
+  stopNodes: [nwdaf-branch-a-primary]
 observation:
   pollIntervalMilliseconds: 250
   heartbeatSeconds: 30

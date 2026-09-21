@@ -71,31 +71,35 @@ contain a device. Physical device assignment belongs to
 render-time fallback.
 
 For protocol Hierarchical image scenarios, `training.localEpochs` is the only
-operator-authored Leaf epoch value. Normal scenarios set it to `1`, and the
-Branch-replacement scenarios set it to `32`. The renderer uses that value and
-the Leaf role to generate each native
+operator-authored Leaf epoch value. The renderer uses that value and the Leaf
+role to generate each native
 `report_after: {count: <localEpochs>, unit: epoch}` instruction. It does not use
 a default when the field is absent.
 
-The retained normal scenarios contain two accepted rounds and no fault block.
-A Branch-replacement scenario contains eight accepted rounds, 8,000 samples per
-Leaf, 32 local epochs, plus:
+Scenarios without a `fault` block run without an injected stop. A faulted
+scenario selects the accepted-round barrier and ordered stop targets by unit
+name. Its Root repair strategy is independently selected by
+`topology.onBranchFailure` (`replace_branch` or `reparent_leaves_to_root`):
 
 ```yaml
 fault:
-  mode: branch-replacement
-  branchGroup: area-a
   normalAcceptedRounds: 2
-  restoredAcceptedRounds: 1
+  stopNodes:
+    - nwdaf-branch-a-primary
+    - nwdaf-leaf-a2
 observation:
   pollIntervalMilliseconds: 250
   heartbeatSeconds: 30
 ```
 
-The group name is resolved against the selected protocol topology. The runner
-stops its current highest-priority Branch pair, but the Root remains responsible
-for selecting and preparing the next candidate. No scenario field fixes a
-degraded-round count or gates replacement timing.
+The first stop target must be the active highest-priority Branch of its group;
+later targets must be active Leaves in the same group. The runner stops these
+nodes in order after the selected accepted-round barrier. The Root remains
+responsible for repair. No scenario field fixes a degraded-round count or
+requires repair to succeed before completed-run evidence is collected. The
+MNIST fault-lifecycle smoke scenarios use the same dataset and training inputs
+for a healthy run, Branch replacement, Leaf reparenting, and partial Leaf
+reparenting; these values are examples, not universal scenario limits.
 
 ## Committed examples
 

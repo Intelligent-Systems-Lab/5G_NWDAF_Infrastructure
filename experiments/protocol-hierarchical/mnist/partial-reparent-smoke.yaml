@@ -1,8 +1,8 @@
 schemaVersion: 2
-name: protocol-hierarchical-branch-replacement-mnist
+name: protocol-hierarchical-partial-reparent-mnist
 kind: bounded-smoke
 topology:
-  onBranchFailure: replace_branch
+  onBranchFailure: reparent_leaves_to_root
 workload:
   profile: image-classification
   dataset: mnist
@@ -24,7 +24,7 @@ training:
   localEpochs: 4
 fault:
   normalAcceptedRounds: 2
-  stopNodes: [nwdaf-branch-a-primary]
+  stopNodes: [nwdaf-branch-a-primary, nwdaf-leaf-a2]
 observation:
   pollIntervalMilliseconds: 250
   heartbeatSeconds: 30

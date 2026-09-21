@@ -142,13 +142,15 @@ If training completes but collection fails, retry with
 `make fl-experiment-collect RUN_NAME=mnist-normal-1`; it does not retrain.
 The short normal scenarios are flow checks, not paired formal-comparison data.
 
-For the bounded GPU Branch-replacement flow, select one of the dedicated
-scenarios and keep the canonical config directory. The foreground runner starts
-the selected processes, submits the request, hard fail-stops the exact Area A
-primary Guest NWDAF and Host PyMTLF with `SIGKILL` after two accepted rounds,
-prevents either process from automatically restarting, observes the Root's
-priority-based replacement, collects the final model and held-out result, then
-stops and resets the selected experiment state:
+For a bounded GPU fault-lifecycle flow, select one of the MNIST smoke scenarios:
+`healthy-comparison-smoke.yaml` (no stop), `replacement-smoke.yaml` (stop the
+primary Branch), `reparent-leaves-smoke.yaml` (stop the primary Branch and
+reparent its Leaves), or `partial-reparent-smoke.yaml` (stop the primary Branch
+then one Leaf). They share one generated dataset partition. The foreground
+runner starts the selected processes, submits the request, stops the exact
+scenario-selected Guest NWDAF and Host PyMTLF pairs in order after the
+accepted-round barrier, collects the final model, held-out result, and raw
+records, then stops and resets the selected experiment state:
 
 ```sh
 make config-create \
@@ -156,26 +158,27 @@ make config-create \
   DEVICE=gpu FORCE=true
 make dataset-generate
 make vm-up
-make fl-branch-replacement-run RUN_NAME=123
+make fl-experiment-run RUN_NAME=123
 ```
 
-`fl-experiment-run` also accepts the selected replacement scenario. The
-`fl-branch-replacement-*` commands remain replacement-only aliases for the
-same runner and reject normal scenarios.
+Use the same `fl-experiment-run` command for all four scenarios. The retained
+`fl-branch-replacement-*` aliases use the same runner but accept only a
+replacement-fault scenario, not a healthy or reparenting scenario.
 
 The runner creates and checkpoints the UUIDv4 request identity before submitting
 training. If training completed but final collection or held-out evaluation
 failed, retry only that stage without retraining:
 
 ```sh
-make fl-branch-replacement-collect RUN_NAME=123
+make fl-experiment-collect RUN_NAME=123
 ```
 
-Repeat with the CIFAR-10 scenario and a new run name only after the first runner has
-reported successful cleanup. Each run must produce eight accepted rounds and at
-least one round containing the priority-selected replacement. Evidence is kept
-under ignored `runs/protocol-hierarchical/<dataset>/<run-name>/` as
-`events.jsonl`, `run.json`, and `final-root-model.tar.gz`; bounded diagnostics
+Switch scenarios only after the previous runner has reported successful cleanup.
+Each of these four smoke runs targets eight accepted rounds; repair success and actual
+participant contributions are determined from the saved records afterward, not
+used as a runner completion gate. Evidence is kept under ignored
+`runs/protocol-hierarchical/<dataset>/<run-name>/` as `events.jsonl`, `run.json`,
+`final-root-model.tar.gz`, and per-process JSONL under `observations/`; bounded diagnostics
 are added only on failure. The runner does not control replacement preparation
 timing or silently fall back to CPU. VMs remain running after the selected
 process and data reset.
