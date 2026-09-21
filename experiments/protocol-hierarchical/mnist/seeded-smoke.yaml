@@ -1,0 +1,24 @@
+schemaVersion: 2
+name: protocol-hierarchical-mnist-seeded-smoke
+kind: bounded-smoke
+experiment: {series: seeded-smoke, condition: E0}
+topology:
+  onBranchFailure: replace_branch
+workload:
+  profile: image-classification
+  dataset: mnist
+  event: X_IMAGE_CLASSIFICATION
+  modelInteroperability: pymtlf-image-classification-mnist
+  modelFamilyId: image-classification-mnist
+  seedModelId: 1001
+  seedArtifactKey: 5cdf82a5fa073eee543bd101f15402df1fdc082f70dfbe38942aa9cfe8e81b84
+partition:
+  seed: 42
+  samplesPerLeaf: 100
+  validationSamples: 200
+  heldOutSamples: 200
+training:
+  acceptedRounds: 2
+  batchSize: 16
+  learningRate: 0.001
+  localEpochs: 1

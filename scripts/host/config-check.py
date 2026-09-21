@@ -17,7 +17,7 @@ from configlib import (
     protocol_topology, resolve_fault_targets, resolve_config_dir,
     repository_relative_paths, resolve_config_scenario, resolve_ml_bind_address,
     resolve_mobile_identities, resolve_path, resolve_scenario_profile_paths,
-    sha256_tree,
+    selected_seed_source, sha256_tree,
 )
 from datasetlib import resolve_dataset_spec
 
@@ -260,12 +260,14 @@ def check_manifest_exact(check, testbed_path, testbed, config_dir, actual_files,
     descriptor = load_yaml(config_dir / (coordinator + ".yaml")).get(
         "model_provision", {}
     ).get("seed_models", [{}])[0]
+    selected_seed = selected_seed_source(scenario) if scenario else None
     check.equal(
         "manifest seed restoration identity",
         manifest.get("seedRestoration"),
         {
             "coordinatorContainer": coordinator,
             "canonicalSource": (
+                selected_seed[1] if selected_seed else
                 "/opt/app/seed_models/image_classification/"
                 + manifest.get("scenario", {}).get("workload", {}).get("dataset", "")
                 if deployment_kind(testbed) == "protocol-hierarchical"
@@ -446,7 +448,7 @@ from py_mtlf.config import load_settings
 from py_mtlf.core.artifacts import ArtifactRepository
 from py_mtlf.core.fl_topology import StaticTopologyPlanner
 from py_mtlf.core.seed_import import build_seed_bundle
-config_root, coordinator, root_id, dataset, branch_group_count, *names = sys.argv[1:]
+config_root, coordinator, root_id, source, branch_group_count, *names = sys.argv[1:]
 settings = {name: load_settings(Path(config_root) / (name + ".yaml")) for name in names}
 root = settings[coordinator]
 assignment = StaticTopologyPlanner.load(
@@ -458,7 +460,7 @@ with tempfile.TemporaryDirectory(prefix="protocol-seed-check-") as temporary:
     temporary = Path(temporary)
     bundle = temporary / "seed.tar.gz"
     build_seed_bundle(
-        Path("seed_models/image_classification") / dataset,
+        Path(source),
         bundle,
         model_id=seed.model_id,
         event=seed.event,
@@ -472,7 +474,10 @@ with tempfile.TemporaryDirectory(prefix="protocol-seed-check-") as temporary:
     result = subprocess.run(
         [
             str(interpreter), "-c", program, str(config_dir), coordinator,
-            root_id, scenario["workload"]["dataset"], str(branch_group_count), *services,
+            root_id, str((selected_seed_source(scenario) or (
+                ROOT / "ML" / "PyMTLF" / "seed_models" / "image_classification"
+                / scenario["workload"]["dataset"], None
+            ))[0]), str(branch_group_count), *services,
         ],
         cwd=ROOT / "ML" / "PyMTLF", text=True, capture_output=True, check=False,
     )

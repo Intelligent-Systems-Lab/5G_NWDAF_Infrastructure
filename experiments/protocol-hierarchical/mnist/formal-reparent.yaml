@@ -1,9 +1,9 @@
 schemaVersion: 2
-name: protocol-hierarchical-formal-mnist-baseline
+name: protocol-hierarchical-formal-mnist-reparent
 kind: formal-comparison
-experiment: {series: e0-e2b, condition: E0}
+experiment: {series: e0-e2b, condition: E2a}
 topology:
-  onBranchFailure: replace_branch
+  onBranchFailure: reparent_leaves_to_root
 workload:
   profile: image-classification
   dataset: mnist
@@ -31,3 +31,9 @@ training:
   batchSize: 16
   learningRate: 0.001
   localEpochs: 4
+fault:
+  normalAcceptedRounds: 12
+  stopNodes: [nwdaf-branch-a-primary]
+observation:
+  pollIntervalMilliseconds: 250
+  heartbeatSeconds: 30

@@ -1264,6 +1264,11 @@ def initial_run_record(
         },
         "failures": [],
     }
+    if scenario.get("experiment", {}).get("series") == "e0-e2b":
+        record["nodeIdentities"] = {
+            item["nfInstanceId"]: {"unit": item["unit"], "role": item["role"]}
+            for item in manifest["runtime"]["nwdafs"]
+        }
     if contract.fault_enabled:
         record["fault"] = {
             **scenario["fault"],
@@ -1271,6 +1276,32 @@ def initial_run_record(
         }
         record["faultStops"] = []
     return record
+
+
+def formal_run_directory(scenario: dict, run_name: str) -> Path:
+    base = ROOT / "runs" / "protocol-hierarchical"
+    experiment = scenario.get("experiment", {})
+    dataset = scenario["workload"]["dataset"]
+    if experiment.get("series") == "e0-e2b":
+        condition = experiment["condition"]
+        if condition not in {"E0", "E1", "E2a", "E2b"}:
+            raise FLExperimentError("formal scenario condition is invalid")
+        return (base / "e0-e2b" / dataset
+                / "seed-{}".format(scenario["partition"]["seed"])
+                / condition.lower() / run_name)
+    return base / dataset / run_name
+
+
+def leaf_split_summary(manifest: dict) -> dict:
+    split = load_yaml(Path(manifest["datasets"]["root"]) / "split-manifest.yaml")
+    leaves = manifest["datasets"]["leaves"]
+    return {
+        leaf: {
+            "count": split["artifacts"][leaf]["count"],
+            "classHistogram": split["artifacts"][leaf]["classHistogram"],
+        }
+        for leaf in leaves
+    }
 
 
 def canonical_uuid4(value: object, field: str) -> str:
@@ -1649,13 +1680,7 @@ def run(args: argparse.Namespace) -> int:
     if not isinstance(gpu_participants, int) or gpu_participants <= 0:
         raise FLExperimentError("generated runtime must select GPU participants")
     contract = FLExperimentContract.build(testbed, scenario)
-    run_directory = (
-        ROOT
-        / "runs"
-        / "protocol-hierarchical"
-        / scenario["workload"]["dataset"]
-        / run_name
-    )
+    run_directory = formal_run_directory(scenario, run_name)
     lock_path = ROOT / ".generated" / "run-locks" / "protocol-hierarchical.lock"
     lock_path.parent.mkdir(parents=True, exist_ok=True)
     environment = LiveEnvironment(testbed_path, config_dir, manifest)
@@ -1718,6 +1743,8 @@ def run(args: argparse.Namespace) -> int:
             writer.update(status="starting")
             environment.start()
             runtime_started = True
+            if scenario.get("experiment", {}).get("series") == "e0-e2b":
+                writer.update(leafSplitSummary=leaf_split_summary(manifest))
             active_identity, guest_services = environment.guest_ready_snapshot()
             registrations = environment.registration_snapshot()
             snapshot = environment.runtime_snapshot()

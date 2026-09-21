@@ -215,10 +215,24 @@ def svg_text(rows):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--baseline-run", required=True)
-    parser.add_argument("--treatment-run", required=True)
+    parser.add_argument("--baseline-run")
+    parser.add_argument("--treatment-run")
+    parser.add_argument("--series-root")
     parser.add_argument("--output-dir", required=True)
     args = parser.parse_args()
+    if args.series_root:
+        if args.baseline_run or args.treatment_run:
+            parser.error("series analysis does not use baseline/treatment run options")
+        output = Path(args.output_dir).resolve()
+        if any((directory / "run.json").exists() for directory in (output, *output.parents)):
+            parser.error("analysis output must remain separate from a raw run directory")
+        from fl_series_analysis import analyze
+        try:
+            count, issues = analyze(Path(args.series_root).resolve(), output)
+        except (OSError, ValueError, KeyError, TypeError, json.JSONDecodeError) as exc:
+            parser.error(str(exc))
+        print("Analyzed {} completed formal runs; {} missing or incomplete slots".format(count, issues))
+        return
     if not all((args.baseline_run, args.treatment_run, args.output_dir)):
         parser.error("all directories must be specified")
     baseline = Path(args.baseline_run).resolve()

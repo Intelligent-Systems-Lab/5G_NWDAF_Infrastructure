@@ -5,6 +5,12 @@ NAME ?= protocol-hierarchical
 DEVICE ?= cpu
 WEBCONSOLE ?= false
 FORCE ?= false
+SEED ?=
+WORKLOAD ?=
+SEEDS ?=
+CONDITIONS ?=
+RUN_PREFIX ?=
+SERIES_ROOT ?= runs/protocol-hierarchical/e0-e2b
 
 require_testbed = @source scripts/host/lib.sh; require_testbed_selection "$(TESTBED)"
 
@@ -17,7 +23,8 @@ require_testbed = @source scripts/host/lib.sh; require_testbed_selection "$(TEST
 	subscriptions-status subscriptions-stop subscriber-data-apply \
 	subscriber-data-show subscriber-data-clear fl-collection-start fl-collection-status \
 	fl-collection-stop fl-training-start fl-training-status fl-experiment-run fl-analysis \
-	fl-experiment-collect fl-branch-replacement-run fl-branch-replacement-collect observe logs
+	fl-experiment-collect fl-branch-replacement-run fl-branch-replacement-collect observe logs \
+	fl-series-run fl-series-analysis
 
 help:
 	@echo "5G NWDAF Infrastructure"
@@ -38,7 +45,7 @@ help-advanced:
 	@echo ""
 	@echo "Configuration and datasets"
 	@echo "  make config-create TESTBED=... NAME=... FROM=experiments/.../<scenario>.yaml"
-	@echo "                     [DEVICE=gpu|cpu] [WEBCONSOLE=false|true] [FORCE=false|true]"
+	@echo "                     [DEVICE=gpu|cpu] [SEED=<formal-seed>] [WEBCONSOLE=false|true] [FORCE=false|true]"
 	@echo "  make config-validate TESTBED=... [CONFIG_DIR=...]  Diagnose cross-config inconsistencies"
 	@echo "  make dataset-generate | dataset-validate | dataset-show | dataset-load TESTBED=... [CONFIG_DIR=...]"
 	@echo ""
@@ -52,6 +59,8 @@ help-advanced:
 	@echo "  make fl-experiment-run TESTBED=... [CONFIG_DIR=...] RUN_NAME=<name>"
 	@echo "  make fl-experiment-collect TESTBED=... [CONFIG_DIR=...] RUN_NAME=<same-name>"
 	@echo "  make fl-analysis BASELINE_RUN=<run-dir> TREATMENT_RUN=<run-dir> OUTPUT_DIR=<new-dir>"
+	@echo "  make fl-series-run WORKLOAD=mnist SEEDS=1 CONDITIONS=E0,E1 RUN_PREFIX=<unique-prefix>"
+	@echo "  make fl-series-analysis [SERIES_ROOT=runs/protocol-hierarchical/e0-e2b] OUTPUT_DIR=<new-dir>"
 	@echo "  make fl-branch-replacement-run TESTBED=... [CONFIG_DIR=...] RUN_NAME=<name>"
 	@echo "  make fl-branch-replacement-collect TESTBED=... [CONFIG_DIR=...] RUN_NAME=<same-name>"
 	@echo "  make observe TESTBED=... [CONFIG_DIR=...]"
@@ -100,7 +109,7 @@ config-create:
 	@case "$(FORCE)" in false|true) ;; *) echo "FORCE must be false or true" >&2; exit 2;; esac
 	@python3 scripts/host/config-render.py --testbed "$(TESTBED)" --name "$(NAME)" \
 		--scenario "$(FROM)" --output-root config/local --ml-device "$(DEVICE)" \
-		--webconsole "$(WEBCONSOLE)" $(if $(filter true,$(FORCE)),--force)
+		--webconsole "$(WEBCONSOLE)" $(if $(SEED),--seed "$(SEED)") $(if $(filter true,$(FORCE)),--force)
 
 config-validate:
 	$(require_testbed)
@@ -238,6 +247,15 @@ fl-analysis:
 	@test -n "$(TREATMENT_RUN)" || { echo "TREATMENT_RUN=<run-dir> is required" >&2; exit 2; }
 	@test -n "$(OUTPUT_DIR)" || { echo "OUTPUT_DIR=<new-dir> is required" >&2; exit 2; }
 	@MPLCONFIGDIR="$(CURDIR)/.cache/matplotlib" uv run --extra analysis python3 scripts/host/fl-analysis.py --baseline-run "$(BASELINE_RUN)" --treatment-run "$(TREATMENT_RUN)" --output-dir "$(OUTPUT_DIR)"
+
+fl-series-run:
+	@test -n "$(WORKLOAD)" -a -n "$(SEEDS)" -a -n "$(CONDITIONS)" -a -n "$(RUN_PREFIX)" || { echo "WORKLOAD, SEEDS, CONDITIONS and RUN_PREFIX are required" >&2; exit 2; }
+	@source scripts/host/lib.sh; require_provider_host_context
+	@python3 scripts/host/fl-series-run.py --testbed "$(TESTBED)" --workload "$(WORKLOAD)" --seeds "$(SEEDS)" --conditions "$(CONDITIONS)" --run-prefix "$(RUN_PREFIX)"
+
+fl-series-analysis:
+	@test -n "$(OUTPUT_DIR)" || { echo "OUTPUT_DIR=<new-dir> is required" >&2; exit 2; }
+	@MPLCONFIGDIR="$(CURDIR)/.cache/matplotlib" uv run --extra analysis python3 scripts/host/fl-analysis.py --series-root "$(SERIES_ROOT)" --output-dir "$(OUTPUT_DIR)"
 
 fl-branch-replacement-run:
 	$(require_testbed)

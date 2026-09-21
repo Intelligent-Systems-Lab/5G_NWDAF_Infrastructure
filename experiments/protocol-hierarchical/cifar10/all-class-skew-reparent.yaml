@@ -1,9 +1,9 @@
 schemaVersion: 2
-name: protocol-hierarchical-cifar10-all-class-skew-replacement
+name: protocol-hierarchical-cifar10-all-class-skew-reparent
 kind: diagnostic
-experiment: {series: e0-e2b, condition: E1}
+experiment: {series: e0-e2b, condition: E2a}
 topology:
-  onBranchFailure: replace_branch
+  onBranchFailure: reparent_leaves_to_root
 workload:
   profile: image-classification
   dataset: cifar10

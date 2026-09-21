@@ -1493,7 +1493,23 @@ def test_incremental_reader_and_two_file_consistency():
 
 
 
+def test_formal_run_location():
+    runner = load_runner()
+    scenario = yaml.safe_load(
+        (ROOT / "experiments/protocol-hierarchical/mnist/formal-baseline.yaml").read_text(encoding="utf-8")
+    )
+    scenario["partition"]["seed"] = 2
+    assert runner.formal_run_directory(scenario, "trial") == (
+        ROOT / "runs/protocol-hierarchical/e0-e2b/mnist/seed-2/e0/trial"
+    )
+    scenario.pop("experiment")
+    assert runner.formal_run_directory(scenario, "trial") == (
+        ROOT / "runs/protocol-hierarchical/mnist/trial"
+    )
+
+
 def main():
+    test_formal_run_location()
     test_run_name_and_retry_checkpoint()
     test_contract_and_fault_barrier()
     test_normal_rounds_and_evaluations()

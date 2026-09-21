@@ -20,6 +20,7 @@ from configlib import (
     resolve_ml_bind_address,
     resolve_ml_device_policy,
     resolve_path,
+    selected_seed_source,
 )
 
 
@@ -161,8 +162,10 @@ def main():
         check.true(name + " must not use legacy GPU request", not service.get("gpus"))
 
         if name == manifest["runtime"]["coordinatorContainer"]:
+            selected_seed = selected_seed_source(scenario) if kind == "protocol-hierarchical" else None
             expected_seed_environment = {
                 "PYMTLF_SEED_SOURCE": (
+                    selected_seed[1] if selected_seed else
                     "/opt/app/seed_models/image_classification/"
                     + scenario["workload"]["dataset"]
                     if kind == "protocol-hierarchical"
@@ -192,6 +195,18 @@ def main():
                 item for item in nwdaf_definitions(testbed)
                 if item["backends"]["mtlf"] == name
             )
+            selected_seed = selected_seed_source(scenario)
+            selected_mounts = [
+                item for item in mounts
+                if item.get("target") == "/opt/app/seed_models/selected"
+            ]
+            check.equal(
+                name + " selected seed mount count", len(selected_mounts),
+                1 if selected_seed and definition["role"] == "root" else 0,
+            )
+            if selected_seed and definition["role"] == "root" and selected_mounts:
+                check.equal(name + " selected seed source", Path(selected_mounts[0]["source"]), selected_seed[0])
+                check.true(name + " selected seed must be read-only", selected_mounts[0].get("read_only") is True)
             topology_mounts = [
                 item for item in mounts
                 if item.get("target") == "/etc/5g-nwdaf/topology/protocol-hierarchical.yaml"

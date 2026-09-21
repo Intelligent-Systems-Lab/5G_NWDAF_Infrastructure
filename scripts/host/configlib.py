@@ -72,10 +72,32 @@ def image_dataset_name(scenario):
     return dataset_id
 
 
+def selected_seed_source(scenario):
+    """Return the Host and container source for a selected generated seed."""
+    if scenario.get("experiment", {}).get("series") not in ("e0-e2b", "seeded-smoke"):
+        return None
+    dataset = scenario["workload"]["dataset"]
+    seed = scenario["partition"]["seed"]
+    return (
+        ROOT / ".generated" / "seed-models" / "image_classification"
+        / dataset / "seed-{}".format(seed),
+        "/opt/app/seed_models/selected",
+    )
+
+
 def image_scenario_contract(scenario):
     """Validate and return the bounded image-classification run contract."""
     if scenario_profile(scenario) != "image-classification":
         raise ValueError("scenario is not an image-classification workload")
+    experiment = scenario.get("experiment")
+    if experiment is not None and (
+        not isinstance(experiment, dict)
+        or experiment.get("condition") not in {
+            "e0-e2b": ("E0", "E1", "E2a", "E2b"),
+            "seeded-smoke": ("E0",),
+        }.get(experiment.get("series"), ())
+    ):
+        raise ValueError("experiment must select a supported series and condition")
     workload = scenario["workload"]
     dataset = workload.get("dataset")
     expected = {
@@ -941,6 +963,14 @@ def resolve_config_scenario(config_dir):
     definition = metadata.get("definition")
     if not isinstance(definition, str) or not definition:
         raise ValueError("config manifest scenario.definition is required")
+    if metadata.get("schemaVersion") == SCENARIO_SCHEMA and metadata.get("workload", {}).get("profile") == "image-classification":
+        path = resolve_path(definition).resolve()
+        if path != ROOT and ROOT not in path.parents:
+            raise ValueError("scenario definition provenance must remain inside the repository")
+        selected = copy.deepcopy(metadata)
+        selected.pop("definition", None)
+        image_scenario_contract(selected)
+        return path, selected
     path, scenario = load_scenario_definition(definition)
     if metadata.get("name") != scenario.get("name"):
         raise ValueError("config manifest scenario name does not match its definition")

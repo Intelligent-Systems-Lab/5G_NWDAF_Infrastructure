@@ -72,14 +72,14 @@ services. The Make defaults select this definition and its generated
 `config/local/protocol-hierarchical` directory.
 
 Scenario definitions live under `experiments/protocol-hierarchical/mnist/` and
-`experiments/protocol-hierarchical/cifar10/`. The filename identifies the
-condition, such as `smoke.yaml`, `formal-baseline.yaml`, or
-`all-class-skew-replacement.yaml`. Generated configs created from the old
-scenario paths must be recreated before reuse. If a runtime still uses one,
-ensure its experiment processes are stopped and check its selected state while
-the original scenario definition is available; config check and reset validation
-require that definition. Do not replace a generated config while its
-experiment processes are running. Historical run records retain their original paths.
+`experiments/protocol-hierarchical/cifar10/`. Filenames such as `smoke.yaml`,
+`formal-baseline.yaml`, and `all-class-skew-replacement.yaml` help select the
+input; formal condition identity is saved explicitly in the selected scenario.
+Generated configs created before selected scenario snapshots continue to read
+their original scenario definition. Keep that definition available for older
+config checks and reset validation. Create a new config to select a formal seed;
+do not replace a generated config while its experiment processes are running.
+Historical run records retain their original paths.
 
 Create either dataset-specific config, acquire and partition the dataset, and
 then create the VMs:
@@ -182,6 +182,37 @@ used as a runner completion gate. Evidence is kept under ignored
 are added only on failure. The runner does not control replacement preparation
 timing or silently fall back to CPU. VMs remain running after the selected
 process and data reset.
+
+The E0–E2b paper scenarios use an explicit `SEED` when generating a config.
+For each workload and seed, all four conditions select one dataset partition
+and one PyMTLF-native initial model; different seeds receive separate inputs.
+The selected source is mounted read-only into the Root container. A formal run
+keeps its raw evidence under
+`runs/protocol-hierarchical/e0-e2b/<workload>/seed-<seed>/<condition>/<run-name>/`.
+The separate MNIST `seeded-smoke.yaml` uses the same seed preparation with two
+accepted rounds; its runs remain outside the formal series and its inputs have
+separate dataset directories.
+With VMs already running in the approved Host context, select only the runs
+intended for the current batch:
+
+```sh
+make fl-series-run WORKLOAD=mnist SEEDS=1 CONDITIONS=E0,E1 RUN_PREFIX=trial
+```
+
+This calls the existing config-create and single-run lifecycle in order. It
+stops on the first failure; use the failed run's selected `CONFIG_DIR` and
+`RUN_NAME` with `fl-experiment-collect` before switching configs if collection
+needs a retry. It does not automatically execute the full paper matrix.
+After runs are saved, offline analysis can be repeated without training:
+
+```sh
+make fl-series-analysis OUTPUT_DIR=runs/protocol-hierarchical/e0-e2b/analysis/first-pass
+```
+
+The analysis keeps missing or incomplete runs visible and reports a five-seed
+confidence interval only when all five relevant runs are available. Paired
+effects additionally require matching E0 inputs. Its output is
+derived data; `run.json` and raw JSONL remain unchanged.
 
 ## Legacy production topology reference
 

@@ -1,9 +1,9 @@
 schemaVersion: 2
-name: protocol-hierarchical-cifar10-all-class-skew-replacement
+name: protocol-hierarchical-cifar10-all-class-skew-partial-reparent
 kind: diagnostic
-experiment: {series: e0-e2b, condition: E1}
+experiment: {series: e0-e2b, condition: E2b}
 topology:
-  onBranchFailure: replace_branch
+  onBranchFailure: reparent_leaves_to_root
 workload:
   profile: image-classification
   dataset: cifar10
@@ -33,7 +33,7 @@ training:
   localEpochs: 5
 fault:
   normalAcceptedRounds: 20
-  stopNodes: [nwdaf-branch-a-primary]
+  stopNodes: [nwdaf-branch-a-primary, nwdaf-leaf-a2]
 observation:
   pollIntervalMilliseconds: 250
   heartbeatSeconds: 30

@@ -5,6 +5,7 @@ import argparse
 import copy
 import json
 import shutil
+import subprocess
 import sys
 from pathlib import Path
 
@@ -14,6 +15,7 @@ from configlib import (
     image_dataset_name, image_scenario_contract, nwdaf_definitions, protocol_topology,
     resolve_path, repository_relative_paths,
     resolve_mobile_identities, resolve_scenario_profile_paths, set_path,
+    selected_seed_source,
 )
 
 
@@ -622,6 +624,12 @@ def render_compose(testbed, output, runtime, scenario=None):
                     "type": "bind", "source": str(dataset_root / "validation.npz"),
                     "target": "/data/validation.npz", "read_only": True,
                 })
+                selected_seed = selected_seed_source(scenario)
+                if selected_seed:
+                    service["volumes"].append({
+                        "type": "bind", "source": str(selected_seed[0]),
+                        "target": selected_seed[1], "read_only": True,
+                    })
             elif node["role"] == "leaf":
                 service["volumes"].append({
                     "type": "bind",
@@ -630,9 +638,10 @@ def render_compose(testbed, output, runtime, scenario=None):
                 })
         if name == runtime["coordinatorContainer"]:
             if kind == "protocol-hierarchical":
+                selected_seed = selected_seed_source(scenario)
                 environment.update({
-                    "PYMTLF_SEED_SOURCE": "/opt/app/seed_models/image_classification/"
-                    + scenario["workload"]["dataset"],
+                    "PYMTLF_SEED_SOURCE": selected_seed[1] if selected_seed else
+                    "/opt/app/seed_models/image_classification/" + scenario["workload"]["dataset"],
                     "PYMTLF_SEED_MODEL_ID": str(scenario["workload"]["seedModelId"]),
                     "PYMTLF_SEED_INTEROPERABILITY": scenario["workload"]["modelInteroperability"],
                     "PYMTLF_SEED_ARTIFACT_KEY": scenario["workload"]["seedArtifactKey"],
@@ -1028,6 +1037,7 @@ def main():
     parser.add_argument("--ml-device", choices=("cpu", "gpu"))
     parser.add_argument("--webconsole", choices=("false", "true"))
     parser.add_argument("--force", action="store_true")
+    parser.add_argument("--seed", type=int)
     args = parser.parse_args()
     if not args.name.replace("-", "").replace("_", "").isalnum():
         raise SystemExit("name may contain only letters, digits, '-' and '_'")
@@ -1047,8 +1057,34 @@ def main():
     scenario_path, scenario = load_scenario_definition(args.scenario)
     if kind == "protocol-hierarchical":
         image_scenario_contract(scenario)
+        series = scenario.get("experiment", {}).get("series")
+        if series in ("e0-e2b", "seeded-smoke") and args.seed is None:
+            raise SystemExit("selected experiment scenario requires --seed")
+        if args.seed is not None:
+            if args.seed < 0 or series not in ("e0-e2b", "seeded-smoke"):
+                raise SystemExit("--seed requires a seeded experiment scenario and non-negative value")
+            scenario["partition"]["seed"] = args.seed
+            scenario["partition"]["datasetId"] = "{}-{}-s{}".format(
+                scenario["workload"]["dataset"],
+                "formal" if series == "e0-e2b" else "seeded-smoke", args.seed
+            )
+            interpreter = ROOT / "ML" / "PyMTLF" / ".venv" / "bin" / "python"
+            if not interpreter.is_file():
+                raise SystemExit("PyMTLF project interpreter is required for selected seed preparation")
+            result = subprocess.run([
+                str(interpreter), str(ROOT / "scripts" / "host" / "seed-model.py"),
+                "--dataset", scenario["workload"]["dataset"],
+                "--seed", str(args.seed),
+                "--model-id", str(scenario["workload"]["seedModelId"]),
+                "--interoperability", scenario["workload"]["modelInteroperability"],
+            ], cwd=ROOT, text=True, capture_output=True, check=False)
+            if result.returncode:
+                raise SystemExit(result.stderr.strip() or result.stdout.strip())
+            scenario["workload"]["seedArtifactKey"] = result.stdout.strip()
         profile_sources = {}
     else:
+        if args.seed is not None:
+            raise SystemExit("--seed is only supported for seeded protocol scenarios")
         profile_sources = repository_relative_paths(
             resolve_scenario_profile_paths(scenario_path, scenario)
         )
@@ -1075,6 +1111,9 @@ def main():
         "definition": scenario_definition,
     }
     if kind == "protocol-hierarchical":
+        manifest["scenario"]["schemaVersion"] = scenario["schemaVersion"]
+        if "experiment" in scenario:
+            manifest["scenario"]["experiment"] = copy.deepcopy(scenario["experiment"])
         manifest["scenario"]["workload"] = copy.deepcopy(scenario["workload"])
         manifest["scenario"]["partition"] = copy.deepcopy(scenario["partition"])
         manifest["scenario"]["training"] = copy.deepcopy(scenario["training"])
@@ -1107,7 +1146,9 @@ def main():
     manifest["seedRestoration"] = {
         "coordinatorContainer": manifest["runtime"]["coordinatorContainer"],
         "canonicalSource": (
-            "/opt/app/seed_models/image_classification/" + scenario["workload"]["dataset"]
+            (selected_seed_source(scenario) or (
+                None, "/opt/app/seed_models/image_classification/" + scenario["workload"]["dataset"]
+            ))[1]
             if kind == "protocol-hierarchical" else "/opt/app/seed_models/initial"
         ),
         "modelId": seed_descriptor.get("model_id"),
