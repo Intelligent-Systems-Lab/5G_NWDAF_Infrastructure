@@ -41,6 +41,8 @@ def prepare(dataset, seed, model_id, interoperability):
     if (json.loads((destination / "config.json").read_text(encoding="utf-8")) != expected_config
             or (destination / "model.py").read_bytes() != (source / "model.py").read_bytes()):
         raise ValueError("selected seed source differs from the current PyMTLF model; inspect it before reuse")
+    # TemporaryDirectory creates a private directory; the Root container reads this bind as UID 10001.
+    destination.chmod(0o755)
     with tempfile.TemporaryDirectory(prefix="selected-seed-") as temporary:
         temporary = Path(temporary)
         bundle = temporary / "seed.tar.gz"

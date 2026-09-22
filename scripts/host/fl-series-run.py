@@ -58,6 +58,10 @@ def main():
                 "DEVICE=gpu",
             ], cwd=ROOT, check=True)
             subprocess.run([
+                "make", "dataset-generate", "TESTBED=" + args.testbed,
+                "CONFIG_DIR=config/local/" + identity,
+            ], cwd=ROOT, check=True)
+            subprocess.run([
                 "make", "fl-experiment-run", "TESTBED=" + args.testbed,
                 "CONFIG_DIR=config/local/" + identity, "RUN_NAME=" + identity,
             ], cwd=ROOT, check=True)
