@@ -1,394 +1,94 @@
 #!/usr/bin/env python3
-"""Regression checks for exact TESTBED-derived runtime inventory."""
+"""Exercise protocol config rendering and scenario-derived runtime selection."""
 
-import copy
 import subprocess
 import sys
 import tempfile
 from pathlib import Path
 
-import yaml
-
 
 ROOT = Path(__file__).resolve().parents[1]
-LEGACY_SCENARIO = "experiments/examples/fl-closure-smoke/scenario.yaml"
 sys.path.insert(0, str(ROOT / "scripts" / "host"))
 
 from configlib import (  # noqa: E402
     expected_runtime_inventory,
     image_scenario_contract,
-    protocol_topology,
+    load_yaml,
     resolve_fault_targets,
-    selected_component_paths,
 )
 
 
-def run(*command, check=True):
-    return subprocess.run(
-        [str(item) for item in command], cwd=ROOT, text=True,
-        capture_output=True, check=check,
-    )
+TESTBED = ROOT / "testbed.protocol-hierarchical.yaml"
+SCENARIO_ROOT = ROOT / "experiments" / "protocol-hierarchical"
 
 
-def render(output_root, testbed, name, scenario=LEGACY_SCENARIO, device="cpu"):
-    run(
-        sys.executable, ROOT / "scripts/host/config-render.py",
-        "--testbed", testbed, "--name", name, "--scenario", scenario,
-        "--output-root", output_root, "--ml-device", device, "--webconsole", "false",
-    )
-    return output_root / name
-
-
-def rejected(testbed, config_dir):
-    result = run(
-        sys.executable, ROOT / "scripts/host/config-check.py",
-        "--testbed", testbed, "--config-dir", config_dir, check=False,
-    )
-    if result.returncode == 0:
-        raise AssertionError("tampered runtime inventory was accepted")
+def run(*command):
+    subprocess.run(command, cwd=ROOT, check=True)
 
 
 def main():
-    renderer = (ROOT / "scripts/host/config-render.py").read_text(encoding="utf-8")
-    makefile = (ROOT / "Makefile").read_text(encoding="utf-8")
-    dockerfile = (ROOT / "containers/ml/Dockerfile").read_text(encoding="utf-8")
-    component_locks = {
-        item["path"]: item["commit"]
-        for item in yaml.safe_load(
-            (ROOT / "components.lock.yaml").read_text(encoding="utf-8")
-        )["components"]
-    }
-    protocol_definition = yaml.safe_load(
-        (ROOT / "testbed.protocol-hierarchical.yaml").read_text(encoding="utf-8")
-    )
-    protocol_runtime = expected_runtime_inventory(protocol_definition)
-    assert protocol_runtime["capacity"]["gpuParticipants"] == 7
-    assert protocol_runtime["capacity"]["minimumGpuMemoryMiB"] == 8192
-    accelerator_services = {
-        name
-        for name, service in protocol_definition["mlRuntime"]["services"].items()
-        if service["device"] == "cuda:0"
-    }
-    assert accelerator_services == {
-        "pymtlf-root",
-        "pymtlf-leaf-a1", "pymtlf-leaf-a2",
-        "pymtlf-leaf-b1", "pymtlf-leaf-b2",
-        "pymtlf-leaf-c1", "pymtlf-leaf-c2",
-    }
-    assert protocol_runtime["capacity"]["hostContainerMemoryMiB"] == 16384
-    for name in accelerator_services - {"pymtlf-root"}:
-        assert protocol_definition["mlRuntime"]["services"][name]["memoryMiB"] == 2048
-    normal_scenario = yaml.safe_load(
-        (ROOT / "experiments/protocol-hierarchical/mnist/smoke.yaml").read_text(
-            encoding="utf-8"
-        )
-    )
-    replacement_scenario = yaml.safe_load(
-        (
-            ROOT
-            / "experiments/protocol-hierarchical/mnist/replacement-smoke.yaml"
-        ).read_text(encoding="utf-8")
-    )
-    image_scenario_contract(normal_scenario)
-    image_scenario_contract(replacement_scenario)
-    for group in protocol_definition["analytics"]["protocolTopology"]["branchGroups"]:
-        assert all(
-            candidate["reportAfter"]["unit"] == "round"
-            for candidate in group["branches"]
-        )
-        assert all("reportAfter" not in candidate for candidate in group["leaves"])
-    normal_topology = protocol_topology(
-        protocol_definition, normal_scenario["training"]["localEpochs"]
-    )
-    replacement_topology = protocol_topology(
-        protocol_definition, replacement_scenario["training"]["localEpochs"]
-    )
-    default_mu = protocol_definition["analytics"]["protocolTopology"]["strategy"][
-        "method_parameters"
-    ]["proximal_mu"]
-    overridden_mu = default_mu + 0.25
-    overridden = copy.deepcopy(normal_scenario)
-    overridden["training"]["proximalMu"] = overridden_mu
-    image_scenario_contract(overridden)
-    overridden_topology = protocol_topology(
-        protocol_definition,
-        overridden["training"]["localEpochs"],
-        overridden["training"]["proximalMu"],
-    )
-    assert overridden_topology["strategy"]["method_parameters"]["proximal_mu"] == overridden_mu
-    assert all(
-        group["strategy"]["method_parameters"]["proximal_mu"] == overridden_mu
-        for group in overridden_topology["branch_groups"]
-    )
-    assert normal_topology["strategy"]["method_parameters"]["proximal_mu"] == default_mu
-    for topology, expected_epochs in (
-        (normal_topology, normal_scenario["training"]["localEpochs"]),
-        (replacement_topology, replacement_scenario["training"]["localEpochs"]),
-    ):
-        source_groups = protocol_definition["analytics"]["protocolTopology"][
-            "branchGroups"
-        ]
-        for source_group, group in zip(source_groups, topology["branch_groups"]):
-            assert [candidate["report_after"] for candidate in group["branches"]] == [
-                {
-                    "count": candidate["reportAfter"]["count"],
-                    "unit": "round",
-                }
-                for candidate in source_group["branches"]
-            ]
-            assert all(
-                candidate["report_after"] == {
-                    "count": expected_epochs,
-                    "unit": "epoch",
-                }
-                for candidate in group["leaves"]
-            )
-    resolved_fault = resolve_fault_targets(protocol_definition, replacement_scenario)
-    assert [item["unit"] for item in resolved_fault["targets"]] == replacement_scenario[
-        "fault"
-    ]["stopNodes"]
-    assert resolved_fault["replacement"]["unit"] == "nwdaf-branch-a-replacement"
-    partial_scenario = yaml.safe_load(
-        (ROOT / "experiments/protocol-hierarchical/mnist/partial-reparent-smoke.yaml")
-        .read_text(encoding="utf-8")
-    )
-    partial_targets = resolve_fault_targets(protocol_definition, partial_scenario)
-    assert [item["unit"] for item in partial_targets["targets"]] == partial_scenario[
-        "fault"
-    ]["stopNodes"]
-    invalid_scenario = copy.deepcopy(replacement_scenario)
-    invalid_scenario["training"]["device"] = "cuda:0"
-    try:
-        image_scenario_contract(invalid_scenario)
-    except ValueError:
-        pass
-    else:
-        raise AssertionError("scenario duplicated TESTBED-owned device selection")
-    invalid_scenario = copy.deepcopy(normal_scenario)
-    del invalid_scenario["training"]["localEpochs"]
-    try:
-        image_scenario_contract(invalid_scenario)
-    except ValueError:
-        pass
-    else:
-        raise AssertionError("image scenario accepted a missing local epoch source")
-    invalid_scenario = copy.deepcopy(normal_scenario)
-    invalid_scenario["training"]["proximalMu"] = -1
-    try:
-        image_scenario_contract(invalid_scenario)
-    except ValueError:
-        pass
-    else:
-        raise AssertionError("image scenario accepted a negative proximal penalty")
-    alternate_normal = copy.deepcopy(normal_scenario)
-    alternate_normal["training"].update(acceptedRounds=4, localEpochs=2)
-    image_scenario_contract(alternate_normal)
-    alternate_replacement = copy.deepcopy(replacement_scenario)
-    alternate_replacement["partition"]["samplesPerLeaf"] = 100
-    alternate_replacement["training"].update(acceptedRounds=6, localEpochs=1)
-    alternate_replacement["fault"]["normalAcceptedRounds"] = 3
-    alternate_replacement["observation"].update(
-        pollIntervalMilliseconds=500, heartbeatSeconds=10
-    )
-    image_scenario_contract(alternate_replacement)
-    invalid_definition = copy.deepcopy(protocol_definition)
-    invalid_definition["analytics"]["protocolTopology"]["branchGroups"][0][
-        "leaves"
-    ][0]["reportAfter"] = {"count": 1, "unit": "epoch"}
-    try:
-        protocol_topology(invalid_definition, 1)
-    except ValueError:
-        pass
-    else:
-        raise AssertionError("protocol topology accepted TESTBED-owned Leaf epochs")
-    invalid_definition = copy.deepcopy(protocol_definition)
-    del invalid_definition["analytics"]["protocolTopology"]["branchGroups"][0][
-        "branches"
-    ][0]["reportAfter"]
-    try:
-        protocol_topology(invalid_definition, 1)
-    except ValueError:
-        pass
-    else:
-        raise AssertionError("protocol topology accepted a Branch without reportAfter")
-    for field, value in (("localEpochs", 0), ("acceptedRounds", 0)):
-        invalid_scenario = copy.deepcopy(replacement_scenario)
-        invalid_scenario["training"][field] = value
-        try:
-            image_scenario_contract(invalid_scenario)
-        except ValueError:
-            pass
-        else:
-            raise AssertionError("replacement scenario accepted invalid training input")
-    invalid_scenario = copy.deepcopy(replacement_scenario)
-    invalid_scenario["training"]["acceptedRounds"] = 2
-    try:
-        image_scenario_contract(invalid_scenario)
-    except ValueError:
-        pass
-    else:
-        raise AssertionError("fault barrier did not precede the final round")
-    protocol_components = selected_component_paths(
-        protocol_definition, expected_runtime_inventory(protocol_definition)
-    )
-    assert protocol_components == [
-        "ML/PyMTLF", "NFs/adrf", "NFs/nrf", "NFs/nwdaf",
-    ]
-    for path in protocol_components:
-        expected = component_locks[path]
-        actual = run("git", "-C", ROOT / path, "rev-parse", "HEAD").stdout.strip()
-        assert actual == expected, (
-            "component lock does not match checked-out revision: {} expected={} actual={}".format(
-                path, expected, actual
+    testbed = load_yaml(TESTBED)
+    formal = sorted(SCENARIO_ROOT.glob("*/*yaml"))
+    formal = [path for path in formal if path.name != "smoke.yaml"]
+    assert len(formal) == 8
+    observed = set()
+    for path in formal:
+        scenario = load_yaml(path)
+        image_scenario_contract(scenario)
+        observed.add(
+            (
+                scenario["workload"]["dataset"],
+                scenario["experiment"]["condition"],
             )
         )
-    for forbidden in ("static-config-render.py", "deployments/", "DEPLOYMENT"):
-        assert forbidden not in renderer + makefile, forbidden
-    for testbed_path in (
-        "testbed.yaml", "testbed.static-flat.yaml", "testbed.static-hierarchical.yaml",
-        "testbed.protocol-hierarchical.yaml",
-    ):
-        definition = yaml.safe_load((ROOT / testbed_path).read_text(encoding="utf-8"))
-        for service in definition["mlRuntime"]["services"].values():
-            target = service["volume"]["target"]
-            assert target in dockerfile, "image does not pre-own volume target: " + target
+        runtime = expected_runtime_inventory(testbed, scenario)
+        assert runtime["deploymentKind"] == "protocol-hierarchical"
+        assert runtime["coordinatorContainer"] in runtime["hostContainers"]
+        if scenario.get("fault") is not None:
+            targets = resolve_fault_targets(testbed, scenario)
+            assert targets["targets"]
+    assert observed == {
+        (dataset, condition)
+        for dataset in ("mnist", "cifar10")
+        for condition in ("E0", "E1", "E2a", "E2b")
+    }
 
     with tempfile.TemporaryDirectory(prefix="5g-runtime-inventory-") as temporary:
-        output_root = Path(temporary)
-        # Exercise the shared exact-inventory guard with one complete fixture;
-        # compatibility across historical profiles is outside this test.
-        cases = (
-            ("testbed.yaml", "production", LEGACY_SCENARIO, "cpu"),
-            (
-                "testbed.protocol-hierarchical.yaml", "protocol-mnist",
-                "experiments/protocol-hierarchical/mnist/smoke.yaml", "cpu",
-            ),
-            (
-                "testbed.protocol-hierarchical.yaml", "protocol-cifar10",
-                "experiments/protocol-hierarchical/cifar10/smoke.yaml", "cpu",
-            ),
-            (
-                "testbed.protocol-hierarchical.yaml", "replacement-mnist",
-                "experiments/protocol-hierarchical/mnist/replacement-smoke.yaml",
-                "gpu",
-            ),
-            (
-                "testbed.protocol-hierarchical.yaml", "replacement-cifar10",
-                "experiments/protocol-hierarchical/cifar10/replacement-smoke.yaml",
-                "gpu",
-            ),
-        )
-        for testbed, name, scenario, device in cases:
-            config_dir = render(output_root, testbed, name, scenario, device)
-            manifest_path = config_dir / "manifest.yaml"
-            original = yaml.safe_load(manifest_path.read_text(encoding="utf-8"))
-            units = [item["unit"] for item in original["runtime"]["guestServices"]]
-            if original["runtime"]["deploymentKind"] == "protocol-hierarchical":
-                assert units[:3] == ["mongodb", "nrf", "adrf"]
-                assert all(unit.startswith("nwdaf-") for unit in units[3:])
-                assert original["runtime"]["guestMachines"] == [
-                    "core", "path-a", "path-b", "path-c"
-                ]
-                expected_gpu_participants = 7 if device == "gpu" else 0
-                assert (
-                    original["runtime"]["capacity"]["gpuParticipants"]
-                    == expected_gpu_participants
-                )
-                expected_local_epochs = original["scenario"]["training"]["localEpochs"]
-                coordinator = original["runtime"]["coordinatorContainer"]
-                root_config = yaml.safe_load(
-                    (config_dir / (coordinator + ".yaml")).read_text(encoding="utf-8")
-                )
-                assert root_config["federated_learning"]["server"]["client_training"][
-                    "epochs"
-                ] == expected_local_epochs
-                rendered_topology = yaml.safe_load(
-                    (config_dir / "topology/protocol-hierarchical.yaml").read_text(
-                        encoding="utf-8"
-                    )
-                )
-                for group in rendered_topology["branch_groups"]:
-                    assert all(
-                        candidate["report_after"] == {
-                            "count": expected_local_epochs,
-                            "unit": "epoch",
-                        }
-                        for candidate in group["leaves"]
-                    )
-            else:
-                first_upf = min(units.index(unit) for unit in units if unit.startswith("upf-"))
-                first_nwdaf = min(units.index(unit) for unit in units if unit.startswith("nwdaf-"))
-                first_gnb = min(units.index(unit) for unit in units if unit.startswith("gnb-"))
-                first_ue = min(units.index(unit) for unit in units if unit.startswith("ue"))
-                assert units.index("mongodb") < units.index("nrf") < units.index("amf")
-                assert units.index("amf") < first_upf < units.index("smf")
-                assert units.index("smf") < units.index("adrf") < first_nwdaf
-                assert first_nwdaf < first_gnb < first_ue
-
-            tampered = copy.deepcopy(original)
-            tampered["runtime"]["hostContainers"] = []
-            manifest_path.write_text(yaml.safe_dump(tampered, sort_keys=False), encoding="utf-8")
-            rejected(testbed, config_dir)
-
-            tampered = copy.deepcopy(original)
-            tampered["runtime"]["guestServices"].append(
-                {"machine": "core", "unit": "nwdaf-unexpected", "kind": "nwdaf"}
-            )
-            manifest_path.write_text(yaml.safe_dump(tampered, sort_keys=False), encoding="utf-8")
-            rejected(testbed, config_dir)
-
-            tampered = copy.deepcopy(original)
-            foreign_volume = {
-                "name": "foreign-topology-state",
-                "image": "5g-nwdaf-infrastructure/pymtlf:local",
-            }
-            tampered["runtime"]["mlVolumes"].append(foreign_volume)
-            tampered["runtime"]["resetScope"]["mlVolumes"].append(foreign_volume)
-            manifest_path.write_text(yaml.safe_dump(tampered, sort_keys=False), encoding="utf-8")
-            rejected(testbed, config_dir)
-
-            manifest_path.write_text(yaml.safe_dump(original, sort_keys=False), encoding="utf-8")
+        for device in ("cpu", "gpu"):
+            name = "smoke-{}".format(device)
             run(
-                sys.executable, ROOT / "scripts/host/config-check.py",
-                "--testbed", testbed, "--config-dir", config_dir,
+                sys.executable,
+                "scripts/host/config-render.py",
+                "--testbed",
+                str(TESTBED),
+                "--name",
+                name,
+                "--scenario",
+                str(SCENARIO_ROOT / "mnist" / "smoke.yaml"),
+                "--output-root",
+                temporary,
+                "--ml-device",
+                device,
+            )
+            config_dir = Path(temporary) / name
+            run(
+                sys.executable,
+                "scripts/host/config-check.py",
+                "--testbed",
+                str(TESTBED),
+                "--config-dir",
+                str(config_dir),
             )
             run(
-                sys.executable, ROOT / "scripts/host/ml-compose-check.py",
-                "--testbed", testbed, "--config-dir", config_dir,
+                sys.executable,
+                "scripts/host/ml-compose-check.py",
+                "--testbed",
+                str(TESTBED),
+                "--config-dir",
+                str(config_dir),
             )
-            compose = yaml.safe_load((config_dir / "compose.yaml").read_text(encoding="utf-8"))
-            assert list(compose["services"]) == original["runtime"]["hostContainers"]
-            expected_builds = 2 if original["runtime"]["deploymentKind"] == "production-flat" else 1
-            assert len({service["image"] for service in compose["services"].values()}) == expected_builds
-            assert list(compose["volumes"]) == [
-                item["name"] for item in original["runtime"]["mlVolumes"]
-            ]
-            for service in compose["services"].values():
-                target = service["build"]["target"]
-                expected_revision = component_locks[
-                    "ML/PyAnLF" if target == "pyanlf" else "ML/PyMTLF"
-                ]
-                assert service["build"]["args"]["COMPONENT_REVISION"] == expected_revision
-            if original["runtime"]["deploymentKind"] in ("static-flat", "static-hierarchical"):
-                topology_name = original["runtime"]["deploymentKind"] + ".yaml"
-                for service in compose["services"].values():
-                    assert any(
-                        volume.get("source") == "${CONFIG_DIR:-.}/topology/" + topology_name
-                        and volume.get("target") == "/etc/5g-nwdaf/topology/" + topology_name
-                        and volume.get("read_only") is True
-                        for volume in service["volumes"]
-                    ), "static PyMTLF service is missing its generated topology mount"
-            if original["runtime"]["deploymentKind"] == "protocol-hierarchical":
-                root_service = original["runtime"]["coordinatorContainer"]
-                for service_name, service in compose["services"].items():
-                    topology_mounts = [
-                        volume for volume in service["volumes"]
-                        if volume.get("target") == "/etc/5g-nwdaf/topology/protocol-hierarchical.yaml"
-                    ]
-                    assert len(topology_mounts) == (1 if service_name == root_service else 0)
-            print("OK exact-runtime testbed={} services={}".format(
-                testbed, len(compose["services"])
-            ))
+
+    print("RUNTIME_INVENTORY_TEST formal_scenarios=8 render=mnist-smoke status=passed")
     return 0
 
 

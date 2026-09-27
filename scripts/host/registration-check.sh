@@ -18,24 +18,20 @@ from configlib import load_runtime_manifest, load_yaml, resolve_path
 testbed = load_yaml(resolve_path(sys.argv[1]))
 runtime = load_runtime_manifest(resolve_path(sys.argv[2]))["runtime"]
 scope = runtime["resetScope"]["nrf"]
-ids = []
-if "nfInstanceIds" in scope:
-    active_units = {item["unit"] for item in runtime["guestServices"]}
-    ids = [
-        item["nfInstanceId"] for item in runtime["nwdafs"]
-        if item["unit"] in active_units
-    ]
-    ids.append(runtime["resetScope"]["adrf"]["nfInstanceId"])
+active_units = {item["unit"] for item in runtime["guestServices"]}
+ids = [
+    item["nfInstanceId"] for item in runtime["nwdafs"]
+    if item["unit"] in active_units
+]
+ids.append(runtime["resetScope"]["adrf"]["nfInstanceId"])
 endpoint = testbed["coreServices"]["mongodb"]["endpoint"]
 print(
     "mongodb://{}:{}".format(endpoint["address"], endpoint["port"]),
     scope["database"],
-    ",".join(ids) or "-",
+    ",".join(ids),
 )
 PY
 )
-[ "$instance_ids" != - ] || { echo "NRF exact registration check skipped (legacy scope)"; exit 0; }
-
 expected_count=$(awk -F, '{print NF}' <<<"$instance_ids")
 attempts=120
 [ "$mode" = once ] && attempts=1

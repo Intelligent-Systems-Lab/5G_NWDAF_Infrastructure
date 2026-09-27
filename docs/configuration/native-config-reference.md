@@ -1,104 +1,75 @@
-# Native Config Reference
+# Generated Native Configuration Reference
 
-`config-create` renders a complete directory because the processes do not read
-`testbed.yaml` or `scenario.yaml` themselves. Each service receives its own
-native YAML/JSON, while `manifest.yaml` records provenance and runtime choices.
+`config-create` writes one complete config set under `config/local/<name>/`.
+The directory is generated from the selected testbed and scenario and is
+ignored by Git.
 
-## File map
+## Generated files
 
-| Files | Consumer | Primary rendered source |
-| --- | --- | --- |
-| `nrfcfg.yaml` | NRF | NRF SBI, MongoDB, PLMN |
-| `nssfcfg.yaml` | NSSF | PLMN, S-NSSAI, both TAIs |
-| `udrcfg.yaml`, `udmcfg.yaml`, `ausfcfg.yaml`, `pcfcfg.yaml` | free5GC NFs | SBI/NRF/MongoDB, identity and slice |
-| `amfcfg.yaml` | AMF | SBI, N2, PLMN, S-NSSAI, TAIs |
-| `smfcfg.yaml` | SMF | SBI/N4, DNN, UPFs, TAI routes, sampling/URR period |
-| `uerouting.yaml` | SMF routing | Derived Path SUPIs and selected UPF routes |
-| `upfcfg-a.yaml`, `upfcfg-b.yaml` | go-upf | N3/N4/N6, UE pool, GTP interface, Event Exposure, PseudoDriver |
-| `nwdafcfg-a.yaml`, `-b.yaml`, `-c.yaml` | three NWDAFs | NF identity/role, SBI, NRF/ADRF, ML endpoints, FL contracts |
-| `adrfcfg.yaml` | ADRF | stable NF identity, SBI, MongoDB, model storage and retrieval |
-| `pyanlf-a.yaml`, `-b.yaml` | PyAnLF containers | sampling, analytics/accuracy delivery, model device and endpoints |
-| `pymtlf-a.yaml`, `-b.yaml` | FL clients | collection trigger, local fitting runtime parameters, ADRF retrieval, artifacts and device |
-| `pymtlf-c.yaml` | FL server | Flat orchestration, participant source, training trigger, Server-owned client epochs, rounds, Model Provision/Monitor, validation and publication |
-| `consumer.yaml` | Consumer/callback server | NRF discovery, Path scope, Internal Group, callback and reporting |
-| `webuicfg.yaml` | optional WebConsole | management HTTP, NRF, MongoDB, loopback billing compatibility |
-| `ueransim/gnb-*.yaml` | two gNBs | PLMN/TAI, N2/N3, AMF and S-NSSAI |
-| `ueransim/ue1.yaml` … `ue6.yaml` | six UEs | derived SUPI, authentication, gNB, DNN and S-NSSAI |
-| `subscriber/*.json` | MongoDB fixture loader | same derived SUPIs, authentication, DNN, slice and Internal Group |
-| `network/*.yaml` | Guest network reconciler | VM base interfaces and service aliases |
-| `compose.yaml` | Host Docker Compose | only the selected ML services, limits, ports, config mounts, volumes, labels and device policy |
-| `manifest.yaml` | Host tooling | topology/scenario provenance plus exact Guest/NF/UE/data-owner/container/volume/reset/capacity inventories |
+| Output | Consumer |
+| --- | --- |
+| `manifest.yaml` | lifecycle, status, runner, dataset, reset, and evidence tooling |
+| `nrfcfg.yaml` | NRF in the Core Guest |
+| `adrfcfg.yaml` | ADRF in the Core Guest |
+| `nwdafcfg-*.yaml` | each selected Root, Branch, and Leaf NWDAF |
+| `pymtlf-*.yaml` | each selected Host PyMTLF service |
+| `topology/protocol-hierarchical.yaml` | protocol-aware PyMTLF services |
+| `network/<machine>.yaml` | persistent Guest network aliases |
+| `compose.yaml` | selected Host PyMTLF services, devices, mounts, ports, and volumes |
 
-Static configs replace the A/B/C-specific NWDAF and ML files with role-named
-files such as `nwdafcfg-server.yaml`, `pymtlf-client-1.yaml`,
-`nwdafcfg-root.yaml`, `pymtlf-branch-1.yaml`, and `pymtlf-leaf-1.yaml`. They add
-`topology/static-flat.yaml` or `topology/static-hierarchical.yaml`, render
-`ue1.yaml` through `ue8.yaml`, omit `consumer.yaml` and PyAnLF, and declare the
-exact unit/container/volume inventory in `manifest.yaml`.
-The strict checker reconstructs that inventory from the selected complete
-`TESTBED` and rejects omissions, additions, or a stale definition hash.
+The file inventory varies by scenario. A normal or reparenting config omits the
+inactive replacement Branch service; a replacement-fault config includes it.
 
-## Production Flat PyMTLF ownership
+## Manifest
 
-All three PyMTLF processes use `runtime.mode: federated`, but their configured
-engines and policy ownership differ:
+`manifest.yaml` records:
 
-- A/B configure the Client engine and
-  `training_data.collection_trigger: consumer_subscription`. Their `training`
-  section owns device, batch size, learning rate, validation ratio, and random
-  seed; it must not contain `epochs`.
-- C configures the Server engine, `orchestration.mode: flat`,
-  `participant_source: monitor_scopes`, degradation-triggered training, and a
-  disabled private trigger. It owns `round_count` and
-  `client_training.epochs`.
+- config-set name;
+- a complete snapshot of the rendered scenario;
+- selected testbed definition and deployment kind;
+- render options, including CPU or GPU device policy;
+- exact Guest machine/service and Host container/volume inventory;
+- selected NWDAF definitions and resource capacity;
+- scoped reset ownership;
+- seed-restoration input;
+- dataset paths;
+- the generated file inventory.
 
-For each round, C writes its client-training directive into the typed
-`ROUND_INPUT` artifact manifest and sends A/B a training PATCH containing that
-artifact's `mLModelUrl`. A/B validate the artifact and use the embedded epochs;
-epochs are not an extra ad-hoc field in the public training request. Adding a
-Client-local epochs value is therefore a schema error, not an override.
+Runtime commands use the scenario snapshot in the manifest. Editing the source
+scenario after rendering does not mutate an existing config set; render a new
+set, or deliberately replace the old one with `FORCE=true` while it is not
+active.
 
-## Static role ownership
+## Guest activation
 
-- Flat Server and HFL Root own autonomous static orchestration and the private
-  training trigger. Flat omits the hierarchy strategy (FedAvg); HFL explicitly
-  selects FedProx.
-- Branch configures both FL server and client engines, but no autonomous
-  orchestration and no private collection.
-- Client/Leaf configures one private collection profile selecting exactly one
-  two-SUPI Internal Group. The four profiles are disjoint and cover all eight
-  static UEs.
-- Every role has an independent NWDAF NF Instance ID, endpoint, PyMTLF config,
-  and state volume even when several processes share one VM and binary.
+Guest lifecycle tooling stages the complete config set on every selected VM,
+checks required files for that machine, activates the staged directory, and
+updates persistent network aliases before starting units. Activation is refused
+while experiment services are active.
 
-## Renderer-owned and advanced values
+The selected config tree has one content-derived runtime identity used to fence
+selected, staged, active Guest, and Compose state. It is an existing lifecycle
+contract: a mismatch stops startup, status-sensitive operations, or reset
+instead of guessing which config owns the runtime. Operators do not need to
+calculate or pass this value manually.
 
-Topology, address, identity, scenario timing, dataset references, CPU/GPU
-policy, and WebConsole enablement are renderer-owned. Change their upstream
-input and create a new set whenever possible. This keeps NF, RAN, ML, Consumer,
-fixture, and network values synchronized.
+## Host Compose
 
-A local native file may be edited when an experiment needs a component option
-the renderer does not model. Treat the directory as one versioned unit:
+Generated Compose builds the local PyMTLF image and starts only the selected
+service inventory. Each service receives its native config, role-specific
+dataset mount, volume, port, CPU/memory limits, and device policy. GPU services
+use the Docker `nvidia` runtime and CDI selection; CPU-owned Branch services do
+not receive GPU access.
 
-1. create a new `config/local/NAME` rather than editing `config/default`;
-2. change all affected native files deliberately;
-3. run `make config-validate CONFIG_DIR=...` and review every finding;
-4. record intentional deviations with the experiment results.
+## Editing boundary
 
-Diagnostics compare native values with `TESTBED`, scenario, component locks,
-seed-model dimensions, fixtures, and other native files. They do not merge
-files, repair drift, or gate `experiment-start`. A syntactically valid but
-inconsistent set may start and then fail at the responsible component.
+Do not maintain behavior by editing generated files directly. Change:
 
-## Activation
+- deployment ownership in `testbed.protocol-hierarchical.yaml`;
+- run behavior in a scenario;
+- component-native defaults in `config/templates` or the renderer when that
+  is the owning contract.
 
-Guest startup hashes and stages the whole directory below
-`/etc/5g-nwdaf-infrastructure/config-sets/<name>-<hash-prefix>/`. The Guest
-`active` symlink selects that immutable staged copy. Host ML containers bind
-the selected native files read-only and carry config name/hash labels. Validation,
-Guest activation, container labels, logs, and status all use the same canonical
-tree SHA-256 for that directory.
-
-Do not edit an already staged Guest copy. Create or edit the Host config and
-restart the relevant lifecycle so identity, logs, and status remain traceable.
+Then render and validate a new config set. Manual edits can produce a config
+that no longer corresponds to either authoritative input and will normally be
+rejected by identity or cross-config checks.

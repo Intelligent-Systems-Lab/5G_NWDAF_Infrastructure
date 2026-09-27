@@ -2,11 +2,7 @@
 set -euo pipefail
 
 HOST_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
-MACHINES=(core path-a path-b)
-CORE_UNITS=(mongodb nrf nssf udr udm ausf pcf amf smf adrf nwdaf-c)
-PATH_A_UNITS=(upf-a nwdaf-a gnb-a ue1 ue2 ue3)
-PATH_B_UNITS=(upf-b nwdaf-b gnb-b ue4 ue5 ue6)
-ML_SERVICES=(pyanlf-a pyanlf-b pymtlf-a pymtlf-b pymtlf-c)
+MACHINES=()
 
 select_testbed_machines() {
   local testbed=$1 machine_lines
@@ -309,44 +305,21 @@ provider_vagrant_halt() {
 vm_log_sources() {
   local machine=$1 filter=$2 config_dir=${3:-} logical unit unit_lines
   local -a template_units=()
-  local -a special_sources=()
-  if [ -n "$config_dir" ]; then
-    [[ " ${MACHINES[*]} " == *" $machine "* ]] || {
-      echo "unknown VM for log source resolution: $machine" >&2
-      return 2
-    }
-    unit_lines=$(config_guest_units "$config_dir" "$machine") || return
-    [ -n "$unit_lines" ] || {
-      echo "selected Guest inventory is empty for $machine" >&2
-      return 1
-    }
-    mapfile -t template_units <<<"$unit_lines"
-    special_sources=('network|5g-nwdaf-network.service')
-    if [ "$machine" = core ]; then
-      [ -f "$config_dir/webuicfg.yaml" ] && template_units+=(webconsole)
-      [ -f "$config_dir/consumer.yaml" ] && special_sources+=('consumer|5g-nwdaf-consumer.service')
-    fi
-  else case "$machine" in
-    core)
-      template_units=("${CORE_UNITS[@]}" webconsole)
-      special_sources=(
-        'consumer|5g-nwdaf-consumer.service'
-        'network|5g-nwdaf-network.service'
-      )
-      ;;
-    path-a)
-      template_units=("${PATH_A_UNITS[@]}")
-      special_sources=('network|5g-nwdaf-network.service')
-      ;;
-    path-b)
-      template_units=("${PATH_B_UNITS[@]}")
-      special_sources=('network|5g-nwdaf-network.service')
-      ;;
-    *)
-      echo "unknown VM for log source resolution: $machine" >&2
-      return 2
-      ;;
-  esac; fi
+  local -a special_sources=('network|5g-nwdaf-network.service')
+  [ -n "$config_dir" ] || {
+    echo "generated config is required for log source resolution" >&2
+    return 2
+  }
+  [[ " ${MACHINES[*]} " == *" $machine "* ]] || {
+    echo "unknown VM for log source resolution: $machine" >&2
+    return 2
+  }
+  unit_lines=$(config_guest_units "$config_dir" "$machine") || return
+  [ -n "$unit_lines" ] || {
+    echo "selected Guest inventory is empty for $machine" >&2
+    return 1
+  }
+  mapfile -t template_units <<<"$unit_lines"
 
   for logical in "${template_units[@]}"; do
     if [[ "$logical" == $filter ]]; then
@@ -491,19 +464,6 @@ guest_upload() {
   ) 9>"$lock_root/vagrant-$machine.lock"
 }
 
-consumer_cli() {
-  local action=$1
-  case "$action" in status|delete) ;; *) echo "invalid consumer action: $action" >&2; return 2;; esac
-  vssh core "sudo -u 5g-nwdaf /usr/local/libexec/5g-nwdaf-infrastructure/nwdaf-consumer --config /etc/5g-nwdaf-infrastructure/active/consumer.yaml '$action'"
-}
-
-consumer_unit_active() {
-  local core_state
-  core_state=$(vm_state_for core) || return
-  [ "$core_state" = running ] || return 1
-  vssh core "systemctl is-active --quiet 5g-nwdaf-consumer.service" >/dev/null 2>&1
-}
-
 unit_action() {
   local machine=$1 action=$2 unit=$3
   vssh "$machine" "sudo systemctl $action 5g-nwdaf@$unit.service"
@@ -557,14 +517,6 @@ ml_project_name() {
     return 2
   }
   printf '%s\n' "$project"
-}
-
-ml_runtime_mode() {
-  local mode=${ML_RUNTIME_MODE:-baseline}
-  case "$mode" in
-    baseline|cpu-smoke) printf '%s\n' "$mode" ;;
-    *) echo "invalid ML runtime mode: $mode" >&2; return 2 ;;
-  esac
 }
 
 config_ml_device_policy() {
@@ -708,15 +660,6 @@ check_reset_runtime_inventory() {
   [ "$failures" -eq 0 ]
 }
 
-config_subscriptions_mode() {
-  local config_dir=$1
-  PYTHONPATH="$HOST_ROOT/scripts/host" python3 - "$config_dir" <<'PY'
-import sys
-from configlib import runtime_subscriptions, resolve_path
-print(runtime_subscriptions(resolve_path(sys.argv[1])))
-PY
-}
-
 config_deployment_kind() {
   local config_dir=$1
   PYTHONPATH="$HOST_ROOT/scripts/host" python3 - "$config_dir" <<'PY'
@@ -795,29 +738,6 @@ wait_no_running_ml_containers() {
   return 1
 }
 
-config_webconsole_enabled() {
-  local config_dir=$1
-  PYTHONPATH="$HOST_ROOT/scripts/host" python3 - "$config_dir" <<'PY'
-import sys
-from configlib import load_yaml, resolve_path
-manifest = load_yaml(resolve_path(sys.argv[1]) / "manifest.yaml")
-enabled = manifest.get("optionalServices", {}).get("webconsole", {}).get("enabled")
-if not isinstance(enabled, bool):
-    raise SystemExit("optionalServices.webconsole.enabled must be boolean")
-print(str(enabled).lower())
-PY
-}
-
-config_webconsole_endpoint() {
-  local config_dir=$1
-  PYTHONPATH="$HOST_ROOT/scripts/host" python3 - "$config_dir" <<'PY'
-import sys
-from configlib import load_yaml, resolve_path
-config = load_yaml(resolve_path(sys.argv[1]) / "webuicfg.yaml")["configuration"]["webServer"]
-print(config["ipv4Address"], config["port"])
-PY
-}
-
 assert_guest_runtime_identity() {
   local config_dir=$1 selected_hash vm_records machine state snapshot stored_hash actual_hash unit declared
   selected_hash=$(config_hash "$config_dir")
@@ -874,10 +794,10 @@ ml_device_policy() {
 }
 
 ml_compose() {
-  local project policy config_dir
+  local project config_dir
   local -a command
   project=$(ml_project_name)
-  policy=$(ml_device_policy)
+  ml_device_policy >/dev/null
   config_dir=${CONFIG_DIR:-}
   [ -n "$config_dir" ] && [ -f "$config_dir/compose.yaml" ] || {
     echo "CONFIG_DIR must select a generated config with compose.yaml" >&2
@@ -885,13 +805,6 @@ ml_compose() {
   }
   export REPOSITORY_ROOT="$HOST_ROOT"
   command=(docker compose -p "$project" -f "$config_dir/compose.yaml")
-  if [ "$(ml_runtime_mode)" = cpu-smoke ]; then
-    if [ -f "$config_dir.cpu-smoke.yaml" ]; then
-      command+=(-f "$config_dir.cpu-smoke.yaml")
-    else
-      command+=(-f "$HOST_ROOT/compose.cpu-smoke.yaml")
-    fi
-  fi
   "${command[@]}" "$@"
 }
 

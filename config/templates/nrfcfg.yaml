@@ -11,4 +11,3 @@ configuration:
   DefaultPlmnId: {mcc: "466", mnc: "92"}
   serviceNameList: [nnrf-nfm, nnrf-disc]
 logger: {enable: true, level: info, reportCaller: false}
-

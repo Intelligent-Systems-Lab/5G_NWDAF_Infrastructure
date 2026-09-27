@@ -4,7 +4,6 @@ source "$(dirname "$0")/lib.sh"
 
 testbed=${1:?usage: ml-start.sh testbed [config-dir]}
 explicit_config=${2:-}
-mode=$(ml_runtime_mode)
 project=$(ml_project_name)
 config_dir=$(effective_config_dir "$testbed" "$explicit_config")
 hash=$(config_hash "$config_dir")
@@ -18,11 +17,7 @@ mapfile -t ml_build_services <<<"$ml_build_lines"
   exit 1
 }
 
-if [ "$mode" = cpu-smoke ]; then
-  bind_address=127.0.0.1
-else
-  bind_address=$(effective_ml_bind_address "$testbed")
-fi
+bind_address=$(effective_ml_bind_address "$testbed")
 
 device_policy=$(config_ml_device_policy "$config_dir")
 export ML_DEVICE_POLICY="$device_policy"
@@ -41,7 +36,7 @@ export CONFIG_SET_NAME="$config_name"
 export CONFIG_HASH="$hash"
 export ML_BIND_ADDRESS="$bind_address"
 
-echo "ML CONFIG project=$project mode=$mode device_policy=$device_policy set=$config_name hash=$hash bind=$bind_address"
+echo "ML CONFIG project=$project device_policy=$device_policy set=$config_name hash=$hash bind=$bind_address"
 ml_compose build "${ml_build_services[@]}"
 
 if [ "$device_policy" = gpu ]; then
@@ -74,4 +69,4 @@ ml_compose up --detach --no-build --wait --wait-timeout 240 "${ml_services[@]}" 
 rollback_needed=false
 trap - ERR INT TERM
 
-echo "Host ML services are active; VM services and subscriptions were not changed."
+echo "Host ML services are active; VM services were not changed."

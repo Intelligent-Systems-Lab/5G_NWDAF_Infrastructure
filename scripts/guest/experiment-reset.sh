@@ -37,7 +37,6 @@ if [ "$action" != plan ]; then
   if [ -n "$active_units" ]; then
     mapfile -t active <<<"$active_units"
   fi
-  systemctl is-active --quiet 5g-nwdaf-consumer.service && active+=("consumer")
   if [ "${#active[@]}" -ne 0 ]; then
     echo "refusing reset while Core services are active: ${active[*]}" >&2
     exit 1

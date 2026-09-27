@@ -1778,7 +1778,6 @@ def run(args: argparse.Namespace) -> int:
             controller = FL_CONTROL.Controller(
                 fl_contract,
                 FL_CONTROL.HttpClient(timeout=30),
-                poll_seconds=contract.poll_seconds,
             )
             request_started_at = utc_now()
             status = controller.training_start(request_id, None)
@@ -1790,7 +1789,13 @@ def run(args: argparse.Namespace) -> int:
                 nf_instance_id=contract.root_nf_instance_id,
             )
             plan_id = status.get("planId")
-            deadline = time.monotonic() + fl_contract.closure_budget_seconds
+            deadlines = writer.run["deadlines"]
+            closure_budget_seconds = (
+                deadlines["preparationTimeoutSeconds"]
+                + contract.accepted_rounds * deadlines["roundTimeoutSeconds"]
+                + deadlines["delayExtensionPolicy"]["maximumTotalSeconds"]
+            )
+            deadline = time.monotonic() + closure_budget_seconds
             while not plan_id and time.monotonic() < deadline:
                 time.sleep(contract.poll_seconds)
                 status = controller.training_status(request_id)
@@ -1856,7 +1861,7 @@ def run(args: argparse.Namespace) -> int:
                         "HEARTBEAT accepted={} state={} current_round={} after_fault={} elapsed={}s".format(
                             len(tracker.accepted), status.get("state"),
                             status.get("currentRound"), phase_counts["afterFault"],
-                            int(fl_contract.closure_budget_seconds - (deadline - time.monotonic())),
+                            int(closure_budget_seconds - (deadline - time.monotonic())),
                         ),
                         flush=True,
                     )

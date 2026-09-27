@@ -103,7 +103,7 @@ build_selected() {
   for service in "${selected_services[@]}"; do
     case "$service" in
       mongodb) continue ;;
-      nrf|nssf|udr|udm|ausf|pcf|amf|smf|adrf) mapping="NFs/$service:$service" ;;
+      nrf|adrf) mapping="NFs/$service:$service" ;;
       nwdaf-*) mapping="NFs/nwdaf:nwdaf" ;;
       *) echo "unsupported core service: $service" >&2; exit 2 ;;
     esac

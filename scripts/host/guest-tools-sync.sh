@@ -12,15 +12,10 @@ files=(
   scripts/guest/config-activate.sh
   scripts/guest/network-config.py
   scripts/guest/network-setup.sh
-  scripts/guest/dataset-activate.sh
-  scripts/guest/webconsole-build.sh
-  scripts/guest/subscriber-data.js
   scripts/shared/config_hash.py
   scripts/guest/systemd/5g-nwdaf@.service
   scripts/guest/systemd/5g-nwdaf-stack.target
   scripts/guest/systemd/5g-nwdaf-network.service
-  scripts/guest/systemd/5g-nwdaf-consumer.service
-  tools/nwdaf-consumer/consumer.py
 )
 
 temporary=$(mktemp -d)

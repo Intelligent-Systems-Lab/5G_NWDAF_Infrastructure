@@ -28,17 +28,6 @@ vm_status_summary() {
   done <<<"$records"
 }
 
-selected_subscription_status() {
-  local config_dir mode
-  config_dir=$(effective_config_dir "$OBSERVE_TESTBED" "$OBSERVE_CONFIG_DIR")
-  mode=$(config_subscriptions_mode "$config_dir")
-  if [ "$mode" = none ]; then
-    echo "SUBSCRIPTIONS mode=none state=disabled"
-  else
-    "$HOST_ROOT/scripts/host/subscriptions-status.sh"
-  fi
-}
-
 observe_cleanup() {
   if [ "${#OBSERVE_ACTIVE_PIDS[@]}" -gt 0 ]; then
     kill "${OBSERVE_ACTIVE_PIDS[@]}" >/dev/null 2>&1 || true
@@ -64,30 +53,11 @@ observe_collect_vm_records() {
   ' observe-vm-state "$HOST_ROOT/scripts/host/lib.sh"
 }
 
-observe_collect_subscription_status() {
-  local timeout_seconds=$1
-  timeout --foreground "$timeout_seconds" bash -c '
-    source "$1"
-    OBSERVE_TESTBED=$2
-    OBSERVE_CONFIG_DIR=$3
-    selected_subscription_status
-  ' observe-subscription "$HOST_ROOT/scripts/host/observe.sh" \
-    "$OBSERVE_TESTBED" "$OBSERVE_CONFIG_DIR"
-}
-
 observe_start_section() {
   local label=$1 output_file=$2 timeout_seconds=$3
   shift 3
   (
     observe_section "$label" timeout --foreground "$timeout_seconds" "$@"
-  ) >"$output_file" 2>&1 &
-  OBSERVE_ACTIVE_PIDS+=("$!")
-}
-
-observe_start_subscription_section() {
-  local label=$1 output_file=$2 timeout_seconds=$3
-  (
-    observe_section "$label" observe_collect_subscription_status "$timeout_seconds"
   ) >"$output_file" 2>&1 &
   OBSERVE_ACTIVE_PIDS+=("$!")
 }
@@ -119,18 +89,14 @@ observe_snapshot() {
     observe_section VM vm_status_summary >"$OBSERVE_ACTIVE_DIR/vm" 2>&1 || failures=$((failures + 1))
     observe_start_section SERVICE "$OBSERVE_ACTIVE_DIR/service" "$timeout_seconds" \
       "$HOST_ROOT/scripts/host/services-status.sh" "$OBSERVE_TESTBED" "$OBSERVE_CONFIG_DIR"
-    observe_start_section WEBCONSOLE "$OBSERVE_ACTIVE_DIR/webconsole" "$timeout_seconds" \
-      "$HOST_ROOT/scripts/host/webconsole-status.sh"
-    observe_start_subscription_section SUBSCRIPTION \
-      "$OBSERVE_ACTIVE_DIR/subscription" "$timeout_seconds"
   else
     cat "$vm_error_file" >"$OBSERVE_ACTIVE_DIR/vm"
     printf '%s\n' 'VM status unavailable' >>"$OBSERVE_ACTIVE_DIR/vm"
-    for section in service webconsole subscription; do
+    for section in service; do
       printf 'VM state unavailable\n%s status unavailable\n' "${section^^}" \
         >"$OBSERVE_ACTIVE_DIR/$section"
     done
-    failures=$((failures + 4))
+    failures=$((failures + 2))
   fi
 
   export ML_STATUS_CACHE_DIR="$OBSERVE_CACHE_DIR/ml"
@@ -140,7 +106,7 @@ observe_snapshot() {
 
   observe_wait_sections || failures=$((failures + 1))
 
-  for section in vm service webconsole ml subscription; do
+  for section in vm service ml; do
     [ "$section" = vm ] || echo
     cat "$OBSERVE_ACTIVE_DIR/$section"
   done

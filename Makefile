@@ -3,7 +3,6 @@ TESTBED ?= testbed.protocol-hierarchical.yaml
 CONFIG_DIR ?=
 NAME ?= protocol-hierarchical
 DEVICE ?= cpu
-WEBCONSOLE ?= false
 FORCE ?= false
 SEED ?=
 WORKLOAD ?=
@@ -15,15 +14,12 @@ SERIES_ROOT ?= runs/protocol-hierarchical/e0-e2b
 require_testbed = @source scripts/host/lib.sh; require_testbed_selection "$(TESTBED)"
 
 .PHONY: help help-advanced help-dev help-all experiment-validate experiment-start experiment-status experiment-stop \
-	config-create config-validate dataset-validate dataset-load reset-show reset test test-containers \
+	config-create config-validate dataset-validate reset-show reset test \
 	dataset-generate dataset-show \
 	ml-start ml-status ml-stop vm-up vm-status vm-halt \
-	webconsole-start webconsole-status webconsole-stop \
-	services-start services-status services-stop subscriptions-start \
-	subscriptions-status subscriptions-stop subscriber-data-apply \
-	subscriber-data-show subscriber-data-clear fl-collection-start fl-collection-status \
-	fl-collection-stop fl-training-start fl-training-status fl-experiment-run fl-analysis \
-	fl-experiment-collect fl-branch-replacement-run fl-branch-replacement-collect observe logs \
+	services-start services-status services-stop \
+	fl-training-start fl-training-status fl-experiment-run fl-analysis \
+	fl-experiment-collect observe logs \
 	fl-series-run fl-series-analysis
 
 help:
@@ -45,37 +41,30 @@ help-advanced:
 	@echo ""
 	@echo "Configuration and datasets"
 	@echo "  make config-create TESTBED=... NAME=... FROM=experiments/.../<scenario>.yaml"
-	@echo "                     [DEVICE=gpu|cpu] [SEED=<formal-seed>] [WEBCONSOLE=false|true] [FORCE=false|true]"
+	@echo "                     [DEVICE=gpu|cpu] [SEED=<formal-seed>] [FORCE=false|true]"
 	@echo "  make config-validate TESTBED=... [CONFIG_DIR=...]  Diagnose cross-config inconsistencies"
-	@echo "  make dataset-generate | dataset-validate | dataset-show | dataset-load TESTBED=... [CONFIG_DIR=...]"
+	@echo "  make dataset-generate | dataset-validate | dataset-show TESTBED=... [CONFIG_DIR=...]"
 	@echo ""
 	@echo "Independent execution domains"
 	@echo "  make services-start | services-status | services-stop TESTBED=... [CONFIG_DIR=...]"
 	@echo "  make ml-start | ml-status | ml-stop TESTBED=... [CONFIG_DIR=...]"
-	@echo "  make webconsole-start TESTBED=... [CONFIG_DIR=...] | webconsole-status | webconsole-stop"
-	@echo "  make subscriptions-start | subscriptions-status | subscriptions-stop"
-	@echo "  make fl-collection-start|status|stop TESTBED=... [CONFIG_DIR=...] RUN_ID=<uuid>"
 	@echo "  make fl-training-start|status TESTBED=... [CONFIG_DIR=...] RUN_ID=<uuid> [MODEL_FAMILY_ID=...]"
 	@echo "  make fl-experiment-run TESTBED=... [CONFIG_DIR=...] RUN_NAME=<name>"
 	@echo "  make fl-experiment-collect TESTBED=... [CONFIG_DIR=...] RUN_NAME=<same-name>"
 	@echo "  make fl-analysis BASELINE_RUN=<run-dir> TREATMENT_RUN=<run-dir> OUTPUT_DIR=<new-dir>"
 	@echo "  make fl-series-run WORKLOAD=mnist SEEDS=1 CONDITIONS=E0,E1 RUN_PREFIX=<unique-prefix>"
 	@echo "  make fl-series-analysis [SERIES_ROOT=runs/protocol-hierarchical/e0-e2b] OUTPUT_DIR=<new-dir>"
-	@echo "  make fl-branch-replacement-run TESTBED=... [CONFIG_DIR=...] RUN_NAME=<name>"
-	@echo "  make fl-branch-replacement-collect TESTBED=... [CONFIG_DIR=...] RUN_NAME=<same-name>"
 	@echo "  make observe TESTBED=... [CONFIG_DIR=...]"
 	@echo "  make logs TESTBED=... [CONFIG_DIR=...] [SOURCE=vm|ml|all] [VM=selected-machine|all] [SERVICE=name|glob|all]"
 	@echo "            [SINCE='10 minutes ago'] [TAIL=lines|all] [FOLLOW=true|false]"
 	@echo ""
-	@echo "Subscriber and retained experiment state"
-	@echo "  make subscriber-data-show | subscriber-data-apply | subscriber-data-clear TESTBED=... [CONFIG_DIR=...]"
+	@echo "Retained experiment state"
 	@echo "  make reset-show TESTBED=... [CONFIG_DIR=...]"
 	@echo "  make reset TESTBED=... [CONFIG_DIR=...] RESET_CONFIRM=<scenario>"
 
 help-dev:
 	@echo "5G NWDAF Infrastructure — repository tests"
-	@echo "  make test             Run static and host-only repository checks"
-	@echo "  make test-containers  Run disposable Flat/HFL CPU container lifecycle tests"
+	@echo "  make test  Run static and host-only repository checks"
 
 help-all: help
 	@echo ""
@@ -105,11 +94,10 @@ config-create:
 	@test -n "$(FROM)" || { echo "FROM=<repository-relative-scenario.yaml> is required" >&2; exit 2; }
 	@case "$(FROM)" in /*) echo "FROM must be relative to the repository: $(FROM)" >&2; exit 2;; *.yaml) ;; *) echo "FROM must select a scenario YAML file: $(FROM)" >&2; exit 2;; esac
 	@case "$(DEVICE)" in gpu|cpu) ;; *) echo "DEVICE must be gpu or cpu" >&2; exit 2;; esac
-	@case "$(WEBCONSOLE)" in false|true) ;; *) echo "WEBCONSOLE must be false or true" >&2; exit 2;; esac
 	@case "$(FORCE)" in false|true) ;; *) echo "FORCE must be false or true" >&2; exit 2;; esac
 	@python3 scripts/host/config-render.py --testbed "$(TESTBED)" --name "$(NAME)" \
 		--scenario "$(FROM)" --output-root config/local --ml-device "$(DEVICE)" \
-		--webconsole "$(WEBCONSOLE)" $(if $(SEED),--seed "$(SEED)") $(if $(filter true,$(FORCE)),--force)
+		$(if $(SEED),--seed "$(SEED)") $(if $(filter true,$(FORCE)),--force)
 
 config-validate:
 	$(require_testbed)
@@ -118,10 +106,6 @@ config-validate:
 dataset-validate:
 	$(require_testbed)
 	@python3 scripts/host/dataset.py --testbed "$(TESTBED)" $(if $(CONFIG_DIR),--config-dir "$(CONFIG_DIR)") check
-
-dataset-load:
-	$(require_testbed)
-	@scripts/host/dataset-stage.sh apply "$(TESTBED)" "$(CONFIG_DIR)"
 
 reset-show:
 	$(require_testbed)
@@ -133,12 +117,7 @@ reset:
 	@scripts/host/experiment-reset.sh verify "$(TESTBED)" "$(CONFIG_DIR)"
 
 test:
-	# Repository checks use the retained production definition only as a fixture;
-	# this explicit fixture is not reachable from a deployment lifecycle target.
-	@tests/repository.sh testbed.yaml
-
-test-containers:
-	@tests/ml-container-lifecycle.sh
+	@tests/repository.sh testbed.protocol-hierarchical.yaml
 
 dataset-generate:
 	$(require_testbed)
@@ -160,16 +139,6 @@ ml-stop:
 	$(require_testbed)
 	@scripts/host/ml-stop.sh "$(TESTBED)" "$(CONFIG_DIR)"
 
-webconsole-start:
-	$(require_testbed)
-	@scripts/host/webconsole-start.sh "$(TESTBED)" "$(CONFIG_DIR)"
-
-webconsole-status:
-	@scripts/host/webconsole-status.sh
-
-webconsole-stop:
-	@scripts/host/webconsole-stop.sh
-
 vm-up:
 	@source scripts/host/lib.sh; require_testbed_selection "$(TESTBED)"; TESTBED="$(TESTBED)" provider_vagrant_up
 
@@ -190,39 +159,6 @@ services-status:
 services-stop:
 	$(require_testbed)
 	@scripts/host/services-stop.sh "$(TESTBED)" "$(CONFIG_DIR)"
-
-subscriber-data-apply:
-	$(require_testbed)
-	@scripts/host/subscriber-data.sh apply "$(TESTBED)" "$(CONFIG_DIR)"
-
-subscriber-data-show:
-	$(require_testbed)
-	@scripts/host/subscriber-data.sh show "$(TESTBED)" "$(CONFIG_DIR)"
-
-subscriber-data-clear:
-	$(require_testbed)
-	@scripts/host/subscriber-data.sh clear "$(TESTBED)" "$(CONFIG_DIR)"
-
-subscriptions-start:
-	@scripts/host/subscriptions-start.sh
-
-subscriptions-status:
-	@scripts/host/subscriptions-status.sh
-
-subscriptions-stop:
-	@scripts/host/subscriptions-stop.sh
-
-fl-collection-start:
-	$(require_testbed)
-	@python3 scripts/host/fl-control.py collection-start --testbed "$(TESTBED)" --config-dir "$(CONFIG_DIR)" --run-id "$(RUN_ID)"
-
-fl-collection-status:
-	$(require_testbed)
-	@python3 scripts/host/fl-control.py collection-status --testbed "$(TESTBED)" --config-dir "$(CONFIG_DIR)" --run-id "$(RUN_ID)"
-
-fl-collection-stop:
-	$(require_testbed)
-	@python3 scripts/host/fl-control.py collection-stop --testbed "$(TESTBED)" --config-dir "$(CONFIG_DIR)" --run-id "$(RUN_ID)"
 
 fl-training-start:
 	$(require_testbed)
@@ -256,16 +192,6 @@ fl-series-run:
 fl-series-analysis:
 	@test -n "$(OUTPUT_DIR)" || { echo "OUTPUT_DIR=<new-dir> is required" >&2; exit 2; }
 	@MPLCONFIGDIR="$(CURDIR)/.cache/matplotlib" uv run --extra analysis python3 scripts/host/fl-analysis.py --series-root "$(SERIES_ROOT)" --output-dir "$(OUTPUT_DIR)"
-
-fl-branch-replacement-run:
-	$(require_testbed)
-	@test -n "$(RUN_NAME)" || { echo "RUN_NAME=<safe-run-name> is required" >&2; exit 2; }
-	@python3 scripts/host/fl-experiment-run.py --testbed "$(TESTBED)" --config-dir "$(CONFIG_DIR)" --run-name "$(RUN_NAME)" --require-fault
-
-fl-branch-replacement-collect:
-	$(require_testbed)
-	@test -n "$(RUN_NAME)" || { echo "RUN_NAME=<existing-run-name> is required" >&2; exit 2; }
-	@python3 scripts/host/fl-experiment-run.py --testbed "$(TESTBED)" --config-dir "$(CONFIG_DIR)" --run-name "$(RUN_NAME)" --collect-only --require-fault
 
 observe:
 	$(require_testbed)

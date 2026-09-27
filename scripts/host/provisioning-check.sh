@@ -42,13 +42,7 @@ def component_path(service):
         return None
     if kind == "nwdaf":
         return "NFs/nwdaf"
-    if kind == "upf":
-        return "NFs/upf"
-    if kind in {"gnb", "ue"}:
-        return "RAN/UERANSIM"
-    if kind == "core" and unit in {
-        "nrf", "nssf", "udr", "udm", "ausf", "pcf", "amf", "smf", "adrf"
-    }:
+    if kind == "core" and unit in {"nrf", "adrf"}:
         return "NFs/" + unit
     raise SystemExit("unsupported Guest service for component identity: " + unit)
 

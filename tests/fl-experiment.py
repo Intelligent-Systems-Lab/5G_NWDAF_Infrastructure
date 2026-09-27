@@ -49,26 +49,49 @@ def timestamp(index):
     return (BASE + timedelta(seconds=index)).isoformat().replace("+00:00", "Z")
 
 
+def fault_scenario(*, stop_nodes, branch_failure):
+    scenario = yaml.safe_load(
+        (ROOT / "experiments/protocol-hierarchical/mnist/smoke.yaml").read_text(
+            encoding="utf-8"
+        )
+    )
+    scenario["name"] = "protocol-hierarchical-fault-test"
+    scenario["topology"]["onBranchFailure"] = branch_failure
+    scenario["partition"]["samplesPerLeaf"] = 8000
+    scenario["training"]["acceptedRounds"] = 8
+    scenario["training"]["localEpochs"] = 4
+    scenario["fault"] = {
+        "normalAcceptedRounds": 2,
+        "stopNodes": list(stop_nodes),
+    }
+    scenario["observation"] = {
+        "pollIntervalMilliseconds": 250,
+        "heartbeatSeconds": 30,
+    }
+    return scenario
+
+
+def replacement_scenario():
+    return fault_scenario(
+        stop_nodes=("nwdaf-branch-a-primary",),
+        branch_failure="replace_branch",
+    )
+
+
 def replacement_contract():
     testbed = yaml.safe_load(
         (ROOT / "testbed.protocol-hierarchical.yaml").read_text(encoding="utf-8")
     )
-    scenario = yaml.safe_load(
-        (
-            ROOT
-            / "experiments/protocol-hierarchical/mnist/replacement-smoke.yaml"
-        ).read_text(encoding="utf-8")
-    )
-    return FLExperimentContract.build(testbed, scenario)
+    return FLExperimentContract.build(testbed, replacement_scenario())
 
 
 def partial_reparent_contract():
     testbed = yaml.safe_load(
         (ROOT / "testbed.protocol-hierarchical.yaml").read_text(encoding="utf-8")
     )
-    scenario = yaml.safe_load(
-        (ROOT / "experiments/protocol-hierarchical/mnist/partial-reparent-smoke.yaml")
-        .read_text(encoding="utf-8")
+    scenario = fault_scenario(
+        stop_nodes=("nwdaf-branch-a-primary", "nwdaf-leaf-a2"),
+        branch_failure="reparent_leaves_to_root",
     )
     return FLExperimentContract.build(testbed, scenario)
 
@@ -1372,8 +1395,8 @@ def test_incremental_reader_and_two_file_consistency():
             runName=RUN_NAME,
             requestId=RUN_ID,
             dataset="mnist",
-            scenario=yaml.safe_load((ROOT / "experiments/protocol-hierarchical/mnist/replacement-smoke.yaml").read_text(encoding="utf-8")),
-            fault={**yaml.safe_load((ROOT / "experiments/protocol-hierarchical/mnist/replacement-smoke.yaml").read_text(encoding="utf-8"))["fault"], "targets": list(contract.fault_targets)},
+            scenario=replacement_scenario(),
+            fault={**replacement_scenario()["fault"], "targets": list(contract.fault_targets)},
             faultStops=[stop_payload],
             workload={
                 "seed": 42,

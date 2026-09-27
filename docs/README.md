@@ -1,30 +1,34 @@
 # Documentation
 
-This directory is the current user and operator documentation for the
-repository. Begin with the root [README](../README.md) for the shortest runnable
-path.
+This directory documents the supported protocol-driven hierarchical FL
+testbed. The deployment source, scenario definitions, generated artifacts, and
+runtime state have distinct ownership; read the configuration and operation
+guides before changing or running the environment.
 
-## Recommended reading order
+## Guides
 
-| Order | Document | Continue here when |
-| --- | --- | --- |
-| 1 | [Architecture](architecture.md) | Learning the runtime placement, networks, lifecycle boundaries, and federated-learning flow |
-| 2 | [Installation](installation.md) | Preparing Host software, VirtualBox, Docker, optional GPU support, and resource diagnostics |
-| 3 | [Configuration](configuration.md) | Selecting `TESTBED` and an explicit scenario, creating native config, and generating its dataset |
-| 4 | [Operations](operations.md) | Creating VMs and starting, observing, stopping, resetting, or destroying the environment |
+- [Architecture](architecture.md): topology, placement, networks, protocol
+  behavior, lifecycle, and state owners.
+- [Components](components.md): retained repositories, revision pins, and
+  Guest/Host build boundaries.
+- [Installation](installation.md): Host prerequisites, resource budget,
+  submodules, Python environments, and initial provisioning.
+- [Configuration](configuration.md): deployment and scenario inputs, rendering,
+  local config sets, and artifact boundaries.
+- [Commands](commands.md): Make targets, required parameters, execution domains,
+  and effects.
+- [Operations](operations.md): smoke, single-run, series, observation, recovery,
+  stop, reset, and offline analysis procedures.
+- [Troubleshooting](troubleshooting.md): current failure modes and safe recovery
+  paths.
 
-These four documents form the first-use path. The root
-[First experiment](../README.md#first-experiment) keeps the corresponding
-commands in one runnable sequence.
+## Configuration references
 
-## Reference and problem solving
+- [Testbed definition](configuration/testbed-reference.md)
+- [Scenario definition](configuration/scenario-reference.md)
+- [Generated native configuration](configuration/native-config-reference.md)
+- [Image datasets](configuration/dataset-reference.md)
 
-| Document | Use it for |
-| --- | --- |
-| [Commands](commands.md) | Look up every Make target, parameter, side effect, and intended audience |
-| [Configuration references](configuration.md#reference-documents) | Look up testbed, scenario, traffic, native config, and dataset fields and terminology |
-| [Components](components.md) | Understand submodules, gitlinks, metadata locks, and Guest builds |
-| [Troubleshooting](troubleshooting.md) | Diagnose common Host, VM, network, kernel, Docker, GPU, config, and lifecycle failures |
-
-Historical design decisions and dated experiment reports belong in the
-separate `testbed-docs` repository, not in this runtime repository.
+The source files and `make help` output remain authoritative when a command or
+field changes. These documents do not track active development status, local
+runtime identity, or experiment results.

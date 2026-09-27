@@ -33,7 +33,7 @@ def main() -> int:
     testbed = yaml.safe_load(
         (ROOT / "testbed.protocol-hierarchical.yaml").read_text(encoding="utf-8")
     )
-    legacy_leaves = tuple(
+    leaf_units = tuple(
         definition["unit"] for definition in nwdaf_definitions(testbed)
         if definition["role"] == "leaf"
     )
@@ -55,14 +55,14 @@ def main() -> int:
         second.mkdir()
         first_manifest = build_split(
             scenario, train_images, train_labels, test_images, test_labels,
-            first, legacy_leaves,
+            first, leaf_units,
         )
         second_manifest = build_split(
             scenario, train_images, train_labels, test_images, test_labels,
-            second, legacy_leaves,
+            second, leaf_units,
         )
-        validate_output(first, scenario, legacy_leaves)
-        validate_output(second, scenario, legacy_leaves)
+        validate_output(first, scenario, leaf_units)
+        validate_output(second, scenario, leaf_units)
         if first_manifest != second_manifest:
             raise AssertionError("the same source and seed did not reproduce the split")
 
@@ -73,21 +73,21 @@ def main() -> int:
             dataset_module, "load_source",
             return_value=(train_images, train_labels, test_images, test_labels),
         ) as load_source:
-            dataset_module.generate(shared_root, shared, legacy_leaves)
-            dataset_module.generate(shared_root, shared, legacy_leaves)
+            dataset_module.generate(shared_root, shared, leaf_units)
+            dataset_module.generate(shared_root, shared, leaf_units)
             if load_source.call_count != 1:
                 raise AssertionError("an existing shared dataset was regenerated")
         changed = copy.deepcopy(shared)
         changed["partition"]["seed"] += 1
         try:
-            dataset_module.generate(shared_root, changed, legacy_leaves)
+            dataset_module.generate(shared_root, changed, leaf_units)
         except DatasetError:
             pass
         else:
             raise AssertionError("a mismatched shared dataset was reused")
 
         train_indices = []
-        for leaf in legacy_leaves:
+        for leaf in leaf_units:
             item = first_manifest["artifacts"][leaf]
             train_indices.extend(item["sourceIndices"])
             if item["classHistogram"] != {label: 2 for label in range(10)}:
@@ -103,7 +103,7 @@ def main() -> int:
             yaml.safe_dump(invalid, sort_keys=False), encoding="utf-8"
         )
         try:
-            validate_output(first, scenario, legacy_leaves)
+            validate_output(first, scenario, leaf_units)
         except DatasetError as exc:
             if "overlap" not in str(exc):
                 raise
@@ -140,7 +140,7 @@ def main() -> int:
 
         skewed = copy.deepcopy(scenario)
         skewed_leaves = tuple(
-            "sample-leaf-{}".format(index) for index in range(len(legacy_leaves))
+            "sample-leaf-{}".format(index) for index in range(len(leaf_units))
         )
         skewed["partition"].update(
             validationSource="official-train",
@@ -165,7 +165,7 @@ def main() -> int:
         skewed_second.mkdir()
         skewed_manifest = build_split(
             skewed, train_images, train_labels, test_images, uneven_test_labels,
-            skewed_first, legacy_leaves,
+            skewed_first, leaf_units,
         )
         reordered = copy.deepcopy(skewed)
         reordered["partition"]["leafLabels"] = dict(
@@ -173,9 +173,9 @@ def main() -> int:
         )
         repeated_manifest = build_split(
             reordered, train_images, train_labels, test_images, uneven_test_labels,
-            skewed_second, legacy_leaves,
+            skewed_second, leaf_units,
         )
-        validate_output(skewed_first, skewed, legacy_leaves)
+        validate_output(skewed_first, skewed, leaf_units)
         if skewed_manifest != repeated_manifest:
             raise AssertionError("label-skew split changed with mapping order")
         if skewed_manifest["artifacts"]["validation"]["sourceSplit"] != "official-train":
@@ -211,7 +211,7 @@ def main() -> int:
         quota_second.mkdir()
         quota_manifest = build_split(
             quota_scenario, train_images, train_labels, test_images, uneven_test_labels,
-            quota_first, legacy_leaves,
+            quota_first, leaf_units,
         )
         reversed_quotas = copy.deepcopy(quota_scenario)
         reversed_quotas["partition"]["leafClassCounts"] = dict(
@@ -219,9 +219,9 @@ def main() -> int:
         )
         repeated_quota_manifest = build_split(
             reversed_quotas, train_images, train_labels, test_images, uneven_test_labels,
-            quota_second, legacy_leaves,
+            quota_second, leaf_units,
         )
-        validate_output(quota_first, quota_scenario, legacy_leaves)
+        validate_output(quota_first, quota_scenario, leaf_units)
         if quota_manifest != repeated_quota_manifest:
             raise AssertionError("class-quota split changed with mapping order")
         for leaf, expected in quota_scenario["partition"]["leafClassCounts"].items():

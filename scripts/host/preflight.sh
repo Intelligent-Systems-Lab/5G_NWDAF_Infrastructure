@@ -14,10 +14,6 @@ ok() { echo "OK   $*"; }
 fail() { echo "FAIL $*" >&2; failures=$((failures + 1)); }
 warn() { echo "WARN $*" >&2; warnings=$((warnings + 1)); }
 
-if [ -e "$HOST_ROOT/testbed.local.yaml" ]; then
-  fail "testbed.local.yaml is no longer supported; move required settings into the selected TESTBED and remove the legacy file"
-fi
-
 if python3 "$HOST_ROOT/scripts/guest/provisioning-lock.py" validate \
   "$HOST_ROOT/provisioning.lock.yaml" >/dev/null; then
   ok "Guest provisioning dependency lock"
@@ -180,9 +176,7 @@ lock = yaml.safe_load(open(lock_path))
 locked = {item["path"]: item["commit"] for item in lock["components"]}
 testbed = load_yaml(resolve_path(testbed_path))
 manifest = load_runtime_manifest(resolve_path(config_path))
-selected = selected_component_paths(
-    testbed, manifest["runtime"], manifest.get("optionalServices")
-)
+selected = selected_component_paths(testbed, manifest["runtime"])
 for path in selected:
     expected = locked.get(path)
     if expected is None:

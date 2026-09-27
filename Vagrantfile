@@ -23,17 +23,13 @@ end
 component_path_for_service = lambda do |service|
   case service
   when "mongodb" then nil
-  when "nrf", "nssf", "udr", "udm", "ausf", "pcf", "amf", "smf", "adrf"
+  when "nrf", "adrf"
     "NFs/#{service}"
   when /^nwdaf-/ then "NFs/nwdaf"
-  when /^upf-/ then "NFs/upf"
-  when /^gnb-/, /^ue[0-9]+$/ then "RAN/UERANSIM"
   else abort "unsupported Guest service for component identity: #{service}"
   end
 end
 
-legacy_local_path = File.join(ROOT, "testbed.local.yaml")
-abort "testbed.local.yaml is no longer supported; move topology settings into #{definition_path}" if File.exist?(legacy_local_path)
 requested_provider = ENV["VAGRANT_DEFAULT_PROVIDER"]
 abort "unsupported provider #{requested_provider}; expected virtualbox" if requested_provider && requested_provider != "virtualbox"
 provider_name = "virtualbox"

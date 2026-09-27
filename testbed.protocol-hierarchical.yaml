@@ -58,11 +58,6 @@ placement:
     - pymtlf-leaf-c1
     - pymtlf-leaf-c2
 
-optionalServices:
-  webconsole:
-    machine: core
-    endpoint: {network: management, address: 192.168.56.10, port: 5000}
-
 coreServices:
   mongodb:
     endpoint: {network: sbi, address: 192.168.57.18, port: 27017}

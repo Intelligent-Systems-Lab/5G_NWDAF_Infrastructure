@@ -1,232 +1,107 @@
 # Installation
 
-Install only the sections that the Host is missing. Each section begins with
-read-only checks and ends with the condition that must be true for this
-repository. Installing VirtualBox kernel modules, Docker, or NVIDIA support is
-a Host-wide administration task; coordinate it before changing the shared
-laboratory machine.
+## Reference Host
 
-## Platform boundary
+The deployment targets a Linux x86-64 Host. Install and configure:
 
-The Host must be Linux x86-64 with working VirtualBox, Vagrant, Docker Compose
-v2, and Python 3. This guide intentionally does not prescribe one laboratory
-Host OS or package-version snapshot; use versions supported together by their
-current vendors.
+- Git, Go, Python 3, `uv`, `tar`, `sha256sum`, `flock`, `ip`, and `ss`;
+- VirtualBox with a working Host driver and Vagrant with the VirtualBox
+  provider;
+- Docker Engine with Docker Compose v2;
+- sufficient access to create private Host-only networks and reach the Guest
+  addresses in `testbed.protocol-hierarchical.yaml`.
 
-The Vagrant Guests are separate and pinned by `testbed.yaml` to Ubuntu 22.04
-(`ubuntu/jammy64` `20241002.0.0`). Automatic box update checks are disabled.
-Changing the Guest release requires an explicit provisioning and kernel-module
-compatibility review.
+For GPU runs, also install a compatible NVIDIA driver and NVIDIA Container
+Toolkit. `nvidia-smi` must work, Docker must expose the `nvidia` runtime,
+`nvidia-ctk cdi list` must contain `nvidia.com/gpu=all`, and the local PyMTLF
+image must be able to import Torch with CUDA available.
 
-## 1. Base command-line tools
+The Guest platform is Ubuntu 22.04 (`ubuntu/jammy64`). Guest Go and MongoDB
+inputs are governed by `provisioning.lock.yaml` and installed during initial
+provisioning.
 
-Check the tools used directly by repository scripts:
+## Capacity budget
 
-```sh
-git --version
-python3 --version
-curl --version
-tar --version
-sha256sum --version
-flock --version
-```
+The committed testbed definition requests:
 
-On Ubuntu, install only missing base packages:
+| Resource | Selected capacity |
+| --- | ---: |
+| Core VM | 2 CPUs, 3,072 MiB RAM, 24 GiB disk |
+| Each of three Path VMs | 2 CPUs, 2,048 MiB RAM, 20 GiB disk |
+| Total Guest capacity | 8 CPUs, 9,216 MiB RAM, 84 GiB logical disk |
+| Host memory reserve floor | 6,144 MiB |
+| Container-build overhead allowance | 2,048 MiB |
+| GPU free-memory floor for GPU config | 8,192 MiB |
+| Workspace, Docker, and VirtualBox free-space floor | 120 GiB each |
 
-```sh
-sudo apt-get update
-sudo apt-get install -y git python3 curl ca-certificates gnupg tar coreutils util-linux
-```
+Container limits are derived from the selected generated runtime inventory.
+The Host preflight compares Guest and Host demand with available CPU, RAM,
+storage, swap, ports, and GPU memory. The swap policy warns below 1,024 MiB of
+free swap; it does not convert insufficient RAM into acceptable capacity.
 
-Python project dependencies are managed with `uv` where required. If `uv` is
-missing, use its official standalone installer:
+## Checkout and environments
 
-```sh
-curl -LsSf https://astral.sh/uv/install.sh | sh
-```
-
-Start a new shell if the installer updated `PATH`, then verify:
-
-```sh
-uv --version
-```
-
-See the [official uv installation guide](https://docs.astral.sh/uv/getting-started/installation/)
-for alternate or version-specific installation methods.
-
-## 2. VirtualBox and Vagrant
-
-Both commands and the VirtualBox Host driver must be usable:
-
-```sh
-VBoxManage --version
-vagrant --version
-test -c /dev/vboxdrv
-```
-
-If VirtualBox or its driver is missing on the reference Ubuntu Host, install
-the distribution packages matching the running kernel:
-
-```sh
-sudo apt-get update
-sudo apt-get install -y virtualbox virtualbox-dkms "linux-headers-$(uname -r)"
-sudo modprobe vboxdrv
-```
-
-If Vagrant is missing, install the HashiCorp package repository and Vagrant:
-
-```sh
-curl -fsSL https://apt.releases.hashicorp.com/gpg |
-  sudo gpg --dearmor --yes -o /usr/share/keyrings/hashicorp-archive-keyring.gpg
-echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/hashicorp-archive-keyring.gpg] https://apt.releases.hashicorp.com $(. /etc/os-release && echo "$VERSION_CODENAME") main" |
-  sudo tee /etc/apt/sources.list.d/hashicorp.list >/dev/null
-sudo apt-get update
-sudo apt-get install -y vagrant
-```
-
-Rerun the three checks above after installation. This repository does not
-require an additional Vagrant plugin.
-
-### VirtualBox network allowlist
-
-On Linux, `/etc/vbox/networks.conf` must allow every declared host-only
-address. The reference Host keeps its existing laboratory range and allows the
-testbed range with:
-
-```text
-* 192.168.33.0/24
-* 192.168.56.0/21
-```
-
-The `/21` is only an example allowlist covering the committed topology. The
-topology still creates separate `/24` networks. `experiment-validate` reports
-whether the declared interfaces are allowed; `vm-up` may still fail at the
-provider if the Host configuration is incompatible.
-
-## 3. Docker Engine and Compose
-
-Docker runs the five Host ML services. Check the CLI, Compose plugin, daemon,
-and current-user access separately:
-
-```sh
-docker --version
-docker compose version
-docker info
-```
-
-If Docker is absent on a new Host, use the
-[official Docker Engine installation guide for a supported Ubuntu release](https://docs.docker.com/engine/install/ubuntu/).
-The required package set is Docker Engine, the Docker CLI, containerd, Buildx,
-and the Compose v2 plugin. Do not replace the working shared installation or
-remove conflicting packages merely as part of repository setup.
-
-To grant an existing user non-root access:
-
-```sh
-sudo usermod -aG docker "$USER"
-```
-
-The new group membership takes effect after a fresh login session. You may use
-`newgrp docker` to open a temporary shell instead. This permission change does
-not require restarting Docker. The final `docker info` check must succeed
-without `sudo`.
-
-Do not run global Docker prune commands on this shared Host. PyTorch/CUDA image
-layers are intentionally shared, while stopped project containers and named
-volumes retain experiment state.
-
-## 4. NVIDIA GPU support (optional)
-
-Skip this section when every intended config uses `DEVICE=cpu`. GPU configs
-assign only PyMTLF-A/B to `cuda:0`; PyAnLF-A/B and PyMTLF-C remain on CPU.
-
-Check the driver, toolkit, Docker runtime, and CDI inventory independently:
-
-```sh
-nvidia-smi
-nvidia-ctk --version
-nvidia-ctk cdi list
-docker info --format '{{json .Runtimes}}'
-```
-
-The required CDI selector is `nvidia.com/gpu=all`, and Docker must report an
-`nvidia` runtime. If the driver or toolkit is missing, follow NVIDIA's current
-[Ubuntu driver](https://documentation.ubuntu.com/server/how-to/graphics/install-nvidia-drivers/)
-and [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html)
-guides for the Host OS.
-
-The standard Docker runtime configuration is a Host-wide operation:
-
-```sh
-sudo nvidia-ctk runtime configure --runtime=docker
-sudo systemctl restart docker
-```
-
-Do not run those commands on the shared Host without coordination: they modify
-Docker daemon configuration and restart the daemon. Repository commands never
-perform that configuration, restart Docker, change its default runtime, or
-silently fall back from GPU to CPU. `experiment-validate` reports CDI/runtime
-readiness; `ml-start` performs the actual image-level CUDA visibility probe
-before starting the production containers.
-
-## 5. Source initialization
-
-After cloning the parent repository, initialize exactly the revisions fixed by
-its gitlinks:
+Clone the repository and initialize the exact retained components:
 
 ```sh
 git submodule update --init --recursive
-git submodule status --recursive
 ```
 
-All committed submodule URLs use HTTPS. A leading `-` in status means a
-submodule is not initialized; a leading `+` means its checkout differs from the
-parent gitlink. Do not use `git submodule update --remote` for an experiment
-checkout. Provisioning never clones or selects branches inside a VM.
-
-## 6. Resource budget
-
-The default VMs use:
-
-| VM | RAM | vCPU | Primary disk ceiling |
-| --- | ---: | ---: | ---: |
-| Core | 4096 MiB | 4 | 40 GiB |
-| Path A | 3072 MiB | 3 | 40 GiB |
-| Path B | 3072 MiB | 3 | 40 GiB |
-
-VirtualBox disks are dynamically allocated, so the three 40 GiB ceilings do
-not immediately consume 120 GiB. The committed testbed recommends 120 GiB of
-free storage and 6 GiB of available RAM outside the guest allocation for the
-Host and containers. Low swap follows the configured warning policy rather
-than causing memory to be preallocated at VM startup.
-
-Use the repository preflight to inspect current headroom rather than estimating
-it from total RAM or logical disk ceilings. Findings are advisory and do not
-reserve resources or authorize startup:
+Prepare the repository tools and optional analysis dependency:
 
 ```sh
-make experiment-validate CONFIG_DIR=config/local/my-experiment
+uv sync --extra analysis
 ```
 
-## 7. First provisioning
+Dataset preparation and formal seed-model generation use the PyMTLF project
+interpreter at `ML/PyMTLF/.venv/bin/python`. Create it from the component
+lockfile:
 
-Create and validate a config before creating VMs:
+```sh
+uv sync --project ML/PyMTLF
+```
+
+The root tools support Python 3.8 or newer. The retained PyMTLF project requires
+Python 3.12 or newer; let `uv` select or install a compatible interpreter.
+
+## Host-only preparation check
+
+Before contacting the provider, confirm the repository command surface and
+synthetic checks:
+
+```sh
+make help
+make help-advanced
+make test
+```
+
+`make test` does not run Vagrant, VirtualBox, VMs, or containers.
+
+## Initial config and provisioning
+
+Create a config before running preflight or provisioning:
 
 ```sh
 make config-create \
-  NAME=my-experiment \
-  FROM=experiments/examples/full-core-cat-transition/scenario.yaml \
+  FROM=experiments/protocol-hierarchical/mnist/smoke.yaml \
   DEVICE=gpu
-make dataset-generate CONFIG_DIR=config/local/my-experiment
-make experiment-validate CONFIG_DIR=config/local/my-experiment
+make dataset-generate
+```
+
+The following commands contact the real provider and must run only in the
+approved Host context:
+
+```sh
+make experiment-validate
 make vm-up
 ```
 
-Use `DEVICE=cpu` if section 4 was intentionally skipped. The first `vm-up`
-provisions each guest and builds its assigned Go, RAN, and kernel components.
-UERANSIM and gtp5g are built independently inside both Path VMs against the
-guest environment. Go and MongoDB resolution follows
-`provisioning.lock.yaml`; the resolved guest identity is recorded in
-`/etc/5g-nwdaf-infrastructure/provisioning-manifest.yaml`.
+`vm-up` creates or starts all four selected VMs and runs one-time provisioning
+when necessary. Do not run direct `vagrant` or `VBoxManage` commands around the
+repository guard. If existing provider state conflicts with the selected VM
+inventory, stop and resolve the exact inventory instead of deleting or
+recreating machines speculatively.
 
-Continue with the [standard experiment workflow](operations.md#standard-experiment-workflow).
+After provisioning, `make fl-experiment-run RUN_NAME=<name>` performs the
+process lifecycle for a bounded experiment. VM destruction is not part of the
+normal workflow and is never implied by reset, stop, or halt.

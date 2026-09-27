@@ -25,16 +25,10 @@ SCENARIO_SCHEMA = 2
 
 def deployment_kind(testbed):
     """Return the selected complete TESTBED deployment contract."""
-    kind = testbed.get("analytics", {}).get("topology", "production-flat")
-    if kind not in (
-        "production-flat", "static-flat", "static-hierarchical",
-        "protocol-hierarchical",
-    ):
-        raise ValueError(
-            "analytics.topology must be production-flat, static-flat, "
-            "static-hierarchical, or protocol-hierarchical"
-        )
-    return kind
+    kind = testbed.get("analytics", {}).get("topology")
+    if kind != "protocol-hierarchical":
+        raise ValueError("analytics.topology must be protocol-hierarchical")
+    return "protocol-hierarchical"
 
 
 def selected_machine_names(testbed):
@@ -54,12 +48,9 @@ def selected_machine_names(testbed):
 def scenario_profile(scenario):
     """Return the explicit workload discriminator for a schema-v2 scenario."""
     workload = scenario.get("workload")
-    if isinstance(workload, dict):
-        profile = workload.get("profile")
-        if profile == "image-classification":
-            return profile
-        raise ValueError("scenario workload.profile is invalid")
-    return "ue-communication"
+    if not isinstance(workload, dict) or workload.get("profile") != "image-classification":
+        raise ValueError("scenario workload.profile must be image-classification")
+    return "image-classification"
 
 
 def image_dataset_name(scenario):
@@ -74,7 +65,7 @@ def image_dataset_name(scenario):
 
 def selected_seed_source(scenario):
     """Return the Host and container source for a selected generated seed."""
-    if scenario.get("experiment", {}).get("series") not in ("e0-e2b", "seeded-smoke"):
+    if scenario.get("experiment", {}).get("series") != "e0-e2b":
         return None
     dataset = scenario["workload"]["dataset"]
     seed = scenario["partition"]["seed"]
@@ -92,12 +83,10 @@ def image_scenario_contract(scenario):
     experiment = scenario.get("experiment")
     if experiment is not None and (
         not isinstance(experiment, dict)
-        or experiment.get("condition") not in {
-            "e0-e2b": ("E0", "E1", "E2a", "E2b"),
-            "seeded-smoke": ("E0",),
-        }.get(experiment.get("series"), ())
+        or experiment.get("series") != "e0-e2b"
+        or experiment.get("condition") not in ("E0", "E1", "E2a", "E2b")
     ):
-        raise ValueError("experiment must select a supported series and condition")
+        raise ValueError("experiment must select an E0-E2b condition")
     workload = scenario["workload"]
     dataset = workload.get("dataset")
     expected = {
@@ -432,35 +421,18 @@ def nwdaf_definitions(testbed):
 def _service_kind(testbed, unit):
     if unit in testbed.get("coreServices", {}) or unit == "mongodb":
         return "core"
-    for prefix, kind in (("upf-", "upf"), ("nwdaf-", "nwdaf"), ("gnb-", "gnb"), ("ue", "ue")):
-        if unit.startswith(prefix):
-            return kind
+    if unit.startswith("nwdaf-"):
+        return "nwdaf"
     raise ValueError("placement contains unsupported Guest unit: {}".format(unit))
 
 
 def _guest_service_start_rank(service):
     """Preserve the production dependency order for manifest-driven lifecycle."""
     unit = service["unit"]
-    core_order = {
-        "mongodb": 0,
-        "nrf": 10,
-        "nssf": 11,
-        "udr": 12,
-        "udm": 13,
-        "ausf": 14,
-        "pcf": 15,
-        "amf": 16,
-        "smf": 30,
-        "adrf": 40,
-    }
+    core_order = {"mongodb": 0, "nrf": 10, "adrf": 40}
     if unit in core_order:
         return core_order[unit]
-    return {
-        "upf": 20,
-        "nwdaf": 50,
-        "gnb": 60,
-        "ue": 70,
-    }[service["kind"]]
+    return {"nwdaf": 50}[service["kind"]]
 
 
 def expected_runtime_inventory(testbed, scenario=None):
@@ -476,29 +448,12 @@ def expected_runtime_inventory(testbed, scenario=None):
         if not isinstance(units, list) or not units:
             raise ValueError("placement.{} must be a non-empty list".format(machine))
         for unit in units:
-            if unit == "nwdaf-consumer":
-                continue
             guest_services.append({
                 "machine": machine,
                 "unit": unit,
                 "kind": _service_kind(testbed, unit),
             })
     guest_services.sort(key=_guest_service_start_rank)
-
-    identities = None if kind == "protocol-hierarchical" else resolve_mobile_identities(testbed)
-    ue_inventory = []
-    if identities is not None:
-        index = 0
-        for path_name in ("a", "b"):
-            machine = testbed["paths"][path_name]["machine"]
-            for supi in identities["pathSupis"][path_name]:
-                index += 1
-                ue_inventory.append({
-                    "unit": "ue{}".format(index),
-                    "machine": machine,
-                    "path": path_name,
-                    "supi": supi,
-                })
 
     nwdafs = []
     endpoint_identities = set()
@@ -507,7 +462,7 @@ def expected_runtime_inventory(testbed, scenario=None):
     coordinator = None
     for item in nwdaf_definitions(testbed):
         role = item.get("role")
-        if role not in ("fl-client", "fl-server", "client", "server", "root", "branch", "leaf"):
+        if role not in ("root", "branch", "leaf"):
             raise ValueError("{} has an invalid role".format(item["unit"]))
         try:
             parsed = uuid.UUID(item.get("nfInstanceId", ""))
@@ -531,7 +486,7 @@ def expected_runtime_inventory(testbed, scenario=None):
         if not isinstance(backends, dict) or "mtlf" not in backends:
             raise ValueError("{} must declare its MTLF backend".format(item["unit"]))
         backend_names.extend(backends.values())
-        if role in ("fl-server", "server", "root"):
+        if role == "root":
             if coordinator is not None:
                 raise ValueError("selected TESTBED must declare exactly one coordinator")
             coordinator = backends["mtlf"]
@@ -549,15 +504,10 @@ def expected_runtime_inventory(testbed, scenario=None):
         })
     if coordinator is None:
         raise ValueError("selected TESTBED must declare one coordinator NWDAF")
-    expected_roles = {
-        "production-flat": ["fl-client", "fl-client", "fl-server"],
-        "static-flat": ["client", "client", "client", "client", "server"],
-        "static-hierarchical": ["branch", "branch", "leaf", "leaf", "leaf", "leaf", "root"],
-        "protocol-hierarchical": [
-            "root", "branch", "branch", "branch", "branch",
-            "leaf", "leaf", "leaf", "leaf", "leaf", "leaf",
-        ],
-    }[kind]
+    expected_roles = [
+        "root", "branch", "branch", "branch", "branch",
+        "leaf", "leaf", "leaf", "leaf", "leaf", "leaf",
+    ]
     if sorted(item["role"] for item in nwdafs) != sorted(expected_roles):
         raise ValueError("selected TESTBED NWDAF roles do not match its topology")
 
@@ -586,8 +536,8 @@ def expected_runtime_inventory(testbed, scenario=None):
         if not isinstance(volume, dict) or set(volume) != {"name", "target"}:
             raise ValueError("mlRuntime.services.{}.volume requires name and target".format(name))
         image = service.get("image")
-        if image not in ("pyanlf", "pymtlf"):
-            raise ValueError("mlRuntime.services.{}.image must be pyanlf or pymtlf".format(name))
+        if image != "pymtlf":
+            raise ValueError("mlRuntime.services.{}.image must be pymtlf".format(name))
         volumes.append({
             "name": volume["name"],
             "image": "5g-nwdaf-infrastructure/{}:local".format(image),
@@ -605,48 +555,6 @@ def expected_runtime_inventory(testbed, scenario=None):
     if len({item["name"] for item in volumes}) != len(volumes):
         raise ValueError("ML volume names must be unique")
 
-    owners = []
-    if kind in ("static-flat", "static-hierarchical"):
-        by_number = dict(zip(identities["subscriberNumbers"], identities["supis"]))
-        declared = testbed.get("analytics", {}).get("dataOwners")
-        if not isinstance(declared, list) or len(declared) != 4:
-            raise ValueError("static TESTBED requires four analytics.dataOwners")
-        seen_numbers = []
-        for owner in declared:
-            numbers = owner.get("subscriberNumbers")
-            if owner.get("position") not in (1, 2, 3, 4) or owner.get("path") not in ("a", "b"):
-                raise ValueError("static data owner position/path is invalid")
-            if not isinstance(numbers, list) or len(numbers) != 2:
-                raise ValueError("each static data owner must own two subscribers")
-            seen_numbers.extend(numbers)
-            local_id = owner.get("groupLocalId")
-            group = testbed["mobileNetwork"]["internalGroup"]
-            owners.append({
-                "position": owner["position"],
-                "path": owner["path"],
-                "internalGroupId": "{}-{}-{}-{}".format(
-                    group["serviceId"], identities["plmn"]["mcc"], identities["plmn"]["mnc"], local_id
-                ),
-                "subscriberNumbers": list(numbers),
-                "supis": [by_number[number] for number in numbers],
-            })
-        if sorted(seen_numbers) != sorted(identities["subscriberNumbers"]):
-            raise ValueError("static data owners must cover every subscriber exactly once")
-        positions = {owner["position"] for owner in owners}
-        assigned = [
-            item.get("dataOwner") for item in nwdaf_definitions(testbed)
-            if item.get("role") in ("client", "leaf")
-        ]
-        if set(assigned) != positions or len(assigned) != len(positions):
-            raise ValueError("static Client/Leaf positions must map one-to-one to data owners")
-        if kind == "static-hierarchical":
-            branch_leaves = [
-                position for item in nwdaf_definitions(testbed)
-                if item.get("role") == "branch" for position in item.get("leaves", [])
-            ]
-            if sorted(branch_leaves) != sorted(positions):
-                raise ValueError("HFL Branch leaves must cover every Leaf position exactly once")
-
     safety = testbed.get("hostSafety", {})
     build_overhead = safety.get("containerBuildOverheadMemoryMiB")
     gpu_memory = safety.get("minimumGpuMemoryMiB")
@@ -654,33 +562,29 @@ def expected_runtime_inventory(testbed, scenario=None):
         raise ValueError("hostSafety.containerBuildOverheadMemoryMiB must be non-negative")
     if not isinstance(gpu_memory, int) or gpu_memory < 0:
         raise ValueError("hostSafety.minimumGpuMemoryMiB must be non-negative")
-    if kind == "protocol-hierarchical":
-        accelerated = {
-            item["backends"]["mtlf"]
-            for item in nwdaf_definitions(testbed)
-            if item["role"] in ("root", "leaf")
-        }
-        actual_accelerated = {
-            name for name in containers if services[name]["device"] == "cuda:0"
-        }
-        if actual_accelerated not in (set(), accelerated):
-            raise ValueError(
-                "protocol runtime must assign CUDA to Root and all Leaves, or use CPU for all"
-            )
-        if actual_accelerated and gpu_memory < 8192:
-            raise ValueError(
-                "protocol GPU runtime requires at least 8192 MiB pre-start free memory"
-            )
+    accelerated = {
+        item["backends"]["mtlf"]
+        for item in nwdaf_definitions(testbed)
+        if item["role"] in ("root", "leaf")
+    }
+    actual_accelerated = {
+        name for name in containers if services[name]["device"] == "cuda:0"
+    }
+    if actual_accelerated not in (set(), accelerated):
+        raise ValueError(
+            "protocol runtime must assign CUDA to Root and all Leaves, or use CPU for all"
+        )
+    if actual_accelerated and gpu_memory < 8192:
+        raise ValueError(
+            "protocol GPU runtime requires at least 8192 MiB pre-start free memory"
+        )
     runtime = {
         "deploymentKind": kind,
         "guestMachines": machines,
         "guestServices": guest_services,
         "nwdafs": nwdafs,
-        "ues": ue_inventory,
-        "dataOwners": owners,
         "hostContainers": list(containers),
         "mlVolumes": volumes,
-        "subscriptions": "consumer" if kind == "production-flat" else "none",
         "coordinatorContainer": coordinator,
         "mlDevicePolicy": "gpu" if gpu_participants else "cpu",
         "capacity": {
@@ -694,11 +598,10 @@ def expected_runtime_inventory(testbed, scenario=None):
             "publishedPorts": sorted(published),
         },
     }
-    if kind == "protocol-hierarchical":
-        runtime["capacity"]["guestDiskGiB"] = sum(
-            machine["resources"]["diskGiB"]
-            for machine in testbed["machines"].values()
-        )
+    runtime["capacity"]["guestDiskGiB"] = sum(
+        machine["resources"]["diskGiB"]
+        for machine in testbed["machines"].values()
+    )
     runtime["resetScope"] = {
         "guestServices": copy.deepcopy(guest_services),
         "hostContainers": list(containers),
@@ -714,13 +617,10 @@ def expected_runtime_inventory(testbed, scenario=None):
             "nfInstanceId": testbed["coreServices"]["adrf"]["nfInstanceId"],
         },
     }
-    if kind == "protocol-hierarchical":
-        runtime["resetScope"]["nrf"]["nfInstanceIds"] = [
-            item["nfInstanceId"] for item in nwdafs
-        ] + [testbed["coreServices"]["adrf"]["nfInstanceId"]]
-    else:
-        runtime["resetScope"]["nrf"]["nfType"] = "ADRF"
-    if kind == "protocol-hierarchical" and scenario is not None:
+    runtime["resetScope"]["nrf"]["nfInstanceIds"] = [
+        item["nfInstanceId"] for item in nwdafs
+    ] + [testbed["coreServices"]["adrf"]["nfInstanceId"]]
+    if scenario is not None:
         image_scenario_contract(scenario)
         definitions = {item["unit"]: item for item in nwdaf_definitions(testbed)}
         fault_group = (
@@ -765,7 +665,7 @@ def expected_runtime_inventory(testbed, scenario=None):
     return runtime
 
 
-def selected_component_paths(testbed, runtime, optional_services=None):
+def selected_component_paths(testbed, runtime):
     """Return only source repositories reachable from the selected runtime."""
     paths = set()
     for service in runtime["guestServices"]:
@@ -775,96 +675,18 @@ def selected_component_paths(testbed, runtime, optional_services=None):
             continue
         if kind == "nwdaf":
             paths.add("NFs/nwdaf")
-        elif kind == "upf":
-            paths.update(("NFs/upf", "kernel/gtp5g"))
-        elif kind in ("gnb", "ue"):
-            paths.add("RAN/UERANSIM")
-        elif kind == "core" and unit in {
-            "nrf", "nssf", "udr", "udm", "ausf", "pcf", "amf", "smf", "adrf",
-        }:
+        elif kind == "core" and unit in {"nrf", "adrf"}:
             paths.add("NFs/" + unit)
         else:
             raise ValueError("unsupported selected Guest component: " + unit)
     images = testbed["mlRuntime"]["services"]
     for service in runtime["hostContainers"]:
         image = images[service]["image"]
-        if image == "pyanlf":
-            paths.add("ML/PyAnLF")
-        elif image == "pymtlf":
+        if image == "pymtlf":
             paths.add("ML/PyMTLF")
         else:
             raise ValueError("unsupported selected Host component: " + image)
-    if (optional_services or {}).get("webconsole", {}).get("enabled") is True:
-        paths.add("webconsole")
     return sorted(paths)
-
-
-def resolve_mobile_identities(testbed):
-    """Resolve PLMN-derived identities from one non-redundant topology contract."""
-    mobile = testbed.get("mobileNetwork", {})
-    plmn = mobile.get("plmn", {})
-    mcc = plmn.get("mcc")
-    mnc = plmn.get("mnc")
-    if not isinstance(mcc, str) or re.fullmatch(r"[0-9]{3}", mcc) is None:
-        raise ValueError("mobileNetwork.plmn.mcc must contain exactly 3 digits")
-    if not isinstance(mnc, str) or re.fullmatch(r"[0-9]{2,3}", mnc) is None:
-        raise ValueError("mobileNetwork.plmn.mnc must contain 2 or 3 digits")
-
-    group = mobile.get("internalGroup", {})
-    service_id = group.get("serviceId")
-    local_id = group.get("localId")
-    if not isinstance(service_id, str) or re.fullmatch(r"[A-Fa-f0-9]{8}", service_id) is None:
-        raise ValueError("mobileNetwork.internalGroup.serviceId must contain 8 hex digits")
-    if (
-        not isinstance(local_id, str)
-        or re.fullmatch(r"(?:[A-Fa-f0-9]{2}){1,10}", local_id) is None
-    ):
-        raise ValueError(
-            "mobileNetwork.internalGroup.localId must contain 2 to 20 hex digits in octets"
-        )
-
-    msin_width = 15 - len(mcc) - len(mnc)
-    path_supis = {}
-    all_numbers = []
-    for path_name in ("a", "b"):
-        numbers = testbed.get("paths", {}).get(path_name, {}).get(
-            "subscriberNumbers"
-        )
-        if not isinstance(numbers, list) or not numbers:
-            raise ValueError(
-                "paths.{}.subscriberNumbers must contain at least one integer".format(
-                    path_name
-                )
-            )
-        resolved = []
-        for number in numbers:
-            if (
-                not isinstance(number, int)
-                or isinstance(number, bool)
-                or number <= 0
-                or number >= 10 ** msin_width
-            ):
-                raise ValueError(
-                    "paths.{}.subscriberNumbers values must fit the {}-digit MSIN".format(
-                        path_name, msin_width
-                    )
-                )
-            resolved.append("imsi-{}{}{:0{}d}".format(mcc, mnc, number, msin_width))
-            all_numbers.append(number)
-        path_supis[path_name] = resolved
-    if len(all_numbers) != len(set(all_numbers)):
-        raise ValueError("subscriberNumbers must be unique across both Paths")
-
-    return {
-        "plmn": {"mcc": mcc, "mnc": mnc},
-        "plmnDigits": mcc + mnc,
-        "internalGroupId": "{}-{}-{}-{}".format(
-            service_id, mcc, mnc, local_id
-        ),
-        "subscriberNumbers": list(all_numbers),
-        "pathSupis": path_supis,
-        "supis": path_supis["a"] + path_supis["b"],
-    }
 
 
 def load_yaml(path):
@@ -908,55 +730,6 @@ def load_scenario_definition(value):
     return path, scenario
 
 
-def resolve_scenario_profile_paths(scenario_path, scenario):
-    """Resolve Path A/B traffic profiles relative to their scenario definition."""
-    if scenario_profile(scenario) == "image-classification":
-        return {}
-    references = scenario.get("trafficProfiles")
-    if not isinstance(references, dict) or sorted(references) != ["a", "b"]:
-        raise ValueError("scenario trafficProfiles must contain Path A and B")
-
-    resolved = {}
-    for path_name in ("a", "b"):
-        reference = references[path_name]
-        if not isinstance(reference, str) or not reference:
-            raise ValueError(
-                "scenario trafficProfiles.{} must be a non-empty relative path".format(
-                    path_name
-                )
-            )
-        relative = Path(reference)
-        if relative.is_absolute():
-            raise ValueError(
-                "scenario trafficProfiles.{} must be relative to scenario.yaml".format(
-                    path_name
-                )
-            )
-        profile_path = (Path(scenario_path).parent / relative).resolve()
-        if profile_path == ROOT or ROOT not in profile_path.parents:
-            raise ValueError(
-                "scenario trafficProfiles.{} escapes the repository: {}".format(
-                    path_name, reference
-                )
-            )
-        if not profile_path.is_file():
-            raise ValueError(
-                "scenario trafficProfiles.{} does not exist: {}".format(
-                    path_name, reference
-                )
-            )
-        resolved[path_name] = profile_path
-    return resolved
-
-
-def repository_relative_paths(paths):
-    """Return stable repository-relative provenance strings for resolved paths."""
-    return {
-        name: path.relative_to(ROOT).as_posix()
-        for name, path in paths.items()
-    }
-
-
 def resolve_config_scenario(config_dir):
     manifest = load_yaml(Path(config_dir) / "manifest.yaml")
     metadata = manifest.get("scenario", {})
@@ -974,8 +747,7 @@ def resolve_config_scenario(config_dir):
     path, scenario = load_scenario_definition(definition)
     if metadata.get("name") != scenario.get("name"):
         raise ValueError("config manifest scenario name does not match its definition")
-    if scenario_profile(scenario) == "ue-communication":
-        resolve_scenario_profile_paths(path, scenario)
+    image_scenario_contract(scenario)
     return path, scenario
 
 
@@ -1026,7 +798,7 @@ def load_runtime_manifest(config_dir):
             raise ValueError("runtime Guest service has an unknown machine")
         if not isinstance(unit, str) or not re.fullmatch(r"[a-z0-9][a-z0-9-]*", unit):
             raise ValueError("runtime Guest service has an invalid unit")
-        if kind not in ("core", "upf", "nwdaf", "gnb", "ue"):
+        if kind not in ("core", "nwdaf"):
             raise ValueError("runtime Guest service has an invalid kind")
         identity = (machine, unit)
         if identity in seen_units:
@@ -1036,7 +808,7 @@ def load_runtime_manifest(config_dir):
         raise ValueError("runtime.hostContainers must be a non-empty unique list")
     if any(
         not isinstance(item, str)
-        or not re.fullmatch(r"(?:pyanlf|pymtlf)-[a-z0-9][a-z0-9-]*", item)
+        or not re.fullmatch(r"pymtlf-[a-z0-9][a-z0-9-]*", item)
         for item in containers
     ):
         raise ValueError("runtime.hostContainers contains an invalid service")
@@ -1046,10 +818,7 @@ def load_runtime_manifest(config_dir):
     for item in volumes:
         if not isinstance(item, dict) or set(item) != {"name", "image"}:
             raise ValueError("runtime.mlVolumes entries require name and image")
-        if item["image"] not in (
-            "5g-nwdaf-infrastructure/pyanlf:local",
-            "5g-nwdaf-infrastructure/pymtlf:local",
-        ):
+        if item["image"] != "5g-nwdaf-infrastructure/pymtlf:local":
             raise ValueError("runtime ML volume image is not owned by this project")
         if (
             not isinstance(item["name"], str)
@@ -1058,25 +827,13 @@ def load_runtime_manifest(config_dir):
         ):
             raise ValueError("runtime ML volume names must be unique and valid")
         seen_volumes.add(item["name"])
-    subscriptions = runtime.get("subscriptions")
-    if subscriptions not in ("consumer", "none"):
-        raise ValueError("runtime.subscriptions must be consumer or none")
     coordinator = runtime.get("coordinatorContainer")
     if not isinstance(coordinator, str) or coordinator not in containers:
         raise ValueError("runtime.coordinatorContainer must select a Host container")
-    if runtime.get("deploymentKind") not in (
-        "production-flat", "static-flat", "static-hierarchical",
-        "protocol-hierarchical",
-    ):
-        raise ValueError("runtime.deploymentKind is invalid")
+    if runtime.get("deploymentKind") != "protocol-hierarchical":
+        raise ValueError("runtime.deploymentKind must be protocol-hierarchical")
     if not isinstance(runtime.get("nwdafs"), list) or not runtime["nwdafs"]:
         raise ValueError("runtime.nwdafs must be a non-empty list")
-    if not isinstance(runtime.get("ues"), list):
-        raise ValueError("runtime.ues must be a list")
-    if runtime["deploymentKind"] != "protocol-hierarchical" and not runtime["ues"]:
-        raise ValueError("runtime.ues must be non-empty for UE deployments")
-    if not isinstance(runtime.get("dataOwners"), list):
-        raise ValueError("runtime.dataOwners must be a list")
     capacity = runtime.get("capacity")
     if not isinstance(capacity, dict):
         raise ValueError("runtime.capacity must be an object")
@@ -1085,8 +842,7 @@ def load_runtime_manifest(config_dir):
         "hostContainerMemoryMiB", "containerBuildOverheadMemoryMiB",
         "gpuParticipants", "minimumGpuMemoryMiB",
     ]
-    if runtime.get("deploymentKind") == "protocol-hierarchical":
-        capacity_fields.append("guestDiskGiB")
+    capacity_fields.append("guestDiskGiB")
     for field in capacity_fields:
         value = capacity.get(field)
         if not isinstance(value, (int, float)) or isinstance(value, bool) or value < 0:
@@ -1118,15 +874,11 @@ def runtime_ml_volumes(config_dir):
     return load_runtime_manifest(config_dir)["runtime"]["mlVolumes"]
 
 
-def runtime_subscriptions(config_dir):
-    return load_runtime_manifest(config_dir)["runtime"]["subscriptions"]
-
-
 def runtime_coordinator_container(config_dir):
     return load_runtime_manifest(config_dir)["runtime"]["coordinatorContainer"]
 
 
-def guest_network_configs(testbed, analytics=None, include_consumer=True):
+def guest_network_configs(testbed, analytics=None):
     """Build the role-specific guest alias files from one topology definition."""
     machines = testbed["machines"]
     networks = testbed["networks"]
@@ -1162,26 +914,10 @@ def guest_network_configs(testbed, analytics=None, include_consumer=True):
             if isinstance(endpoint, dict) and {"network", "address"} <= set(endpoint):
                 add(owner_machines[0], owner, endpoint_name, endpoint)
 
-    for path_name, path in testbed.get("paths", {}).items():
-        machine = path["machine"]
-        for endpoint_name in ("n2", "n3"):
-            add(machine, "gnb-" + path_name, endpoint_name, path["gnb"][endpoint_name])
-        for endpoint_name in ("n3", "n4", "n6", "eventExposure"):
-            add(machine, "upf-" + path_name, endpoint_name, path["upf"][endpoint_name])
-
     analytics = testbed["analytics"] if analytics is None else analytics
     for owner, service in analytics.items():
         if owner.startswith("nwdaf-"):
             add(service["machine"], owner, "sbi", service["sbi"])
-
-    if include_consumer and "consumer" in testbed:
-        callback = testbed["consumer"]["callback"]
-        add(
-            testbed["consumer"]["machine"],
-            "nwdaf-consumer",
-            "callback",
-            {"network": callback["network"], "address": callback["bindAddress"]},
-        )
 
     return {
         machine: {

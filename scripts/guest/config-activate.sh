@@ -15,11 +15,6 @@ if systemctl list-units --state=active --no-legend '5g-nwdaf@*.service' | grep -
   echo "stop stack services before changing the active config" >&2
   exit 1
 fi
-if systemctl is-active --quiet 5g-nwdaf-consumer.service; then
-  echo "stop NWDAF subscriptions before changing the active config" >&2
-  exit 1
-fi
-
 actual_hash=$(/usr/local/libexec/5g-nwdaf-infrastructure/config-hash "$staged")
 test "$actual_hash" = "$expected_hash" || { echo "config hash mismatch: $actual_hash" >&2; exit 1; }
 old_target=$(readlink "$root/active" 2>/dev/null || true)

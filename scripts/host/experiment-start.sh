@@ -6,19 +6,15 @@ testbed=${1:?usage: experiment-start.sh testbed [config-dir]}
 explicit_config=${2:-}
 select_testbed_machines "$testbed"
 config_dir=$(effective_config_dir "$testbed" "$explicit_config")
-webconsole_enabled=$(config_webconsole_enabled "$config_dir")
-subscriptions_mode=$(config_subscriptions_mode "$config_dir")
 dataset_args=(--testbed "$testbed")
 if [ -n "$explicit_config" ]; then
   dataset_args+=(--config-dir "$explicit_config")
 fi
 services_started=false
-webconsole_started=false
 ml_started=false
-subscriptions_attempted=false
 
 assert_clean_start() {
-  local machine active running consumer
+  local machine active running
   assert_selected_provider_running
   running=$(docker ps -q --filter "label=com.docker.compose.project=$(ml_project_name)")
   if [ -n "$running" ]; then
@@ -32,30 +28,14 @@ assert_clean_start() {
       return 1
     fi
   done
-  if [ "$subscriptions_mode" = consumer ]; then
-    consumer=$(vssh core "systemctl is-active 5g-nwdaf-consumer.service 2>/dev/null || true" 2>/dev/null | tr -d '\r' | tail -n 1)
-    if [ "$consumer" = active ]; then
-      echo "consumer is already active; use subscriptions-status" >&2
-      return 1
-    fi
-  fi
 }
 
 rollback() {
   local status=$?
   trap - EXIT
   echo "experiment startup failed; rolling back domains started by this invocation" >&2
-  if $subscriptions_attempted; then
-    if ! "$HOST_ROOT/scripts/host/subscriptions-stop.sh"; then
-      echo "subscription cleanup failed; retaining ML and Guest services so exact DELETE can be retried" >&2
-      exit "$status"
-    fi
-  fi
   if $ml_started; then
     "$HOST_ROOT/scripts/host/ml-stop.sh" "$testbed" "$explicit_config" || true
-  fi
-  if $webconsole_started; then
-    "$HOST_ROOT/scripts/host/webconsole-stop.sh" || true
   fi
   if $services_started; then
     "$HOST_ROOT/scripts/host/services-stop.sh" "$testbed" "$explicit_config" || true
@@ -69,21 +49,9 @@ python3 "$HOST_ROOT/scripts/host/dataset.py" "${dataset_args[@]}" generate
 trap rollback EXIT
 "$HOST_ROOT/scripts/host/services-start.sh" "$testbed" "$explicit_config"
 services_started=true
-if [ "$webconsole_enabled" = true ]; then
-  "$HOST_ROOT/scripts/host/webconsole-start.sh" "$testbed" "$explicit_config"
-  webconsole_started=true
-fi
 "$HOST_ROOT/scripts/host/ml-start.sh" "$testbed" "$explicit_config"
 ml_started=true
-if [ "$(config_deployment_kind "$config_dir")" = protocol-hierarchical ]; then
-  "$HOST_ROOT/scripts/host/backend-check.sh" "$testbed" "$config_dir"
-fi
-if [ "$subscriptions_mode" = consumer ]; then
-  subscriptions_attempted=true
-  "$HOST_ROOT/scripts/host/subscriptions-start.sh"
-else
-  echo "SUBSCRIPTIONS skipped (mode=$subscriptions_mode)"
-fi
+"$HOST_ROOT/scripts/host/backend-check.sh" "$testbed" "$config_dir"
 assert_guest_runtime_identity "$config_dir"
 assert_ml_runtime_identity "$testbed" "$config_dir"
 trap - EXIT

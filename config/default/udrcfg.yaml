@@ -1,8 +1,0 @@
-info: {version: 1.1.0, description: dual-TAI UDR}
-configuration:
-  sbi: {scheme: http, registerIPv4: 192.168.57.12, bindingIPv4: 192.168.57.12, port: 8000}
-  dbConnectorType: mongodb
-  mongodb: {name: free5gc, url: mongodb://192.168.57.18:27017}
-  nrfUri: http://192.168.57.10:8000
-logger: {enable: true, level: info, reportCaller: false}
-

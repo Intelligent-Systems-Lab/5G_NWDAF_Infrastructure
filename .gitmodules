@@ -1,63 +1,16 @@
-[submodule "NFs/amf"]
-	path = NFs/amf
-	url = https://github.com/free5gc/amf.git
-	branch = main
-[submodule "NFs/ausf"]
-	path = NFs/ausf
-	url = https://github.com/free5gc/ausf.git
-	branch = main
-[submodule "NFs/nssf"]
-	path = NFs/nssf
-	url = https://github.com/free5gc/nssf.git
-	branch = main
-[submodule "NFs/pcf"]
-	path = NFs/pcf
-	url = https://github.com/free5gc/pcf.git
-	branch = main
-[submodule "RAN/UERANSIM"]
-	path = RAN/UERANSIM
-	url = https://github.com/aligungr/UERANSIM.git
-	branch = master
-[submodule "webconsole"]
-	path = webconsole
-	url = https://github.com/free5gc/webconsole.git
-	branch = main
 [submodule "NFs/nrf"]
 	path = NFs/nrf
 	url = https://github.com/Intelligent-Systems-Lab/nrf.git
-	branch = feat/r18-nwdaf-discovery
-[submodule "NFs/smf"]
-	path = NFs/smf
-	url = https://github.com/Intelligent-Systems-Lab/smf-nwdaf-ext.git
-	branch = feat/r18-federated-learning
-[submodule "NFs/udm"]
-	path = NFs/udm
-	url = https://github.com/Intelligent-Systems-Lab/udm.git
-	branch = feat/r18-federated-learning
-[submodule "NFs/udr"]
-	path = NFs/udr
-	url = https://github.com/Intelligent-Systems-Lab/udr.git
-	branch = feat/r18-federated-learning
-[submodule "NFs/upf"]
-	path = NFs/upf
-	url = https://github.com/Intelligent-Systems-Lab/go-upf.git
-	branch = fix/r18-nupf-event-exposure-contract
+	branch = main
 [submodule "NFs/nwdaf"]
 	path = NFs/nwdaf
 	url = https://github.com/Intelligent-Systems-Lab/NWDAF.git
-	branch = feat/r18-hierarchical-federated-learning
+	branch = master
 [submodule "NFs/adrf"]
 	path = NFs/adrf
 	url = https://github.com/Intelligent-Systems-Lab/adrf.git
-	branch = feat/r18-federated-learning
-[submodule "ML/PyAnLF"]
-	path = ML/PyAnLF
-	url = https://github.com/Intelligent-Systems-Lab/PyAnLF.git
-	branch = feat/r18-federated-learning
+	branch = main
 [submodule "ML/PyMTLF"]
 	path = ML/PyMTLF
 	url = https://github.com/Intelligent-Systems-Lab/PyMTLF.git
-	branch = feat/r18-hierarchical-federated-learning
-[submodule "kernel/gtp5g"]
-	path = kernel/gtp5g
-	url = https://github.com/free5gc/gtp5g.git
+	branch = main

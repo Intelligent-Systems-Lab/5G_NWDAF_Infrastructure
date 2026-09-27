@@ -22,4 +22,4 @@ else
 fi
 wait_no_running_ml_containers "$project"
 echo "Host ML services stopped; containers, volumes, and images were retained."
-echo "ML stop did not modify VM or subscription state."
+echo "ML stop did not modify VM state."

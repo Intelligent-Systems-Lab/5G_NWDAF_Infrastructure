@@ -31,21 +31,7 @@ RUN python -m pip install --no-cache-dir "uv==${UV_VERSION}" \
     && useradd --uid 10001 --gid 10001 --no-create-home --shell /usr/sbin/nologin ml \
     && install -d -o 10001 -g 10001 /opt/app /opt/app/artifacts \
     && install -d -o 10001 -g 10001 \
-        /var/lib/5g-nwdaf-infrastructure/pymtlf-a \
-        /var/lib/5g-nwdaf-infrastructure/pymtlf-b \
-        /var/lib/5g-nwdaf-infrastructure/pymtlf-c \
-        /var/lib/5g-nwdaf-infrastructure/pymtlf-server \
-        /var/lib/5g-nwdaf-infrastructure/pymtlf-client-1 \
-        /var/lib/5g-nwdaf-infrastructure/pymtlf-client-2 \
-        /var/lib/5g-nwdaf-infrastructure/pymtlf-client-3 \
-        /var/lib/5g-nwdaf-infrastructure/pymtlf-client-4 \
         /var/lib/5g-nwdaf-infrastructure/pymtlf-root \
-        /var/lib/5g-nwdaf-infrastructure/pymtlf-branch-1 \
-        /var/lib/5g-nwdaf-infrastructure/pymtlf-branch-2 \
-        /var/lib/5g-nwdaf-infrastructure/pymtlf-leaf-1 \
-        /var/lib/5g-nwdaf-infrastructure/pymtlf-leaf-2 \
-        /var/lib/5g-nwdaf-infrastructure/pymtlf-leaf-3 \
-        /var/lib/5g-nwdaf-infrastructure/pymtlf-leaf-4 \
         /var/lib/5g-nwdaf-infrastructure/pymtlf-branch-a-primary \
         /var/lib/5g-nwdaf-infrastructure/pymtlf-branch-a-replacement \
         /var/lib/5g-nwdaf-infrastructure/pymtlf-branch-b \
@@ -56,27 +42,6 @@ RUN python -m pip install --no-cache-dir "uv==${UV_VERSION}" \
         /var/lib/5g-nwdaf-infrastructure/pymtlf-leaf-b2 \
         /var/lib/5g-nwdaf-infrastructure/pymtlf-leaf-c1 \
         /var/lib/5g-nwdaf-infrastructure/pymtlf-leaf-c2
-
-FROM torch-runtime AS pyanlf
-
-ARG COMPONENT_REVISION=unknown
-ENV PYTHONPATH=/opt/app/src
-WORKDIR /opt/app
-COPY ML/PyAnLF/pyproject.toml ML/PyAnLF/uv.lock ./
-RUN uv export --quiet --frozen --no-dev --no-emit-project --format requirements-txt \
-        --output-file /tmp/pyanlf-requirements.txt \
-    && uv pip install --python /opt/venv/bin/python --no-cache \
-        --requirement /tmp/pyanlf-requirements.txt \
-    && rm /tmp/pyanlf-requirements.txt
-COPY ML/PyAnLF/run.py ./run.py
-COPY ML/PyAnLF/src ./src
-
-LABEL org.opencontainers.image.title="5G NWDAF PyAnLF backend" \
-      org.opencontainers.image.source="https://github.com/Intelligent-Systems-Lab/PyAnLF" \
-      org.opencontainers.image.revision="${COMPONENT_REVISION}"
-
-USER 10001:10001
-CMD ["python", "run.py", "--config", "/etc/5g-nwdaf/config.yaml"]
 
 FROM torch-runtime AS pymtlf
 

@@ -19,8 +19,7 @@ systemctl mask apt-daily.service apt-daily-upgrade.service \
 export DEBIAN_FRONTEND=noninteractive
 apt-get update
 apt-get install -y --no-install-recommends \
-  build-essential ca-certificates cmake curl git gnupg iproute2 jq libssl-dev \
-  libsctp-dev linux-headers-"$(uname -r)" ninja-build python3 chrony \
+  build-essential ca-certificates curl git gnupg iproute2 jq libssl-dev python3 chrony \
   python3-yaml rsync socat util-linux
 
 systemctl enable --now chrony
@@ -77,14 +76,12 @@ ln -sfn /usr/local/go/bin/go /usr/local/bin/go
 
 id 5g-nwdaf >/dev/null 2>&1 || useradd --system --create-home --home-dir /var/lib/5g-nwdaf-infrastructure --shell /usr/sbin/nologin 5g-nwdaf
 install -d -o 5g-nwdaf -g 5g-nwdaf /var/lib/5g-nwdaf-infrastructure
-install -d -o 5g-nwdaf -g 5g-nwdaf /var/lib/5g-nwdaf-infrastructure/datasets /var/lib/5g-nwdaf-infrastructure/datasets/sets
 install -d /etc/5g-nwdaf-infrastructure/config-sets /opt/5g-nwdaf-infrastructure/work /usr/local/libexec/5g-nwdaf-infrastructure/bin
 printf '%s\n' "$machine" >/etc/5g-nwdaf-infrastructure/machine
 
 /opt/5g-nwdaf-infrastructure/source/scripts/guest/runtime-tools-install.sh \
   "$machine" /opt/5g-nwdaf-infrastructure/source
 systemctl disable 5g-nwdaf-stack.target >/dev/null 2>&1 || true
-systemctl disable 5g-nwdaf-consumer.service >/dev/null 2>&1 || true
 systemctl disable 5g-nwdaf-network.service >/dev/null 2>&1 || true
 if [ -f "/etc/5g-nwdaf-infrastructure/active/network/$machine.yaml" ]; then
   systemctl restart 5g-nwdaf-network.service

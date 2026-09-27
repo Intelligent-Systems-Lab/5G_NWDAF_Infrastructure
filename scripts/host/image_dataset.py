@@ -231,7 +231,7 @@ def _write_npz(path: Path, images: np.ndarray, labels: np.ndarray) -> None:
     np.savez(path, images=images, labels=labels)
 
 
-def _leaf_quotas(partition: dict, legacy_leaves: tuple[str, ...]) -> tuple[tuple[str, ...], dict]:
+def _leaf_quotas(partition: dict, default_leaf_units: tuple[str, ...]) -> tuple[tuple[str, ...], dict]:
     class_counts = partition.get("leafClassCounts")
     leaf_labels = partition.get("leafLabels")
     if class_counts is not None:
@@ -244,8 +244,8 @@ def _leaf_quotas(partition: dict, legacy_leaves: tuple[str, ...]) -> tuple[tuple
             for leaf in leaves
         }
     per_class = partition["samplesPerLeaf"] // 10
-    return legacy_leaves, {
-        leaf: {label: per_class for label in range(10)} for leaf in legacy_leaves
+    return default_leaf_units, {
+        leaf: {label: per_class for label in range(10)} for leaf in default_leaf_units
     }
 
 
@@ -256,12 +256,12 @@ def build_split(
     test_images: np.ndarray,
     test_labels: np.ndarray,
     destination: Path,
-    legacy_leaves: tuple[str, ...],
+    default_leaf_units: tuple[str, ...],
 ) -> dict:
     (destination / "leaves").mkdir(parents=True, exist_ok=True)
     partition = scenario["partition"]
     per_leaf = partition["samplesPerLeaf"]
-    leaf_units, quotas = _leaf_quotas(partition, legacy_leaves)
+    leaf_units, quotas = _leaf_quotas(partition, default_leaf_units)
     explicit_quotas = "leafLabels" in partition or "leafClassCounts" in partition
     validation_source = partition.get("validationSource", "official-test")
     validation_count = partition["validationSamples"]
@@ -384,7 +384,7 @@ def _expected_counts(scenario: dict, leaf_units: tuple[str, ...]) -> dict[str, i
     }
 
 
-def validate_output(root: Path, scenario: dict, legacy_leaves: tuple[str, ...]) -> dict:
+def validate_output(root: Path, scenario: dict, default_leaf_units: tuple[str, ...]) -> dict:
     manifest_path = root / "split-manifest.yaml"
     if not manifest_path.is_file():
         raise DatasetError("split manifest is missing")
@@ -399,7 +399,7 @@ def validate_output(root: Path, scenario: dict, legacy_leaves: tuple[str, ...]) 
         expected_seed["test"] = partition["seed"] + 1
     if manifest.get("seed") != expected_seed:
         raise DatasetError("split manifest seeds do not match the scenario")
-    leaf_units, quotas = _leaf_quotas(partition, legacy_leaves)
+    leaf_units, quotas = _leaf_quotas(partition, default_leaf_units)
     expected = _expected_counts(scenario, leaf_units)
     artifacts = manifest.get("artifacts", {})
     if set(artifacts) != set(expected):
@@ -448,10 +448,10 @@ def validate_output(root: Path, scenario: dict, legacy_leaves: tuple[str, ...]) 
     return manifest
 
 
-def generate(root: Path, scenario: dict, legacy_leaves: tuple[str, ...]) -> None:
+def generate(root: Path, scenario: dict, default_leaf_units: tuple[str, ...]) -> None:
     dataset = scenario["workload"]["dataset"]
     if "datasetId" in scenario["partition"] and root.exists():
-        validate_output(root, scenario, legacy_leaves)
+        validate_output(root, scenario, default_leaf_units)
         print("REUSED dataset={} root={}".format(dataset, root))
         return
     train_images, train_labels, test_images, test_labels = load_source(dataset)
@@ -461,9 +461,9 @@ def generate(root: Path, scenario: dict, legacy_leaves: tuple[str, ...]) -> None
     try:
         build_split(
             scenario, train_images, train_labels, test_images, test_labels,
-            temporary, legacy_leaves,
+            temporary, default_leaf_units,
         )
-        validate_output(temporary, scenario, legacy_leaves)
+        validate_output(temporary, scenario, default_leaf_units)
         if root.exists():
             os.replace(root, backup)
         os.replace(temporary, root)
@@ -488,7 +488,7 @@ def main() -> int:
     try:
         testbed = yaml.safe_load((ROOT / args.testbed).read_text(encoding="utf-8"))
         config_dir = resolve_config_dir(testbed, args.config_dir)
-        legacy_leaves = tuple(
+        default_leaf_units = tuple(
             definition["unit"] for definition in nwdaf_definitions(testbed)
             if definition["role"] == "leaf"
         )
@@ -496,11 +496,13 @@ def main() -> int:
         image_scenario_contract(scenario)
         root = OUTPUT_ROOT / image_dataset_name(scenario)
         if args.action == "generate":
-            generate(root, scenario, legacy_leaves)
+            generate(root, scenario, default_leaf_units)
         else:
-            manifest = validate_output(root, scenario, legacy_leaves)
+            manifest = validate_output(root, scenario, default_leaf_units)
             if args.action == "show":
-                leaf_units, _quotas = _leaf_quotas(scenario["partition"], legacy_leaves)
+                leaf_units, _quotas = _leaf_quotas(
+                    scenario["partition"], default_leaf_units
+                )
                 print(
                     "DATASET name={} dataset={} root={} artifacts={} train_samples={} validation_samples={} held_out_samples={}".format(
                         scenario["name"],

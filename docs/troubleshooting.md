@@ -1,176 +1,174 @@
 # Troubleshooting
 
-Start with a read-only diagnosis:
+## Provider commands are refused
+
+Every real Vagrant or VirtualBox operation must see the approved Host device
+namespace and pass the shared provider guard. This applies to `validate`,
+`status`, and inventory commands as well as start and halt.
+
+Do not bypass the guard with direct `vagrant`, `VBoxManage`, absolute binary
+paths, or wrapper scripts. Move the command to the approved Host context. If
+provider processes and Vagrant metadata disagree, stop and inspect the exact
+inventory; do not destroy broad or guessed targets.
+
+## A config output already exists
+
+`config-create` refuses to overwrite `config/local/<name>`. Prefer a new
+`NAME` when preserving the old selection. Use `FORCE=true` only after
+confirming the old config is not active and its generated output is disposable.
+
+## The selected config does not match runtime
+
+Lifecycle and reset commands compare the selected config with staged Guest and
+Compose identity. A mismatch usually means a different config was previously
+activated.
+
+Stop the current Guest and Host processes using their matching config, inspect
+`make reset-show CONFIG_DIR=<matching-config>`, complete any required reset,
+then start the new selection. Do not edit `manifest.yaml`, Guest
+`active.sha256`, or Compose labels to suppress the mismatch.
+
+## PyMTLF environment is missing
+
+Dataset and formal seed preparation require
+`ML/PyMTLF/.venv/bin/python`. Recreate the component environment:
 
 ```sh
-make experiment-status CONFIG_DIR=config/local/my-experiment
-make experiment-validate CONFIG_DIR=config/local/my-experiment
+uv sync --project ML/PyMTLF
 ```
 
-Then narrow logs with `scripts/host/logs.sh`; see
-[Operations](operations.md#4-observe-progress).
+The PyMTLF project requires Python 3.12 or newer.
 
-## Source or submodule mismatch
+## Dataset generation or validation fails
 
 Run:
 
 ```sh
-git submodule status --recursive
+make dataset-show CONFIG_DIR=config/local/<name>
+make dataset-validate CONFIG_DIR=config/local/<name>
 ```
 
-A leading `+` means the installed checkout differs from the parent gitlink; a
-leading `-` means it has not been initialized. Compare an unexpected revision
-with `components.lock.yaml`. Do not repair it with `--remote`; first determine
-whether the parent pin or local checkout is intended.
+Common causes are an incomplete official download, insufficient class samples
+for an explicit quota, a scenario changed after the config was rendered, or a
+previous generated directory belonging to a different seed or partition.
+Select the intended config first. Preserve evidence still used by runs before
+removing any local generated dataset.
 
-## Guest source and installed binary mismatch
+## Component lock mismatch or dirty component
 
-A clean Host submodule checkout and a current source tree below
-`/opt/5g-nwdaf-infrastructure/source` do not prove that an existing VM is
-executing a binary built from that source. `vm-up` does not reprovision an
-existing VM, and `services-start` synchronizes helpers, config, and dataset but
-does not rebuild guest-owned components.
-
-Suspect a stale artifact when a Guest endpoint exposes an older contract even
-though the Host pin and synced source agree, or when PyMTLF capability
-verification reports fields missing from the containing NWDAF context. Stop
-the experiment, identify the affected Core or Path build boundary, and rebuild
-the affected artifact explicitly. Record hashes before and after the rebuild;
-do not use `reset` for this problem, because reset changes retained data rather
-than installed software. See [Components](components.md#existing-vm-binary-boundary).
-
-## Model Provision returns 503 during startup
-
-PyAnLF reconciliation may begin while the processes are healthy but the
-NWDAF-C to PyMTLF-C Model Provision chain is still converging. A bounded series
-of create `503` responses is recoverable only when retry is followed by a `201`
-Model Provision subscription, successful Model Monitor registration, and
-active monitor scopes.
-
-Do not treat container health alone as that business-level evidence, and do not
-disable production readiness or create replacement resources manually. If the
-503 responses persist, the later `201`/monitor evidence never appears, or a
-reconciler reaches its terminal failure, inspect NWDAF-C, PyMTLF-C, and
-PyAnLF-A/B logs together with UTC timestamps and treat startup as failed.
-
-## Config selection or stale files
-
-There is no local overlay. A stale repository-root `testbed.local.yaml` from an
-earlier workflow is rejected so it cannot appear to affect only some commands;
-move its intended values into one complete testbed file with a different name.
-Confirm the effective inputs in the first line of `experiment-status` and
-always pass the same pair:
+`experiment-validate` requires each selected submodule checkout to match
+`components.lock.yaml` and be clean. Inspect:
 
 ```sh
-make config-validate TESTBED=testbed.lab.yaml CONFIG_DIR=config/local/lab
+git submodule status
+git -C <component-path> status --short
+git -C <component-path> rev-parse HEAD
 ```
 
-Regenerate a set instead of copying selected NF YAML files into it. A manifest
-or config hash mismatch indicates the directory was mixed or edited after
-rendering.
+Resolve the checkout through the repository's approved revision workflow. Do
+not hide local component edits or change the lock merely to pass preflight.
 
-## Dataset rejection
+## VM inventory is incomplete or unexpected
 
-Use:
+`vm-up`, status, startup, halt, and reset compare OS provider processes,
+Vagrant metadata, and selected machine state. An omitted, duplicate, or
+unexpected provider process fails closed.
+
+Use the approved Host context to inspect exact selected state. If cleanup or VM
+destruction is actually required, determine exact targets and obtain separate
+authorization; normal lifecycle commands should not infer accident cleanup.
+
+## Host ports or resources are unavailable
+
+`experiment-validate` reports the selected Guest/container CPU and memory
+budget, free storage, swap, Host bind address, and published-port conflicts.
+Close the actual conflicting process or select adequate capacity. Do not lower
+resource or safety thresholds merely to make preflight pass.
+
+The Host ML address `192.168.57.1` normally appears after the provider creates
+the Host-only network. A warning before VM creation can therefore become ready
+after `vm-up`; `ml-start` still requires the address to exist.
+
+## GPU admission fails
+
+Check, in order:
+
+1. `nvidia-smi` reports a GPU with enough free memory;
+2. `nvidia-ctk cdi list` contains `nvidia.com/gpu=all`;
+3. Docker reports the `nvidia` runtime;
+4. the selected manifest says `mlDevicePolicy: gpu`;
+5. the local PyMTLF image passes the CUDA probe.
+
+Branch containers intentionally remain CPU-owned. Root and all selected Leaves
+must expose CUDA for a GPU run. The complete experiment runner rejects a CPU
+config.
+
+## Experiment startup finds active processes
+
+The complete runner requires a clean process start. Inspect:
 
 ```sh
-make dataset-show CONFIG_DIR=config/local/my-experiment
-make dataset-validate CONFIG_DIR=config/local/my-experiment
+make experiment-status CONFIG_DIR=config/local/<name>
 ```
 
-Regenerate when a file is missing or its content hash, UE IPs, timestamps, or
-resolved specification no longer match. Generated artifacts are
-content-addressed; do not edit a Parquet file in place. `services-start`
-automatically stages the matching integrity-checked set.
+If the state belongs to the same selection, stop it with
+`make experiment-stop CONFIG_DIR=...`. If it belongs to another selection,
+use that config for stop and reset. Do not start a second experiment over active
+Guest units or project containers.
 
-## Host RAM, storage, or swap
+## Guest service or registration readiness fails
 
-The default guest allocation is not reserved in full before use, and all three
-VirtualBox disks grow dynamically. Validation reports when available RAM falls
-below the 6 GiB Host reserve or free space falls below the 120 GiB recommendation;
-it no longer blocks startup. Identify other users' processes, VMs, containers,
-images, volumes, and caches before changing those values or running for long
-periods.
-
-Low free swap is a warning under the committed `swapPolicy`. With no usable
-swap, Linux has less room to move inactive pages and an abrupt workload peak is
-more likely to invoke the OOM killer. Do not create, clear, or resize Host swap
-during a shared experiment without coordinating with other users.
-
-Use project-scoped inspection such as `docker compose ps` and `docker system
-df`; never use a global prune on the shared Host.
-
-## VirtualBox host-only address failure
-
-Confirm `/etc/vbox/networks.conf` permits all addresses in `testbed.yaml`. The
-reference range requires `192.168.56.0/21`. After editing the Host file, rerun
-`make experiment-validate` before `make vm-up`.
-
-Inside a VM, Vagrant owns `50-vagrant.yaml` and the repository owns
-`60-5g-nwdaf-aliases.yaml`. Verify the managed state with:
+Use bounded logs for the owning domain:
 
 ```sh
-sudo /usr/local/libexec/5g-nwdaf-infrastructure/network-setup --verify
+make logs SOURCE=vm VM=core SERVICE=nwdaf-root FOLLOW=false
+make logs SOURCE=vm VM=path-a SERVICE='nwdaf-*' FOLLOW=false
 ```
 
-If an older VM has missing or stale aliases, reconcile its persistent fragment
-with `sudo systemctl restart 5g-nwdaf-network.service`. The unit is an explicit
-reconciler, not a second always-enabled boot configuration pass.
+Shell globs are accepted by the service filter. Issue separate commands when
+selecting unrelated names. Also inspect `make services-status` and the
+provisioning identity. A source update without rebuilding the Guest binary can
+produce a revision mismatch.
 
-## gtp5g failure after a kernel change
+## PyMTLF container readiness fails
 
-`services-start` stops before launching NFs if the module vermagic does not
-match the running Path kernel or cannot load. Rebuild only the affected Path's
-kernel dependency using the commands in [Components](components.md#upf-and-gtp5g),
-then retry startup. This does not rebuild UPF, NWDAF, or UERANSIM.
-
-## Docker or GPU failure
-
-First verify non-root access with `docker info`. A new Docker-group membership
-requires a new login session or `newgrp docker`.
-
-For GPU mode, check `nvidia-smi`, Docker's `nvidia` runtime, CDI inventory, and
-the disposable image-level CUDA probe run by `ml-start`. The runtime does not
-restart Docker, alter its default runtime, or silently fall back to CPU.
-If GPU is not required, create a separate config with `DEVICE=cpu`; do not edit
-only the Compose file or native PyMTLF config.
-
-## WebConsole does not start
-
-WebConsole must be enabled in the selected config, and Core MongoDB and NRF must
-already be active. Its first start installs/builds the pinned source in Core and
-may take longer; later starts reuse the content-addressed release. Inspect:
+Inspect:
 
 ```sh
-make webconsole-status
-scripts/host/logs.sh --source vm --vm core --service webconsole --no-follow
+make ml-status CONFIG_DIR=config/local/<name>
+make logs SOURCE=ml SERVICE=pymtlf-root FOLLOW=false
 ```
 
-The expected endpoint is `http://192.168.56.10:5000`. The billing compatibility
-listener must remain on Core loopback; do not expose it to fix an HTTP problem.
+The selected service inventory, config set, image revision, device assignment,
+volume, and health must all agree. Unexpected project containers or volumes
+block lifecycle and reset rather than being silently adopted.
 
-## Subscription cleanup failure
+## Training completed but collection failed
 
-The Consumer stores exact resource `Location` values. If deletion fails,
-`subscriptions-stop` leaves its state and callback process available for retry;
-do not delete the state file or guess a resource URI. Keep the NWDAFs and ML
-backends running, inspect Core/path logs, and retry `make subscriptions-stop`.
+If `run.json` is `collection-pending` or `collection-failed` and contains a
+completed terminal checkpoint, retain the selected config, PyMTLF image, and
+Root volume, then run:
 
-During aggregate stop, a fixed 40-second grace keeps those backends alive while
-PyAnLF and PyMTLF perform dependent Model Provision and Model Monitor cleanup.
-The stop command does not parse application logs or claim that every internal
-resource was remotely queried. If cleanup is suspect, inspect the current-run
-PyAnLF, PyMTLF-C, and three NWDAF logs for DELETE status and reconciler errors
-before starting another experiment.
+```sh
+make fl-experiment-collect \
+  CONFIG_DIR=config/local/<name> \
+  RUN_NAME=<same-run-name>
+```
 
-After Core is powered off, `subscriptions-status` reports the Consumer as
-`not-running` and its saved resource state as `not-readable`. This is an
-expected power state, not evidence that resource state was lost. Power Core on
-before inspecting saved locations or retrying an exact deletion.
+This retries collection and held-out evaluation without training again. If the
+run failed before a complete final checkpoint, preserve its diagnostics and use
+a new run name after fixing the cause.
 
-## Start says a domain is already active
+## Reset is refused
 
-Aggregate startup deliberately requires a clean process state. Inspect
-`services-status`, `ml-status`, and `subscriptions-status`, then either continue
-with independent domain commands or run `make experiment-stop`. Do not reset
-retained experiment data merely to resolve an active process.
+Reset requires:
+
+- the selected VMs running;
+- no active Guest experiment units;
+- no running selected ML containers;
+- selected and active config identity matching;
+- exact selected project container and volume inventory;
+- the exact scenario name in `RESET_CONFIRM`.
+
+Run `make reset-show CONFIG_DIR=...` first. A refusal is a scope or lifecycle
+problem to resolve, not a reason to broaden deletion or bypass confirmation.

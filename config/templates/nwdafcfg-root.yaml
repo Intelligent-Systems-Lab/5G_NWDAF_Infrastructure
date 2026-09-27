@@ -1,6 +1,6 @@
-info: {version: 1.0.0, description: NWDAF-C model owner and FL server}
+info: {version: 1.0.0, description: Root NWDAF and FL server}
 configuration:
-  nwdafName: NWDAF-C
+  nwdafName: NWDAF-ROOT
   nfInstanceId: 33333333-3333-4333-8333-333333333333
   sbi: {scheme: http, registerIPv4: 192.168.57.30, bindingIPv4: 192.168.57.30, port: 8080}
   nrfRegistrationEnabled: true

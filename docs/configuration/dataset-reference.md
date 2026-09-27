@@ -1,78 +1,78 @@
-# Dataset Reference
+# Image Dataset Reference
 
-The dataset pipeline turns scenario traffic profiles and testbed UE pools into
-deterministic Path A/B Parquet artifacts for go-upf PseudoDriver replay.
-Generated data lives below `.generated/datasets/<dataset-set-id>/` and is not
-committed.
+The retained workload supports official MNIST and CIFAR-10 inputs. Dataset
+preparation is driven by the selected scenario snapshot in the generated
+manifest.
 
-## Terms
+## Storage layout
 
-| Term | Meaning |
+| Path | Contents |
 | --- | --- |
-| raw row | One `(timestamp, UE IP, direction, byte length, action)` Parquet record. Each raw window produces uplink and downlink rows for every UE. |
-| raw window | One traffic-profile step separated by `windowSeconds`. |
-| warm-start history | Rows before `breakingTimeSeconds`, loaded before live replay. |
-| observation | UPF/AnLF aggregation unit, separated by `samplingIntervalSeconds`. |
-| prediction input window | Number of observations consumed by the seed model (`seq_length`). |
-| prediction output | Future observations predicted by the model (`out_seq_len`). |
-| accuracy report | Matched prediction/ground-truth evidence accumulated over `reportPeriodSeconds`. |
-| training sample | One retained sequence/target pair after model windowing, purge separation, and validation split. It is not one raw row. |
+| `.cache/image-datasets/<dataset>/` | downloaded official archives |
+| `.generated/image-datasets/<dataset-id>/` | generated Leaf, validation, and held-out artifacts |
+| `.generated/seed-models/image_classification/<dataset>/seed-<n>/` | generated formal seed models |
 
-In the reference full-core experiment:
+These paths are local, ignored artifacts. A clean checkout downloads and
+regenerates them when the relevant commands are run.
+
+Each generated dataset directory contains:
 
 ```text
-1-second raw windows
-   × 30 windows per observation
-= 30-second analytics observations
-   × 3 observations per accuracy report
-= 90-second accuracy reports
+split-manifest.yaml
+validation.npz
+held-out.npz
+leaves/<leaf-name>.npz
 ```
 
-The seed model consumes 30 observations and predicts one. A 900-second
-warm-start therefore supplies 30 inference observations, not 900 training
-samples. Dataset resolution separately derives historical and trigger-time
-training/validation counts.
+The split manifest records source splits and indices, counts, image shape, seed,
+class count, and class histograms.
 
-## Lifecycle
+## Generate and inspect
 
 ```sh
-make dataset-generate CONFIG_DIR=config/local/my-experiment
-make dataset-show CONFIG_DIR=config/local/my-experiment
-make dataset-validate CONFIG_DIR=config/local/my-experiment
-make dataset-load CONFIG_DIR=config/local/my-experiment
+make dataset-generate CONFIG_DIR=config/local/<name>
+make dataset-validate CONFIG_DIR=config/local/<name>
+make dataset-show CONFIG_DIR=config/local/<name>
 ```
 
-- `generate` resolves the selected scenario, profiles, UE pools, native
-  sampling/model settings, and generator source hash. Identical inputs reuse
-  the same content-addressed set.
-- `show` verifies the artifact and prints readable identity, size, aggregation,
-  report capacity, timeline, model-window, trigger, and sample summaries.
-- `validate` audits the actual Parquet schema, hashes, rows, UE IPs, timestamps,
-  and manifest against the resolved specification.
-- `load` uploads only the matching Path artifact and atomically activates it in
-  `/var/lib/5g-nwdaf-infrastructure/datasets/active` on each Path VM. Normal
-  `services-start` already performs this step.
+The dataset facade deliberately uses `ML/PyMTLF/.venv/bin/python` so generation
+and validation load the same native image dataset contract as PyMTLF. Prepare
+that environment with `uv sync --project ML/PyMTLF`.
 
-Each set contains a root `manifest.json` and `resolved-spec.json`, plus
-`path-a/` and `path-b/` directories containing `traffic.parquet`, `file.json`,
-and a Path manifest. Content hashes detect manual edits or partial staging.
+Downloads use HTTPS and are cached. Generation writes a temporary complete
+split, validates it, and then replaces the destination. When a scenario has a
+`datasetId` and that directory already exists, generation validates and reuses
+it instead of silently producing a second copy.
 
-## Timing and capacity
+## Split behavior
 
-`dataset-show` reports trigger values relative to live experiment start:
+Leaf data always comes from the official training split.
 
-- `earliest_after_start` is the first policy timing at which required degrading
-  hits can exist after the stable lead;
-- `bounded_after_start` adds one report/sampling margin;
-- `bounded_closure` adds the scenario closure budget for FL and post-cutover
-  evidence.
+- Without explicit quotas, each Leaf receives a balanced ten-class sample.
+- `leafLabels` gives each Leaf an equal allocation over only the listed
+  classes.
+- `leafClassCounts` gives each Leaf exact class quotas.
 
-These are designed timing bounds, not an automatic completion timer. The
-experiment is complete only when current-run status observes an evaluated,
-non-degrading post-cutover accuracy report.
+For explicit non-IID quotas, validation comes from the official training split
+and is disjoint from every Leaf shard. The complete official test split is the
+held-out set. For the default smoke behavior, balanced validation and held-out
+subsets are selected from the official test split.
 
-Cross-file timing and capacity inconsistencies are diagnostics. They appear in
-`config-validate` but do not prevent generation or startup. Structural failures
-still stop the pipeline: missing/unreadable scenario or profile, unsupported
-schema/path identity, non-positive values needed for generation, impossible UE
-pool sizing, invalid model dimensions/validation ratio, or a corrupt artifact.
+`dataset-validate` checks the scenario-selected artifact inventory, counts,
+source mapping, disjoint source indices, loadability, and class distribution.
+It does not require Leaf names to match a separately hard-coded list; the
+selected scenario and testbed provide the identities.
+
+## Formal seed sharing
+
+For an E0–E2b scenario, `config-create SEED=<n>` creates or selects:
+
+- dataset ID `<dataset>-formal-s<n>`;
+- partition seed `n`;
+- the PyMTLF seed model under the matching dataset/seed path;
+- the component-native seed artifact identity written into the generated config.
+
+All four conditions for the same workload and seed therefore reuse one verified
+dataset directory and one initial model. Different seeds use distinct generated
+inputs. The series runner performs config creation and dataset preparation for
+each selected slot before invoking the single-run pipeline.

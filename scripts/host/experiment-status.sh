@@ -27,11 +27,8 @@ from configlib import load_runtime_manifest, load_yaml, resolve_path
 directory = resolve_path(sys.argv[1])
 for service in load_runtime_manifest(directory)["runtime"]["hostContainers"]:
     config = load_yaml(directory / (service + ".yaml"))
-    if service.startswith("pyanlf-"):
-        device = config.get("model", {}).get("device", "cpu")
-    else:
-        client = config.get("federated_learning", {}).get("client")
-        device = client.get("training", {}).get("device", "cpu") if client else "cpu"
+    client = config.get("federated_learning", {}).get("client")
+    device = client.get("training", {}).get("device", "cpu") if client else "cpu"
     print("  {}={}".format(service, device))
 PY
 echo "HOST available_ram=${available_mib}MiB workspace_free=${free_gib}GiB"
@@ -39,24 +36,22 @@ echo
 failures=0
 "$HOST_ROOT/scripts/host/observe.sh" --once "$testbed" "$explicit_config" || failures=$((failures + 1))
 
-if [ "$(config_deployment_kind "$config_dir")" = protocol-hierarchical ]; then
-  echo
-  "$HOST_ROOT/scripts/host/registration-check.sh" --once "$testbed" "$config_dir" || failures=$((failures + 1))
-  echo
-  "$HOST_ROOT/scripts/host/backend-check.sh" "$testbed" "$config_dir" || failures=$((failures + 1))
-  echo
-  if [ -n "${RUN_ID:-}" ]; then
-    training_args=(
-      training-status --testbed "$testbed" --config-dir "$config_dir"
-      --run-id "$RUN_ID"
-    )
-    if [ -n "${MODEL_FAMILY_ID:-}" ]; then
-      training_args+=(--model-family-id "$MODEL_FAMILY_ID")
-    fi
-    python3 "$HOST_ROOT/scripts/host/fl-control.py" "${training_args[@]}" || failures=$((failures + 1))
-  else
-    echo "TRAINING state=not-selected reason=RUN_ID-not-provided"
+echo
+"$HOST_ROOT/scripts/host/registration-check.sh" --once "$testbed" "$config_dir" || failures=$((failures + 1))
+echo
+"$HOST_ROOT/scripts/host/backend-check.sh" "$testbed" "$config_dir" || failures=$((failures + 1))
+echo
+if [ -n "${RUN_ID:-}" ]; then
+  training_args=(
+    training-status --testbed "$testbed" --config-dir "$config_dir"
+    --run-id "$RUN_ID"
+  )
+  if [ -n "${MODEL_FAMILY_ID:-}" ]; then
+    training_args+=(--model-family-id "$MODEL_FAMILY_ID")
   fi
+  python3 "$HOST_ROOT/scripts/host/fl-control.py" "${training_args[@]}" || failures=$((failures + 1))
+else
+  echo "TRAINING state=not-selected reason=RUN_ID-not-provided"
 fi
 
 [ "$failures" -eq 0 ]

@@ -137,7 +137,7 @@ assert_runtime_stopped() {
       echo "refusing reset because $machine is not running (state=${state:-unknown})" >&2
       return 1
     fi
-    active=$(vssh "$machine" "systemctl list-units --state=active --no-legend '5g-nwdaf@*.service' | awk '{print \$1}'; if [ '$machine' = core ]; then systemctl is-active --quiet 5g-nwdaf-consumer.service && echo consumer; fi; true" 2>/dev/null | tr -d '\r')
+    active=$(vssh "$machine" "systemctl list-units --state=active --no-legend '5g-nwdaf@*.service' | awk '{print \$1}'; true" 2>/dev/null | tr -d '\r')
     if [ -n "$active" ]; then
       echo "refusing reset while $machine experiment services are active:" >&2
       printf '%s\n' "$active" >&2
