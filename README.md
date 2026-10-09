@@ -10,6 +10,15 @@ and the Root–Branch–Leaf protocol topology used by the retained MNIST and
 CIFAR-10 experiments. Generated runtime configuration is derived from this
 deployment definition and one selected scenario.
 
+## Paper
+
+This repository is the prototype for the paper *Toward Resilient Hierarchical
+Federated Learning for 6G Networks: NWDAF Protocol Extensions and a
+free5GC-Based Realization*, prepared for the free5GC World Forum 2026. To
+study or rerun what the paper describes, use the release tag
+`free5gc-world-forum-2026` and start with the
+[paper companion](docs/world-forum-2026/README.md).
+
 ## Repository layout
 
 - `NFs/nwdaf`, `NFs/nrf`, `NFs/adrf`: Go components deployed in the guests.

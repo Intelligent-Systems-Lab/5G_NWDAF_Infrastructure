@@ -29,6 +29,13 @@ guides before changing or running the environment.
 - [Generated native configuration](configuration/native-config-reference.md)
 - [Image datasets](configuration/dataset-reference.md)
 
+## Paper companion
+
+- [free5GC World Forum 2026](world-forum-2026/README.md): how the paper maps to
+  scenarios, commands, and outputs; differences between the paper's candidate
+  specification and the implementation; relation to upstream free5GC; and
+  reproduction notes.
+
 The source files and `make help` output remain authoritative when a command or
 field changes. These documents do not track active development status, local
 runtime identity, or experiment results.
