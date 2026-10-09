@@ -265,7 +265,7 @@ def analyze(series_root, output):
     round_rows = []
     summary_rows = []
     details = {}
-    for dataset, boundary in BOUNDARIES.items():
+    for dataset in BOUNDARIES:
         expected_rounds = 24 if dataset == "mnist" else 40
         baseline_ci = {}
         for position in range(1, expected_rounds + 1):
@@ -279,9 +279,7 @@ def analyze(series_root, output):
             endpoints = []
             endpoint_losses = []
             held_out_accuracies = []
-            auc_values = []
             paired_endpoints = []
-            paired_aucs = []
             recoveries = []
             condition_curves = []
             for seed, item in group:
@@ -290,16 +288,11 @@ def analyze(series_root, output):
                 endpoints.append(values[-1][0])
                 endpoint_losses.append(values[-1][1])
                 held_out_accuracies.append(item["run"].get("heldOutEvaluation", {}).get("accuracy"))
-                auc = sum(value[0] for value in values[boundary:boundary + 12]) if len(values) >= boundary + 12 else None
-                if auc is not None:
-                    auc_values.append(auc)
                 condition_curves.append(values)
                 baseline = selected.get((dataset, seed, "E0"))
                 if baseline and _paired_inputs_match(baseline, item):
                     baseline_values = [baseline["evaluations"][entry["roundInd"]] for entry in baseline["rounds"]]
                     paired_endpoints.append(values[-1][0] - baseline_values[-1][0])
-                    if auc is not None:
-                        paired_aucs.append(auc - sum(value[0] for value in baseline_values[boundary:boundary + 12]))
                 elif baseline:
                     issues.append({"workload": dataset, "seed": seed, "condition": condition,
                                    "reason": "paired input differs from E0"})
@@ -313,7 +306,7 @@ def analyze(series_root, output):
                 details["{}/seed-{}/{}/{}".format(dataset, seed, condition, item["run"]["runName"])] = {
                     "workload": dataset, "seed": seed, "condition": condition,
                     "directory": item["directory"], "endpointAccuracy": values[-1][0],
-                    "postFaultAuc12": auc, **run_details,
+                    **run_details,
                 }
             summary = {"workload": dataset, "condition": condition, "completeSeeds": len(group)}
             summary.update({
@@ -325,9 +318,7 @@ def analyze(series_root, output):
                 ("endpointValidationAccuracy", endpoints),
                 ("endpointValidationLoss", endpoint_losses),
                 ("heldOutAccuracy", held_out_accuracies),
-                ("postFaultAuc12", auc_values),
                 ("pairedEndpointDeltaVsE0", paired_endpoints),
-                ("pairedAucDeltaVsE0", paired_aucs),
             ):
                 _add_interval(summary, name, values)
             summary_rows.append(summary)
@@ -379,7 +370,6 @@ def analyze(series_root, output):
         "definitions": {
             "accuracyUnit": "fraction",
             "confidenceInterval": "two-sided 95% Student-t, five paired seeds, df=4",
-            "postFaultAuc": "sum of 12 accepted-round validation accuracies after the nominal boundary",
             "nominalFaultAfterRound": BOUNDARIES,
             "pairedEffect": "condition minus E0 at the same workload and seed",
             "recoveryRound": "first of two consecutive accepted rounds inside the corresponding E0 CI",

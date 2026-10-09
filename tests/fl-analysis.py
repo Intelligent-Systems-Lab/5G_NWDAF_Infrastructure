@@ -154,7 +154,6 @@ def main():
                           if row["workload"] == "mnist" and row["condition"] == "E1")
         assert formal["completeSeeds"] == "5"
         assert abs(float(formal["pairedEndpointDeltaVsE0Mean"]) + 0.02) < 1e-10
-        assert abs(float(formal["pairedAucDeltaVsE0Mean"]) + 0.24) < 1e-10
         details = json.loads((formal_output / "details.json").read_text(encoding="utf-8"))
         assert any(issue.get("directory") == str(failed) for issue in details["issues"])
         assert details["runs"]["mnist/seed-1/E1/run-1-E1"]["subscriptionResourceOperationsSent"] == {
