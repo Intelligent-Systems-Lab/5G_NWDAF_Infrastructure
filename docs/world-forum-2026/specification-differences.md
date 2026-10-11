@@ -57,29 +57,32 @@ preparation and training, and produces and reads the topology reports
 
 ### Feature negotiation on CREATE
 
-Appendix B states that the members are accepted only on a resource that
-negotiated the feature and that the receiver otherwise returns HTTP 403 with
-cause `ML_MODEL_TRAINING_REQS_NOT_MET`.
+Appendix B makes three statements. The members are accepted only on a
+resource that negotiated the feature, and a later PUT or PATCH that carries
+them on a resource without the feature returns HTTP 403 with cause
+`ML_MODEL_TRAINING_REQS_NOT_MET`. On CREATE, a receiver that does not accept
+the instruction omits the feature from the returned `suppFeats`. A receiver
+rejects contracts it cannot execute.
 
-For PUT and PATCH on an existing resource the prototype does this. The Go
-NWDAF also applies the check to notifications
-(`candidateTrainingOperationProblem` in `sbi/processor/ml_model_training.go`).
-
-For CREATE the prototype does not use 403 to signal that the feature was not
-negotiated. Other requirement failures on CREATE, such as a true
-`retainedResultReq`, still return 403. When PyMTLF does not accept a
-subscription that carries `flTopology`, it creates the resource, returns
+The prototype follows the first two. For PUT and PATCH on an existing
+resource it returns HTTP 403, and the Go NWDAF also applies the check to
+notifications (`candidateTrainingOperationProblem` in
+`sbi/processor/ml_model_training.go`). On CREATE, when PyMTLF does not accept
+a subscription that carries `flTopology`, it creates the resource, returns
 HTTP 201, and omits the feature from the returned `suppFeats`. The resource
 stays idle. The sender inspects the returned `suppFeats`, deletes the
 resource, and records `FEATURE_NOT_SUPPORTED` (`create()` in
-`core/fl_client.py`; the sender side is in `core/fl_server.py`).
+`core/fl_client.py`; the sender side is in `core/fl_server.py`). Other
+requirement failures on CREATE, such as a true `retainedResultReq`, return
+HTTP 403.
 
-PyMTLF parses and validates the members before this decision, so a malformed
-instruction is rejected with HTTP 400 either way. It then uses the same
-response for two situations: this NWDAF is not configured or capable for the
-requested role, or it is capable but cannot execute this particular request.
-`_can_accept_protocol_resource()` in `core/fl_client.py` declines the feature
-when any of the following holds:
+The difference is in the third statement: on CREATE the prototype does not
+reject a contract that it cannot execute. PyMTLF parses and validates the
+members first, so a malformed instruction is rejected with HTTP 400. It then
+omits the feature, as described above, in two situations: this NWDAF is not
+configured or capable for the requested role, or it is capable but cannot
+execute this particular request. `_can_accept_protocol_resource()` in
+`core/fl_client.py` declines the feature when any of the following holds:
 
 - `mLPreFlag` is not true, or the request carries `mLModelInfos`;
 - the NWDAF has no round-model distribution service;
@@ -96,8 +99,8 @@ when any of the following holds:
 
 Returning the supported subset of features in the creation response follows
 the feature negotiation of 3GPP TS 29.500 clause 6.6.2, and a receiver that
-does not implement the extension behaves the same way. The second situation
-is closer to the existing `ML_MODEL_TRAINING_REQS_NOT_MET` error of
+does not implement the extension behaves the same way. The second of the two
+situations is closer to the existing `ML_MODEL_TRAINING_REQS_NOT_MET` error of
 3GPP TS 29.520. The prototype does not distinguish the two, so a sender cannot
 tell from the response which one occurred.
 
