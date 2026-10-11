@@ -1,0 +1,491 @@
+openapi: 3.0.0
+
+info:
+  title: Nnwdaf_MLModelTraining Hierarchical FL Candidate
+  version: 0.1.0
+  description: |
+    Candidate extension of the 3GPP Release 18 Nnwdaf_MLModelTraining API for
+    hierarchical federated learning orchestration. This document is a project
+    proposal and is not a 3GPP specification.
+
+    It contains only what the proposal adds: the members flTopology,
+    retainedResultReq, flTopologyReport, and retainedResultStatus, the schemas
+    they use, the HierarchicalFLOrch feature, the rules under x-stage3-rules,
+    and examples. The proposal changes no path or operation, so this document
+    defines none. Each of the three extended schemas is given as the schema
+    of the same name in the Nnwdaf_MLModelTraining OpenAPI definition of
+    3GPP TS 29.520 V18.14.0 (API version 1.0.5) together with the added
+    members. The immReport member of the subscription is listed as well,
+    because it carries the extended notification.
+
+    References to TS29520_Nnwdaf_MLModelTraining.yaml and
+    TS29571_CommonData.yaml name the OpenAPI files of that 3GPP release. They
+    are not distributed with this repository; place them, and the files of
+    the release that they refer to, in the same directory to resolve the
+    references.
+
+x-baseline:
+  specification: 3GPP TS 29.520 V18.14.0
+  apiVersion: 1.0.5
+
+x-supported-features:
+  - featureNumber: 3
+    featureName: HierarchicalFLOrch
+    bitmask: '4'
+    description: >
+      Supports recursive topology instructions and reports, node-scoped
+      policy, strategy and report-after settings, and retained-result lookup.
+
+x-stage3-rules:
+  - >
+    The flTopology root nfInstanceId shall identify the request receiver;
+    the flTopologyReport root nfInstanceId shall identify the direct Client
+    bound to the subscription callback context.
+  - >
+    A topology instruction or report shall not contain duplicate nfInstanceId
+    values or an ancestor cycle.
+  - >
+    policy and strategy apply to the node acting as the FL Server for its
+    direct children; reportAfter applies to the node reporting to its direct
+    parent.
+  - >
+    When selectionMethod is priority, each enabled explicit child shall
+    provide priority, and minAvailableNodes shall be greater than or equal to
+    minTrainNodes.
+  - >
+    retainedResultReq at both the node and message levels is operation-scoped and shall
+    not be persisted as subscription state.
+  - >
+    A notification shall contain at least one of delayEventNotif,
+    mLModelInfos, termTrainReq, flTopologyReport or retainedResultStatus.
+    The existing mutual-exclusion rules for delayEventNotif, mLModelInfos and
+    termTrainReq remain applicable.
+  - >
+    A Create or PUT operation containing flTopology or a true
+    retainedResultReq shall contain mlCorreId. A PATCH operation using
+    either extension is valid only when the existing subscription is already
+    correlated with an FL procedure.
+  - >
+    A notification containing flTopologyReport or retainedResultStatus
+    shall contain mlCorreId.
+  - >
+    When retainedResultStatus is FOUND, roundInd and mLModelInfos shall be
+    present. When it is NOT_FOUND or FAILED, roundInd and mLModelInfos shall
+    be absent.
+  - >
+    A FlTopologyReportNode with status FAILED or INACTIVE shall contain
+    statusCause. A node with a status defined by this version other than
+    FAILED or INACTIVE shall not contain statusCause.
+  - >
+    retainedResultReq shall not be true for a child whose enabled value is
+    false.
+  - >
+    A local subscription shall have at most one outstanding retained-result
+    lookup. A subsequent lookup may start only after the previous outcome has
+    been received.
+  - >
+    The HierarchicalFLOrch feature shall be negotiated independently on every
+    parent-to-child subscription resource.
+
+paths: {}
+
+components:
+  schemas:
+    NwdafMLModelTrainSubsc:
+      description: >
+        Represents a Release 18 ML Model Training subscription extended with
+        hierarchical FL orchestration instructions.
+      allOf:
+        - $ref: 'TS29520_Nnwdaf_MLModelTraining.yaml#/components/schemas/NwdafMLModelTrainSubsc'
+        - type: object
+          properties:
+            immReport:
+              $ref: '#/components/schemas/NwdafMLModelTrainNotif'
+            flTopology:
+              $ref: '#/components/schemas/FlTopologyNode'
+            retainedResultReq:
+              type: boolean
+              writeOnly: true
+              description: >
+                Indicates whether the recipient shall perform one retained-result
+                lookup for this operation.
+
+    NwdafMLModelTrainSubscPatch:
+      description: >
+        Represents parameters to request a partial update of an ML Model
+        Training subscription, including hierarchical FL instructions.
+      allOf:
+        - $ref: 'TS29520_Nnwdaf_MLModelTraining.yaml#/components/schemas/NwdafMLModelTrainSubscPatch'
+        - type: object
+          properties:
+            flTopology:
+              $ref: '#/components/schemas/FlTopologyNode'
+            retainedResultReq:
+              type: boolean
+              writeOnly: true
+              description: >
+                Indicates whether the recipient shall perform one retained-result
+                lookup for this partial-update operation.
+
+    NwdafMLModelTrainNotif:
+      description: >
+        Represents ML Model Training notifications, including hierarchical FL
+        topology reports and retained-result outcomes.
+      allOf:
+        - $ref: 'TS29520_Nnwdaf_MLModelTraining.yaml#/components/schemas/NwdafMLModelTrainNotif'
+        - type: object
+          properties:
+            flTopologyReport:
+              $ref: '#/components/schemas/FlTopologyReport'
+            retainedResultStatus:
+              $ref: '#/components/schemas/RetainedResultStatus'
+
+    FlTopologyNode:
+      description: >
+        Represents a role-neutral node in a recursive hierarchical FL topology
+        instruction.
+      type: object
+      additionalProperties: false
+      properties:
+        nfInstanceId:
+          $ref: 'TS29571_CommonData.yaml#/components/schemas/NfInstanceId'
+        enabled:
+          type: boolean
+          default: true
+        priority:
+          type: integer
+          minimum: 0
+        policy:
+          $ref: '#/components/schemas/FlPolicy'
+        strategy:
+          $ref: '#/components/schemas/FlStrategy'
+        reportAfter:
+          $ref: '#/components/schemas/FlReportAfter'
+        retainedResultReq:
+          type: boolean
+          writeOnly: true
+        children:
+          type: array
+          items:
+            $ref: '#/components/schemas/FlTopologyNode'
+          minItems: 1
+      required:
+        - nfInstanceId
+
+    FlPolicy:
+      description: >
+        Represents participant selection and result acceptance decisions
+        applied by a node acting as FL Server for its direct children.
+      type: object
+      additionalProperties: false
+      properties:
+        allowAdditionalCandidates:
+          type: boolean
+          default: false
+        additionalCandidatePriority:
+          type: integer
+          minimum: 0
+          default: 0
+        selectionMethod:
+          $ref: '#/components/schemas/FlSelectionMethod'
+        minAvailableNodes:
+          type: integer
+          minimum: 1
+        fractionTrain:
+          type: number
+          format: float
+          minimum: 0
+          exclusiveMinimum: true
+          maximum: 1
+        minTrainNodes:
+          type: integer
+          minimum: 1
+        acceptFailures:
+          type: boolean
+        minCompletionRate:
+          type: number
+          format: float
+          minimum: 0
+          exclusiveMinimum: true
+          maximum: 1
+
+    FlSelectionMethod:
+      description: Represents the method used to select eligible FL Clients.
+      anyOf:
+        - type: string
+          enum: [priority, random]
+        - type: string
+          description: >
+            Any other string is accepted so that values added later remain
+            valid.
+
+    FlStrategy:
+      description: Represents the training and aggregation contract of a local FL process.
+      oneOf:
+        - $ref: '#/components/schemas/FedProxStrategy'
+      discriminator:
+        propertyName: method
+        mapping:
+          fedProx: '#/components/schemas/FedProxStrategy'
+
+    FedProxStrategy:
+      type: object
+      additionalProperties: false
+      properties:
+        method:
+          type: string
+          enum: [fedProx]
+        aggregation:
+          $ref: '#/components/schemas/FlAggregation'
+        methodParameters:
+          $ref: '#/components/schemas/FedProxParameters'
+      required:
+        - method
+        - aggregation
+        - methodParameters
+
+    FlAggregation:
+      description: Represents the aggregation rule used by the FL Server.
+      anyOf:
+        - type: string
+          enum: [sampleWeighted]
+        - type: string
+          description: >
+            Any other string is accepted so that values added later remain
+            valid.
+
+    FedProxParameters:
+      description: Represents parameters required by the FedProx method.
+      type: object
+      additionalProperties: false
+      properties:
+        proximalMu:
+          type: number
+          format: float
+          minimum: 0
+      required:
+        - proximalMu
+
+    FlReportAfter:
+      description: >
+        Represents the amount of node-local work to complete before reporting
+        to the direct parent.
+      type: object
+      additionalProperties: false
+      properties:
+        count:
+          type: integer
+          minimum: 1
+        unit:
+          $ref: '#/components/schemas/FlReportUnit'
+      required:
+        - count
+        - unit
+
+    FlReportUnit:
+      description: Represents the unit used by a report-after instruction.
+      anyOf:
+        - type: string
+          enum: [epoch, round]
+        - type: string
+          description: >
+            Any other string is accepted so that values added later remain
+            valid.
+
+    FlTopologyReport:
+      description: >
+        Represents the reporting node and the recursive states of the
+        candidates managed by that node.
+      type: object
+      additionalProperties: false
+      properties:
+        nfInstanceId:
+          $ref: 'TS29571_CommonData.yaml#/components/schemas/NfInstanceId'
+        policy:
+          $ref: '#/components/schemas/FlPolicy'
+        strategy:
+          $ref: '#/components/schemas/FlStrategy'
+        reportAfter:
+          $ref: '#/components/schemas/FlReportAfter'
+        children:
+          type: array
+          items:
+            $ref: '#/components/schemas/FlTopologyReportNode'
+          minItems: 1
+      required:
+        - nfInstanceId
+
+    FlTopologyReportNode:
+      description: >
+        Represents a node in a recursive report of a realized hierarchical FL
+        topology and its candidate states.
+      type: object
+      additionalProperties: false
+      properties:
+        nfInstanceId:
+          $ref: 'TS29571_CommonData.yaml#/components/schemas/NfInstanceId'
+        status:
+          $ref: '#/components/schemas/FlTopologyStatus'
+        statusTimestamp:
+          $ref: 'TS29571_CommonData.yaml#/components/schemas/DateTime'
+        statusCause:
+          $ref: '#/components/schemas/FlTopologyStatusCause'
+        policy:
+          $ref: '#/components/schemas/FlPolicy'
+        strategy:
+          $ref: '#/components/schemas/FlStrategy'
+        reportAfter:
+          $ref: '#/components/schemas/FlReportAfter'
+        children:
+          type: array
+          items:
+            $ref: '#/components/schemas/FlTopologyReportNode'
+          minItems: 1
+      required:
+        - nfInstanceId
+        - status
+        - statusTimestamp
+
+    FlTopologyStatus:
+      description: Represents the lifecycle state of a hierarchical FL candidate.
+      anyOf:
+        - type: string
+          enum: [UNCONFIRMED, DEPLOYING, ACTIVE, FAILED, INACTIVE]
+        - type: string
+          description: >
+            Any other string is accepted so that values added later remain
+            valid.
+
+    FlTopologyStatusCause:
+      description: Represents why a hierarchical FL relationship entered FAILED or INACTIVE.
+      anyOf:
+        - type: string
+          enum:
+            - RESPONSE_TIMEOUT
+            - COMMUNICATION_FAILURE
+            - FEATURE_NOT_SUPPORTED
+            - REQUIREMENTS_NOT_MET
+            - REMOVED_BY_POLICY
+            - OTHER
+        - type: string
+          description: >
+            Any other string is accepted so that values added later remain
+            valid.
+
+    RetainedResultStatus:
+      description: Represents the outcome of a retained-result lookup.
+      anyOf:
+        - type: string
+          enum: [FOUND, NOT_FOUND, FAILED]
+        - type: string
+          description: >
+            Any other string is accepted so that values added later remain
+            valid.
+
+  examples:
+    HierarchicalTopologySubscription:
+      summary: Root assigns candidates and delegates participant selection.
+      value:
+        mLEventSubscs:
+          - mLEvent: UE_COMMUNICATION
+            mLEventFilter: {}
+            modelInterInfo: pymtlf-model-bundle-v1
+        notifUri: https://root.example.org/callbacks/ml-model-training
+        notifCorreId: root-branch-a-subscription
+        suppFeats: '4'
+        mlCorreId: hierarchical-fl-001
+        mLPreFlag: true
+        flTopology:
+          nfInstanceId: 10000000-0000-4000-8000-000000000001
+          children:
+            - nfInstanceId: 10000000-0000-4000-8000-000000000101
+              priority: 100
+            - nfInstanceId: 10000000-0000-4000-8000-000000000102
+              priority: 80
+          policy:
+            allowAdditionalCandidates: true
+            additionalCandidatePriority: 0
+            selectionMethod: priority
+            minAvailableNodes: 2
+            fractionTrain: 1
+            minTrainNodes: 2
+            acceptFailures: true
+            minCompletionRate: 0.5
+          strategy:
+            method: fedProx
+            aggregation: sampleWeighted
+            methodParameters:
+              proximalMu: 0.01
+          reportAfter:
+            count: 3
+            unit: round
+
+    CandidateRemovalPatch:
+      summary: Root excludes one candidate and assigns its replacement.
+      value:
+        flTopology:
+          nfInstanceId: 10000000-0000-4000-8000-000000000001
+          children:
+            - nfInstanceId: 10000000-0000-4000-8000-000000000106
+              priority: 120
+            - nfInstanceId: 10000000-0000-4000-8000-000000000101
+              enabled: false
+
+    TopologyReportNotification:
+      summary: Branch reports the realized topology after preparation.
+      value:
+        notifCorreId: root-branch-a-subscription
+        mlCorreId: hierarchical-fl-001
+        flTopologyReport:
+          nfInstanceId: 10000000-0000-4000-8000-000000000001
+          policy:
+            allowAdditionalCandidates: true
+            additionalCandidatePriority: 0
+            selectionMethod: priority
+            minAvailableNodes: 2
+            fractionTrain: 1
+            minTrainNodes: 2
+            acceptFailures: true
+            minCompletionRate: 0.5
+          strategy:
+            method: fedProx
+            aggregation: sampleWeighted
+            methodParameters:
+              proximalMu: 0.01
+          reportAfter:
+            count: 3
+            unit: round
+          children:
+            - nfInstanceId: 10000000-0000-4000-8000-000000000101
+              status: ACTIVE
+              statusTimestamp: '2026-09-02T14:29:10+08:00'
+            - nfInstanceId: 10000000-0000-4000-8000-000000000102
+              status: FAILED
+              statusTimestamp: '2026-09-02T14:29:40+08:00'
+              statusCause: RESPONSE_TIMEOUT
+
+    RetainedResultFoundNotification:
+      summary: Client returns its latest completed retained result.
+      value:
+        notifCorreId: branch-a2-leaf-a1-subscription
+        mlCorreId: hierarchical-fl-001
+        retainedResultStatus: FOUND
+        roundInd: 5
+        mLModelInfos:
+          - event: UE_COMMUNICATION
+            mLFileAddr:
+              mLModelUrl: https://leaf-a1.example.org/results/hierarchical-fl-001/round-5
+
+    RetainedResultNotFoundNotification:
+      summary: Client completed the lookup without finding a retained result.
+      value:
+        notifCorreId: branch-a2-leaf-a1-subscription
+        mlCorreId: hierarchical-fl-001
+        retainedResultStatus: NOT_FOUND
+
+    RetainedResultFailedNotification:
+      summary: Client accepted the lookup but could not complete it.
+      value:
+        notifCorreId: branch-a2-leaf-a1-subscription
+        mlCorreId: hierarchical-fl-001
+        retainedResultStatus: FAILED

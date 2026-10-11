@@ -14,9 +14,16 @@ development and are not described by the paper.
 
 - This file: how the paper's experiment conditions, tables, and figures map to
   scenarios, commands, and analysis outputs.
+- [Candidate Stage-2 change request text](candidate-stage2-text.md): the
+  Stage-2 text that the paper proposes.
+- [Candidate Stage-3 OpenAPI fragment](candidate-stage3-openapi.md): the
+  added members and schemas that the paper proposes, with the constraints
+  that OpenAPI cannot express.
+- [`candidate-openapi.yaml`](candidate-openapi.yaml): an OpenAPI document of
+  the same additions, with further rules and examples.
 - [Candidate specification and implementation](specification-differences.md):
   where the prototype matches, differs from, or goes beyond the candidate
-  Stage-2 and Stage-3 text in the paper's appendices.
+  specification, and how the fragment and the OpenAPI document differ.
 - [Relation to upstream free5GC](free5gc-requirements.md): which components
   come from upstream free5GC, which do not, and what the prototype needs
   beyond the upstream release.
